@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="500" viewBox="0 0 1200 500" role="img" aria-labelledby="title description">
+  <title id="title">Reuse the graph instead of rebuilding it</title>
+  <desc id="description">Incremental scan speedups across four pinned real repositories.</desc>
+  <defs>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#101a33"/><stop offset="1" stop-color="#172a55"/></linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#081126" flood-opacity=".18"/></filter>
+  </defs>
+  <rect width="1200" height="500" rx="28" fill="#f6f8fc"/>
+  <rect x="28" y="28" width="1144" height="444" rx="22" fill="url(#panel)" filter="url(#shadow)"/>
+  <text x="72" y="82" fill="#9fb4ff" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" letter-spacing="2">FLOWPEEK · EVIDENCE SNAPSHOT</text>
+  <text x="72" y="122" fill="#ffffff" font-family="Inter,Segoe UI,sans-serif" font-size="28" font-weight="750">Reuse the graph instead of rebuilding it</text>
+  <text x="72" y="151" fill="#b9c4dc" font-family="Inter,Segoe UI,sans-serif" font-size="15">Incremental scan speedups across four pinned real repositories.</text>
+  <g>
+      <text x="72" y="209" fill="#ffffff" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="700">SvelteKit</text>
+      <rect x="190" y="190" width="760" height="26" rx="8" fill="#ffffff" fill-opacity=".08"/>
+      <rect x="190" y="190" width="59" height="26" rx="8" fill="#6f8cff"/>
+      <text x="261" y="209" fill="#8ef0cf" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="800">4.21×</text>
+      <text x="1050" y="208" text-anchor="end" fill="#b9c4dc" font-family="Inter,Segoe UI,sans-serif" font-size="12">2,216 files</text>
+    </g><g>
+      <text x="72" y="277" fill="#ffffff" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="700">pnpm</text>
+      <rect x="190" y="258" width="760" height="26" rx="8" fill="#ffffff" fill-opacity=".08"/>
+      <rect x="190" y="258" width="23" height="26" rx="8" fill="#6f8cff"/>
+      <text x="225" y="277" fill="#8ef0cf" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="800">1.67×</text>
+      <text x="1050" y="276" text-anchor="end" fill="#b9c4dc" font-family="Inter,Segoe UI,sans-serif" font-size="12">2,615 files</text>
+    </g><g>
+      <text x="72" y="345" fill="#ffffff" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="700">NestJS</text>
+      <rect x="190" y="326" width="760" height="26" rx="8" fill="#ffffff" fill-opacity=".08"/>
+      <rect x="190" y="326" width="24" height="26" rx="8" fill="#6f8cff"/>
+      <text x="226" y="345" fill="#8ef0cf" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="800">1.69×</text>
+      <text x="1050" y="344" text-anchor="end" fill="#b9c4dc" font-family="Inter,Segoe UI,sans-serif" font-size="12">1,731 files</text>
+    </g><g>
+      <text x="72" y="413" fill="#ffffff" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="700">Symfony</text>
+      <rect x="190" y="394" width="760" height="26" rx="8" fill="#ffffff" fill-opacity=".08"/>
+      <rect x="190" y="394" width="760" height="26" rx="8" fill="#6f8cff"/>
+      <text x="962" y="413" fill="#8ef0cf" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="800">54.53×</text>
+      <text x="1050" y="412" text-anchor="end" fill="#b9c4dc" font-family="Inter,Segoe UI,sans-serif" font-size="12">10,730 files</text>
+    </g>
+    <text x="190" y="464" fill="#8592aa" font-family="Inter,Segoe UI,sans-serif" font-size="12">Median parser-fact reuse speedup vs full reparse · one supported changed file · one benchmark host</text>
+</svg>

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "sourceRoots": ["src", "public"],
+  "testRoots": ["test", "tests", "__tests__"],
+  "fixtureRoots": ["test/fixtures", "tests/fixtures", "__fixtures__"],
+  "exclude": [],
+  "flowEntries": {
+    "tests": false,
+    "fixtures": false
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "name": "flowpeek-commerce-showcase",
+  "private": true,
+  "description": "Static checkout-flow showcase for Flowpeek. The target application is never executed by the showcase runner."
+}

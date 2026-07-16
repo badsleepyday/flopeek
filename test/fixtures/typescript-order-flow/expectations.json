@@ -1,0 +1,16 @@
+{
+  "minimumPrecision": 0.9,
+  "minimumRecall": 0.9,
+  "endpoints": [
+    { "label": "POST /orders", "confidence": "exact" }
+  ],
+  "relationships": [
+    { "type": "imports", "source": "file:src/orders/orders.routes.ts", "target": "file:src/orders/orders.service.ts" },
+    { "type": "imports", "source": "file:src/orders/orders.service.ts", "target": "file:src/orders/orders.repository.ts" },
+    { "type": "imports", "source": "file:src/orders/orders.service.ts", "target": "file:src/orders/validation.ts" },
+    { "type": "imports", "source": "file:src/orders/orders.service.spec.ts", "target": "file:src/orders/orders.service.ts" },
+    { "type": "handles", "source": "endpoint:POST /orders", "target": "file:src/orders/orders.routes.ts" },
+    { "type": "calls", "source": "symbol:src/orders/orders.service.ts:class:OrdersService", "target": "symbol:src/orders/validation.ts:function:validateOrder" },
+    { "type": "calls", "source": "symbol:src/orders/validation.ts:function:validateOrder", "target": "symbol:src/orders/validation.ts:function:normalizeOrder" }
+  ]
+}

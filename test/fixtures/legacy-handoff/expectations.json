@@ -1,0 +1,18 @@
+{
+  "minimumPrecision": 0.9,
+  "minimumRecall": 0.9,
+  "endpoints": [
+    { "label": "GET /api/accounts", "confidence": "exact" },
+    { "label": "POST /api/accounts", "confidence": "exact" }
+  ],
+  "relationships": [
+    { "type": "handles", "source": "endpoint:GET /api/accounts", "target": "symbol:src/app/api/accounts/route.ts:function:GET" },
+    { "type": "handles", "source": "endpoint:POST /api/accounts", "target": "symbol:src/app/api/accounts/route.ts:function:POST" },
+    { "type": "calls", "source": "symbol:src/app/api/accounts/route.ts:function:GET", "target": "symbol:src/legacy/manager.ts:function:listAccounts" },
+    { "type": "calls", "source": "symbol:src/app/api/accounts/route.ts:function:POST", "target": "symbol:src/legacy/manager.ts:function:createAccount" },
+    { "type": "calls", "source": "symbol:src/legacy/manager.ts:function:listAccounts", "target": "symbol:src/legacy/helper.ts:function:loadAccounts" },
+    { "type": "calls", "source": "symbol:src/legacy/manager.ts:function:createAccount", "target": "symbol:src/legacy/helper.ts:function:saveAccount" },
+    { "type": "calls", "source": "symbol:src/legacy/manager.ts:function:createAccount", "target": "symbol:src/notifications/service.ts:function:notifyAccountOwner" },
+    { "type": "calls", "source": "symbol:src/notifications/service.ts:function:notifyAccountOwner", "target": "symbol:src/notifications/transport.ts:function:enqueue" }
+  ]
+}

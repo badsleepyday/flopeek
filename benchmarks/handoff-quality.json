@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "flowpeek-handoff-quality-cases/v1",
+  "fixture": "test/fixtures/legacy-handoff",
+  "cases": [
+    {
+      "id": "locate-account-listing",
+      "request": {
+        "taskIntent": "Locate legacy account listing before changing it.",
+        "targetFeature": "legacy",
+        "targetFlow": "GET /api/accounts",
+        "tokenBudget": 4096,
+        "desiredEvidenceDepth": "evidence"
+      },
+      "expected": {
+        "featureIds": ["feature:legacy"],
+        "flowTitles": ["GET /api/accounts"]
+      }
+    },
+    {
+      "id": "trace-cross-feature-account-creation",
+      "request": {
+        "taskIntent": "Trace account creation into notifications.",
+        "targetFlow": "POST /api/accounts",
+        "changedPaths": ["src/legacy/manager.ts"],
+        "tokenBudget": 4096,
+        "desiredEvidenceDepth": "evidence"
+      },
+      "expected": {
+        "flowTitles": ["POST /api/accounts"]
+      }
+    }
+  ],
+  "claims": {
+    "retrievalOutcome": "deterministic-fixture-oracle",
+    "agentTaskOutcome": "unavailable-unless-supplied",
+    "runtimeBehavior": false
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "schemaVersion": "flowpeek-public-repository-policy/v1",
+  "sourceRepository": {
+    "classification": "private-development",
+    "cleanWorktreeRequiredForExport": true,
+    "copyGitHistory": false
+  },
+  "overlays": [
+    {
+      "source": "packaging/public-repository-overlay/.github/workflows/ci.yml",
+      "destination": ".github/workflows/ci.yml"
+    }
+  ],
+  "allowedExactPaths": [
+    ".flowpeek/config.json",
+    ".github/SECURITY.md",
+    ".github/workflows/ci.yml",
+    ".github/workflows/real-corpus.yml",
+    ".gitignore",
+    "ARCHITECTURE.md",
+    "BENCHMARKS.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "LICENSE.md",
+    "LICENSE.txt",
+    "PRODUCT.md",
+    "README.md",
+    "ROADMAP.md",
+    "SECURITY.md",
+    "SUPPORT.md",
+    "package-lock.json",
+    "package.json"
+  ],
+  "allowedDirectories": [
+    "benchmarks",
+    "docs",
+    "examples",
+    "integrations/skills/flowpeek",
+    "packaging",
+    "public",
+    "scripts",
+    "src",
+    "test"
+  ],
+  "requiredPaths": [
+    ".flowpeek/config.json",
+    ".github/workflows/ci.yml",
+    ".gitignore",
+    "README.md",
+    "SUPPORT.md",
+    "package-lock.json",
+    "package.json",
+    "public/index.html",
+    "src/cli.js",
+    "src/mcp.js",
+    "test/unit/package-policy.test.js"
+  ],
+  "deniedPathSegments": [
+    ".agent-team",
+    ".agents",
+    ".git",
+    "node_modules"
+  ],
+  "deniedBasenames": [
+    ".env",
+    ".npmrc",
+    "AGENTS.md",
+    "credentials.json",
+    "id_ed25519",
+    "id_rsa"
+  ],
+  "deniedBasenamePrefixes": [
+    ".env.",
+    "credentials.",
+    "secrets."
+  ],
+  "deniedSuffixes": [
+    ".crt",
+    ".key",
+    ".log",
+    ".pem",
+    ".pfx"
+  ],
+  "maximumEntries": 280,
+  "maximumBytes": 6000000,
+  "releaseReadiness": {
+    "licenseFileRequired": true,
+    "packageLicenseRequired": true,
+    "packagePrivateMustBeFalse": true,
+    "securityPolicyRequired": true,
+    "changelogRequired": true,
+    "contributingGuideRequired": true,
+    "ownerApprovalRequired": true
+  }
+}

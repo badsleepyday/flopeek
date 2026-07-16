@@ -1,0 +1,170 @@
+{
+  "schemaVersion": "flowpeek-clean-room-package-report/v1",
+  "generatedAt": "2026-07-15T11:02:31.723Z",
+  "status": "passed",
+  "evidenceClass": "clean-room-package-observation",
+  "environment": {
+    "nodeVersion": "24.18.0",
+    "platform": "win32",
+    "architecture": "x64",
+    "lifecycleScriptsDuringInstall": false,
+    "timingPolicy": "host-specific-non-gating",
+    "installWarningsPresent": false
+  },
+  "packageAudit": {
+    "schemaVersion": "flowpeek-package-audit/v1",
+    "status": "passed",
+    "package": {
+      "name": "flowpeek",
+      "version": "0.2.0",
+      "private": true,
+      "filename": "flowpeek-0.2.0.tgz",
+      "packedBytes": 789436,
+      "unpackedBytes": 1929977,
+      "entries": 145
+    },
+    "policy": {
+      "schemaVersion": "flowpeek-package-policy/v1",
+      "maximumEntries": 160,
+      "maximumUnpackedBytes": 2500000,
+      "requiredPaths": 17,
+      "releasePublishingApproved": false
+    },
+    "checks": {
+      "allowlist": true,
+      "deniedContent": true,
+      "requiredRuntime": true,
+      "boundedSize": true,
+      "packageIdentity": true,
+      "releaseBoundary": true
+    },
+    "errors": [],
+    "limitations": [
+      "The inventory proves only the npm tarball file list and declared package metadata.",
+      "It does not prove installation, command behavior, parser accuracy, runtime correctness, release readiness, or publication permission."
+    ]
+  },
+  "artifact": {
+    "filename": "flowpeek-0.2.0.tgz",
+    "sha256": "2620d0c098b8d2d36318268f3303af8aadc627b3909995d81682709614d803a1",
+    "packedBytes": 789436
+  },
+  "phases": [
+    {
+      "id": "pack-and-audit",
+      "status": "passed",
+      "milliseconds": 5915.504
+    },
+    {
+      "id": "copy-fixture",
+      "status": "passed",
+      "milliseconds": 212.208
+    },
+    {
+      "id": "install-tarball",
+      "status": "passed",
+      "milliseconds": 28630.051
+    },
+    {
+      "id": "binary-version",
+      "status": "passed",
+      "milliseconds": 4639.946
+    },
+    {
+      "id": "binary-help",
+      "status": "passed",
+      "milliseconds": 3793.462
+    },
+    {
+      "id": "binary-doctor",
+      "status": "passed",
+      "milliseconds": 3651.044
+    },
+    {
+      "id": "bounded-static-scan",
+      "status": "passed",
+      "milliseconds": 4014.917
+    },
+    {
+      "id": "mcp-startup",
+      "status": "passed",
+      "milliseconds": 4009.687
+    }
+  ],
+  "smoke": {
+    "packageIdentity": {
+      "expectedName": "flowpeek",
+      "actualName": "flowpeek",
+      "expectedVersion": "0.2.0",
+      "actualVersion": "0.2.0",
+      "binShimPresent": true
+    },
+    "version": {
+      "expected": "0.2.0",
+      "actual": "0.2.0",
+      "matched": true
+    },
+    "help": {
+      "rendered": true
+    },
+    "doctor": {
+      "schemaVersion": "flowpeek-agent-integration-doctor/v1",
+      "ok": true,
+      "errors": 0,
+      "warnings": 11,
+      "strict": false
+    },
+    "scan": {
+      "schemaVersion": 5,
+      "graphSchemaVersion": 5,
+      "files": 12,
+      "nodes": 29,
+      "edges": 53,
+      "applicationFlows": 1,
+      "cacheStatus": "disabled"
+    },
+    "mcp": {
+      "connected": true,
+      "toolCount": 32,
+      "requiredTools": {
+        "getAgentBootstrap": true,
+        "getFlowProjection": true,
+        "resolveContextRef": true
+      },
+      "bootstrapSchemaVersion": "flowpeek-agent-bootstrap/v1",
+      "graphStatus": "advanced",
+      "sourceWrites": "not-exposed",
+      "targetExecution": "not-exposed"
+    },
+    "targetFixture": {
+      "copied": true,
+      "sourceFingerprintBefore": {
+        "algorithm": "sha256",
+        "value": "8584d5b9504aa5019f7ac70614c8511f667d3470bdbf107d49fd092386768814",
+        "files": 16
+      },
+      "sourceFingerprintAfter": {
+        "algorithm": "sha256",
+        "value": "8584d5b9504aa5019f7ac70614c8511f667d3470bdbf107d49fd092386768814",
+        "files": 16
+      },
+      "unchanged": true,
+      "applicationExecuted": false,
+      "testCommandExecuted": false
+    }
+  },
+  "cleanup": {
+    "status": "passed",
+    "milliseconds": 11139.318
+  },
+  "publication": {
+    "attempted": false,
+    "approved": false
+  },
+  "limitations": [
+    "This report proves only one isolated tarball pack, install, and bounded static command sequence on the declared host.",
+    "It does not prove every operating system, registry publication, upgrade compatibility, runtime application behavior, parser accuracy, or alpha/beta/stable readiness.",
+    "The target fixture is copied before scanning; no target application, test command, package script, or arbitrary shell command is executed.",
+    "MCP startup verifies protocol and bounded graph tools. Metadata-writing MCP tools remain non-source-writing and are not invoked by this check."
+  ]
+}

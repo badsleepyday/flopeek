@@ -1,0 +1,230 @@
+{
+  "name": "flowpeek-real-repository-audited-slice/v1",
+  "repositories": [
+    {
+      "id": "pnpm",
+      "url": "https://github.com/pnpm/pnpm.git",
+      "revision": "0a68c77",
+      "focuses": [
+        {
+          "label": "pnpm access command dispatches to its seven local subcommand handlers",
+          "source": "symbol:pnpm11/registry-access/commands/src/access.ts:function:handler",
+          "type": "calls",
+          "expectedTargets": [
+            "symbol:pnpm11/registry-access/commands/src/access.ts:function:getStatus",
+            "symbol:pnpm11/registry-access/commands/src/access.ts:function:grantAccess",
+            "symbol:pnpm11/registry-access/commands/src/access.ts:function:listCollaborators",
+            "symbol:pnpm11/registry-access/commands/src/access.ts:function:listPackages",
+            "symbol:pnpm11/registry-access/commands/src/access.ts:function:revokeAccess",
+            "symbol:pnpm11/registry-access/commands/src/access.ts:function:setMfa",
+            "symbol:pnpm11/registry-access/commands/src/access.ts:function:setStatus"
+          ]
+        },
+        {
+          "label": "pnpm access listPackages calls its four local helpers",
+          "source": "symbol:pnpm11/registry-access/commands/src/access.ts:function:listPackages",
+          "type": "calls",
+          "expectedTargets": [
+            "symbol:pnpm11/registry-access/commands/src/access.ts:function:getAuthHeaderForRegistry",
+            "symbol:pnpm11/registry-access/commands/src/access.ts:function:getRegistries",
+            "symbol:pnpm11/registry-access/commands/src/access.ts:function:listEntityPackages",
+            "symbol:pnpm11/registry-access/commands/src/access.ts:function:listOwnPackages"
+          ]
+        },
+        {
+          "label": "pnpm Rust audit response sanitization calls its two local helpers",
+          "source": "symbol:pnpm/crates/cli/src/cli_args/audit.rs:function:sanitize_response_body",
+          "type": "calls",
+          "expectedTargets": [
+            "symbol:pnpm/crates/cli/src/cli_args/audit.rs:function:sanitize_control_chars",
+            "symbol:pnpm/crates/cli/src/cli_args/audit.rs:function:truncate_chars"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "nest",
+      "url": "https://github.com/nestjs/nest.git",
+      "revision": "f293848",
+      "focuses": [
+        {
+          "label": "NestApplication resolves its audited internal and workspace imports",
+          "source": "file:packages/core/nest-application.ts",
+          "type": "imports",
+          "expectedTargets": [
+            "file:packages/common/index.ts",
+            "file:packages/common/interfaces/index.ts",
+            "file:packages/common/services/logger.service.ts",
+            "file:packages/common/utils/load-package.util.ts",
+            "file:packages/common/utils/shared.utils.ts",
+            "file:packages/core/adapters/index.ts",
+            "file:packages/core/application-config.ts",
+            "file:packages/core/constants.ts",
+            "file:packages/core/helpers/optional-require.ts",
+            "file:packages/core/injector/container.ts",
+            "file:packages/core/injector/injector.ts",
+            "file:packages/core/inspector/graph-inspector.ts",
+            "file:packages/core/middleware/container.ts",
+            "file:packages/core/middleware/middleware-module.ts",
+            "file:packages/core/middleware/utils.ts",
+            "file:packages/core/nest-application-context.ts",
+            "file:packages/core/router/interfaces/resolver.interface.ts",
+            "file:packages/core/router/routes-resolver.ts",
+            "file:packages/microservices/index.ts",
+            "file:packages/microservices/microservices-module.ts",
+            "file:packages/websockets/socket-module.ts"
+          ]
+        },
+        {
+          "label": "NestApplicationContext resolves its audited internal and workspace imports",
+          "source": "file:packages/core/nest-application-context.ts",
+          "type": "imports",
+          "expectedTargets": [
+            "file:packages/common/index.ts",
+            "file:packages/common/interfaces/index.ts",
+            "file:packages/common/interfaces/nest-application-context-options.interface.ts",
+            "file:packages/common/utils/shared.utils.ts",
+            "file:packages/core/constants.ts",
+            "file:packages/core/errors/exceptions/index.ts",
+            "file:packages/core/helpers/context-id-factory.ts",
+            "file:packages/core/hooks/index.ts",
+            "file:packages/core/injector/abstract-instance-resolver.ts",
+            "file:packages/core/injector/compiler.ts",
+            "file:packages/core/injector/container.ts",
+            "file:packages/core/injector/injector.ts",
+            "file:packages/core/injector/instance-links-host.ts",
+            "file:packages/core/injector/instance-wrapper.ts",
+            "file:packages/core/injector/module.ts"
+          ]
+        },
+        {
+          "label": "Nest lifecycle shutdown hook calls its local helpers and transient-instance collectors",
+          "source": "symbol:packages/core/hooks/before-app-shutdown.hook.ts:function:callBeforeAppShutdownHook",
+          "type": "calls",
+          "expectedTargets": [
+            "symbol:packages/core/hooks/before-app-shutdown.hook.ts:function:callOperator",
+            "symbol:packages/core/hooks/before-app-shutdown.hook.ts:function:hasBeforeApplicationShutdownHook",
+            "symbol:packages/core/injector/helpers/transient-instances.ts:function:getNonTransientInstances",
+            "symbol:packages/core/injector/helpers/transient-instances.ts:function:getTransientInstances"
+          ]
+        },
+        {
+          "label": "Nest transformPatternToRoute resolves workspace utilities, a local helper, and recursive calls",
+          "source": "symbol:packages/microservices/utils/transform-pattern.utils.ts:function:transformPatternToRoute",
+          "type": "calls",
+          "expectedTargets": [
+            "symbol:packages/common/utils/shared.utils.ts:function:isNumber",
+            "symbol:packages/common/utils/shared.utils.ts:function:isObject",
+            "symbol:packages/common/utils/shared.utils.ts:function:isString",
+            "symbol:packages/microservices/utils/transform-pattern.utils.ts:function:escape",
+            "symbol:packages/microservices/utils/transform-pattern.utils.ts:function:transformPatternToRoute"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sveltekit",
+      "url": "https://github.com/sveltejs/kit.git",
+      "revision": "14d7d5a",
+      "focuses": [
+        {
+          "label": "SvelteKit stream processing calls its local deserializer and imported NDJSON reader",
+          "source": "symbol:packages/kit/src/runtime/client/client.js:function:process_stream",
+          "type": "calls",
+          "expectedTargets": [
+            "symbol:packages/kit/src/runtime/client/client.js:function:deserialize_uses",
+            "symbol:packages/kit/src/runtime/client/ndjson.js:function:read_ndjson"
+          ]
+        },
+        {
+          "label": "SvelteKit persists state through its two local state helpers",
+          "source": "symbol:packages/kit/src/runtime/client/client.js:function:persist_state",
+          "type": "calls",
+          "expectedTargets": [
+            "symbol:packages/kit/src/runtime/client/client.js:function:capture_snapshot",
+            "symbol:packages/kit/src/runtime/client/client.js:function:update_scroll_positions"
+          ]
+        },
+        {
+          "label": "SvelteKit scroll tracking calls its imported scroll state helper",
+          "source": "symbol:packages/kit/src/runtime/client/client.js:function:update_scroll_positions",
+          "type": "calls",
+          "expectedTargets": [
+            "symbol:packages/kit/src/runtime/client/utils.js:function:scroll_state"
+          ]
+        },
+        {
+          "label": "SvelteKit client bootstrap resolves local and imported routing helpers",
+          "source": "symbol:packages/kit/src/runtime/client/client.js:function:start",
+          "type": "calls",
+          "expectedTargets": [
+            "symbol:packages/kit/src/runtime/client/client.js:function:_hydrate",
+            "symbol:packages/kit/src/runtime/client/client.js:function:_start_router",
+            "symbol:packages/kit/src/runtime/client/client.js:function:decode_hash",
+            "symbol:packages/kit/src/runtime/client/client.js:function:navigate",
+            "symbol:packages/kit/src/runtime/client/parse.js:function:parse",
+            "symbol:packages/kit/src/runtime/client/utils.js:function:resolve_url"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vite",
+      "url": "https://github.com/vitejs/vite.git",
+      "revision": "fef682d",
+      "focuses": [
+        {
+          "label": "Vite HTML transform assembly resolves its eight audited internal direct function calls",
+          "source": "symbol:packages/vite/src/node/server/middlewares/indexHtml.ts:function:createDevHtmlTransformFn",
+          "type": "calls",
+          "expectedTargets": [
+            "symbol:packages/vite/src/node/plugins/html.ts:function:applyHtmlTransforms",
+            "symbol:packages/vite/src/node/plugins/html.ts:function:htmlEnvHook",
+            "symbol:packages/vite/src/node/plugins/html.ts:function:injectCspNonceMetaTagHook",
+            "symbol:packages/vite/src/node/plugins/html.ts:function:injectNonceAttributeTagHook",
+            "symbol:packages/vite/src/node/plugins/html.ts:function:postImportMapHook",
+            "symbol:packages/vite/src/node/plugins/html.ts:function:preImportMapHook",
+            "symbol:packages/vite/src/node/plugins/html.ts:function:resolveHtmlTransforms",
+            "symbol:packages/vite/src/node/server/middlewares/indexHtml.ts:function:getHtmlFilename"
+          ]
+        },
+        {
+          "label": "Vite build plugin assembly resolves its twelve audited internal plugin and utility calls",
+          "source": "symbol:packages/vite/src/node/build.ts:function:resolveBuildPlugins",
+          "type": "calls",
+          "expectedTargets": [
+            "symbol:packages/vite/src/node/plugin.ts:function:perEnvironmentPlugin",
+            "symbol:packages/vite/src/node/plugins/esbuild.ts:function:buildEsbuildPlugin",
+            "symbol:packages/vite/src/node/plugins/importAnalysisBuild.ts:function:buildImportAnalysisPlugin",
+            "symbol:packages/vite/src/node/plugins/license.ts:function:licensePlugin",
+            "symbol:packages/vite/src/node/plugins/manifest.ts:function:manifestPlugin",
+            "symbol:packages/vite/src/node/plugins/prepareOutDir.ts:function:prepareOutDirPlugin",
+            "symbol:packages/vite/src/node/plugins/reporter.ts:function:buildReporterPlugin",
+            "symbol:packages/vite/src/node/plugins/terser.ts:function:terserPlugin",
+            "symbol:packages/vite/src/node/plugins/worker.ts:function:webWorkerPostPlugin",
+            "symbol:packages/vite/src/node/ssr/ssrManifestPlugin.ts:function:ssrManifestPlugin",
+            "symbol:packages/vite/src/node/utils.ts:function:arraify",
+            "symbol:packages/vite/src/node/utils.ts:function:asyncFlatten"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "symfony",
+      "url": "https://github.com/symfony/symfony.git",
+      "revision": "7dbebd8",
+      "focuses": [
+        {
+          "label": "Symfony PHP translation status calculation calls its three local helpers",
+          "source": "symbol:src/Symfony/Component/Translation/Resources/bin/translation-status.php:function:calculateTranslationStatus",
+          "type": "calls",
+          "expectedTargets": [
+            "symbol:src/Symfony/Component/Translation/Resources/bin/translation-status.php:function:extractTranslationKeys",
+            "symbol:src/Symfony/Component/Translation/Resources/bin/translation-status.php:function:findTransUnitMismatches",
+            "symbol:src/Symfony/Component/Translation/Resources/bin/translation-status.php:function:isTranslationCompleted"
+          ]
+        }
+      ]
+    }
+  ]
+}

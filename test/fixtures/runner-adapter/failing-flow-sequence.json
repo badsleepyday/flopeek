@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "flowpeek-runner-adapter-fixture/v1",
+  "runner": "fixture-adapter",
+  "actor": "CI runner",
+  "runId": "fixture-failing-run",
+  "scenario": "A runner reports the displayed final Flow Lens step as current, then failed.",
+  "events": [
+    {
+      "eventType": "run-started",
+      "summary": "Repository-owned test run started."
+    },
+    {
+      "eventType": "step-started",
+      "stepSelector": "last-flow-step",
+      "summary": "Runner reached the selected static flow step."
+    },
+    {
+      "eventType": "step-failed",
+      "stepSelector": "last-flow-step",
+      "summary": "Runner stopped at the selected static flow step."
+    }
+  ]
+}

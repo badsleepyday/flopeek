@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 5,
+  "generatedAt": "2026-07-14T00:00:00.000Z",
+  "project": {
+    "root": "C:/flowpeek-contract-fixture",
+    "name": "graph-contract-fixture",
+    "projectId": "project:fixture"
+  },
+  "state": {
+    "graphVersion": 4,
+    "materialFingerprint": "sha256:fixture-material",
+    "sourceFingerprint": "sha256:fixture-source",
+    "sourceRevision": "fixture-revision",
+    "updatedAt": "2026-07-14T00:00:00.000Z",
+    "status": "current"
+  },
+  "analysis": {
+    "mode": "deterministic"
+  },
+  "stats": {
+    "scannedFiles": 1
+  },
+  "nodes": [
+    {
+      "id": "file:src/example.ts",
+      "kind": "file",
+      "type": "module",
+      "manualDescription": "Verified example responsibility.",
+      "evidence": {
+        "parser": "typescript-ast",
+        "path": "src/example.ts"
+      }
+    }
+  ],
+  "edges": [],
+  "flows": [],
+  "diagnosticFlows": []
+}

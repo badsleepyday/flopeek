@@ -1,0 +1,46 @@
+"use strict";
+
+const { spawnSync } = require("child_process");
+const path = require("path");
+
+const root = path.resolve(__dirname, "..");
+const lane = process.argv[2];
+const lanes = {
+  full: ["test/showcase.test.js", "test/unit/adapter-registry.test.js", "test/unit/artifact-cache.test.js", "test/unit/durable-brief.test.js", "test/unit/framework-route.test.js", "test/unit/source-classification.test.js", "test/unit/structural-fact-adapter.test.js", "test/unit/handoff-context.test.js", "test/unit/handoff-quality.test.js", "test/unit/handoff-workspace.test.js", "test/unit/project-home.test.js", "test/unit/runtime-evidence.test.js", "test/unit/serve-workspace.test.js", "test/unit/workspace-server.test.js", "test/unit/workspace-contract-reference.test.js", "test/unit/agent-semantic-proposal.test.js", "test/unit/test-run-journal.test.js", "test/unit/runner-adapter-integration.test.js", "test/unit/semantic-flow-suggestion.test.js", "test/unit/semantic-suggestion-feedback.test.js", "test/unit/semantic-suggestion-reviewed-evaluation.test.js", "test/unit/agent-evidence-trace.test.js", "test/unit/viewer-empty-flow-state.test.js", "test/unit/public-snapshot-workflow.test.js", "test/contracts/adapter-capability-contract.test.js", "test/scanner.test.js", "test/fixture-corpus.test.js", "test/flow-verification.test.js"],
+  fast: ["test/unit/adapter-registry.test.js", "test/unit/artifact-cache.test.js", "test/unit/durable-brief.test.js", "test/unit/framework-route.test.js", "test/unit/source-classification.test.js", "test/unit/structural-fact-adapter.test.js", "test/unit/handoff-context.test.js", "test/unit/handoff-quality.test.js", "test/unit/handoff-workspace.test.js", "test/unit/project-home.test.js", "test/unit/runtime-evidence.test.js", "test/unit/serve-workspace.test.js", "test/unit/workspace-server.test.js", "test/unit/workspace-contract-reference.test.js", "test/unit/agent-semantic-proposal.test.js", "test/unit/test-run-journal.test.js", "test/unit/runner-adapter-integration.test.js", "test/unit/semantic-flow-suggestion.test.js", "test/unit/semantic-suggestion-feedback.test.js", "test/unit/semantic-suggestion-reviewed-evaluation.test.js", "test/unit/agent-evidence-trace.test.js", "test/unit/viewer-empty-flow-state.test.js", "test/unit/public-snapshot-workflow.test.js", "test/contracts/adapter-capability-contract.test.js", "test/fixture-corpus.test.js", "test/flow-verification.test.js"],
+  unit: ["test/unit/adapter-registry.test.js", "test/unit/artifact-cache.test.js", "test/unit/durable-brief.test.js", "test/unit/framework-route.test.js", "test/unit/source-classification.test.js", "test/unit/structural-fact-adapter.test.js", "test/unit/handoff-context.test.js", "test/unit/handoff-quality.test.js", "test/unit/handoff-workspace.test.js", "test/unit/project-home.test.js", "test/unit/runtime-evidence.test.js", "test/unit/serve-workspace.test.js", "test/unit/workspace-server.test.js", "test/unit/workspace-contract-reference.test.js", "test/unit/agent-semantic-proposal.test.js", "test/unit/test-run-journal.test.js", "test/unit/runner-adapter-integration.test.js", "test/unit/semantic-flow-suggestion.test.js", "test/unit/semantic-suggestion-feedback.test.js", "test/unit/agent-evidence-trace.test.js", "test/unit/viewer-empty-flow-state.test.js", "test/unit/public-snapshot-workflow.test.js"],
+  semantic: ["test/unit/semantic-flow-suggestion.test.js"],
+  feedback: ["test/unit/semantic-suggestion-feedback.test.js"],
+  "reviewed-evaluation": ["test/unit/semantic-suggestion-reviewed-evaluation.test.js"],
+  trace: ["test/unit/agent-evidence-trace.test.js"],
+  contracts: ["test/contracts/adapter-capability-contract.test.js", "test/flow-verification.test.js"],
+  adapters: ["test/scanner.test.js"],
+  viewer: ["test/scanner.test.js", "test/unit/viewer-empty-flow-state.test.js"],
+  showcase: ["test/showcase.test.js"],
+  "agent-comparison": ["test/unit/agent-comparison.test.js"],
+  package: ["test/unit/package-policy.test.js", "test/unit/clean-room-package.test.js"],
+  "public-repository": ["test/unit/public-repository-policy.test.js"],
+  docs: ["test/unit/documentation-assets.test.js"],
+};
+for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/documentation-assets.test.js");
+for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/public-repository-policy.test.js");
+for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/clean-room-package.test.js");
+for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/git-metadata.test.js", "test/unit/agent-comparison.test.js");
+for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/agent-bootstrap.test.js", "test/unit/agent-integration.test.js", "test/unit/product-proof.test.js", "test/unit/trust-analytics.test.js");
+for (const name of ["full", "unit"]) lanes[name].unshift("test/unit/orientation-benchmark.test.js");
+for (const name of ["full", "fast", "contracts"]) lanes[name].unshift("test/contracts/agent-skills-contract.test.js");
+for (const name of ["full", "fast", "contracts"]) lanes[name].unshift("test/contracts/flowpeek-skill-contract.test.js");
+lanes["public-source"] = lanes.full.filter((file) => !["test/contracts/agent-skills-contract.test.js", "test/unit/public-repository-policy.test.js"].includes(file));
+if (!lanes[lane]) throw new Error(`Unknown test lane: ${lane}`);
+if (lane === "fast") {
+  const support = spawnSync(process.execPath, ["scripts/generate-support.js", "--check"], { cwd: root, stdio: "inherit" });
+  if (support.status !== 0) process.exit(support.status || 1);
+}
+const patterns = {
+  viewer: "local server|serve watches|serve reports|serve exposes|SvelteKit aliases|benchmark endpoint",
+};
+const args = ["--test", "--test-concurrency=4"];
+if (patterns[lane]) args.push(`--test-name-pattern=${patterns[lane]}`);
+args.push(...lanes[lane]);
+const result = spawnSync(process.execPath, args, { cwd: root, stdio: "inherit" });
+process.exit(result.status || 0);

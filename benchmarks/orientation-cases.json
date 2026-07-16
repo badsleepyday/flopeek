@@ -1,0 +1,123 @@
+{
+  "schemaVersion": "flowpeek-orientation-cases/v1",
+  "suiteId": "flowpeek-initial-orientation-suite",
+  "repositories": [
+    {
+      "id": "legacy-handoff-typescript",
+      "path": "test/fixtures/legacy-handoff",
+      "sourcePin": {
+        "kind": "tree-sha256",
+        "value": "759094042f43d6e7e72c639ceb270c396264cbbe7925cd8f0788fc9590723f4a"
+      },
+      "retrievalExclusions": ["expectations.json"],
+      "cases": [
+        {
+          "id": "locate-legacy-account-listing",
+          "task": "Find the account-listing entry point, explain its bounded static path to data loading, and identify directly related tests.",
+          "request": {
+            "searchTerms": ["get /api/accounts", "listAccounts", "loadAccounts"],
+            "flowQuery": "GET /api/accounts",
+            "candidateLimit": 12
+          },
+          "expected": {
+            "targetPaths": [
+              "src/app/api/accounts/route.ts",
+              "src/legacy/manager.ts",
+              "src/legacy/helper.ts"
+            ],
+            "flowStepIds": [
+              "endpoint:src/app/api/accounts/route.ts:GET:/api/accounts",
+              "symbol:src/app/api/accounts/route.ts:function:GET",
+              "symbol:src/legacy/manager.ts:function:listAccounts",
+              "symbol:src/legacy/helper.ts:function:loadAccounts"
+            ],
+            "relatedTestPaths": ["test/accounts.test.ts"]
+          },
+          "staleContext": {
+            "nodeId": "endpoint:src/app/api/accounts/route.ts:GET:/api/accounts",
+            "changedPath": "src/app/api/accounts/route.ts"
+          }
+        }
+      ]
+    },
+    {
+      "id": "orders-typescript",
+      "path": "test/fixtures/typescript-order-flow",
+      "sourcePin": {
+        "kind": "tree-sha256",
+        "value": "f914ae7f469e25182efa9adc38443b33ed340a74738408e86e4e91cb804035bd"
+      },
+      "retrievalExclusions": ["expectations.json"],
+      "cases": [
+        {
+          "id": "trace-order-creation",
+          "task": "Find the order-creation endpoint, trace its bounded static service and persistence dependencies, and identify directly related tests.",
+          "request": {
+            "searchTerms": ["post /orders", "OrdersService", "OrdersRepository", "validateOrder"],
+            "flowQuery": "POST /orders",
+            "candidateLimit": 12
+          },
+          "expected": {
+            "targetPaths": [
+              "src/orders/orders.routes.ts",
+              "src/orders/orders.service.ts",
+              "src/orders/orders.repository.ts",
+              "src/orders/validation.ts"
+            ],
+            "flowStepIds": [
+              "endpoint:src/orders/orders.routes.ts:POST:/orders",
+              "file:src/orders/orders.routes.ts",
+              "file:src/orders/orders.service.ts",
+              "file:src/orders/orders.repository.ts",
+              "file:src/orders/validation.ts"
+            ],
+            "relatedTestPaths": ["src/orders/orders.service.spec.ts"]
+          },
+          "staleContext": {
+            "nodeId": "endpoint:src/orders/orders.routes.ts:POST:/orders",
+            "changedPath": "src/orders/orders.routes.ts"
+          }
+        }
+      ]
+    },
+    {
+      "id": "payments-python",
+      "path": "test/fixtures/python-payment-flow",
+      "sourcePin": {
+        "kind": "tree-sha256",
+        "value": "cd63b308cc617df897bc5dc9e447760d2f7d22a9ee44b63587caef86f3706ae5"
+      },
+      "retrievalExclusions": ["expectations.json"],
+      "cases": [
+        {
+          "id": "trace-payment-lookup",
+          "task": "Find the payment lookup endpoint, trace its bounded static route, service, and repository context, and identify directly related tests.",
+          "request": {
+            "searchTerms": ["payments", "PaymentService", "repository", "payment_id"],
+            "flowQuery": "GET /payments/{payment_id}",
+            "candidateLimit": 12
+          },
+          "expected": {
+            "targetPaths": [
+              "src/payments/routes.py",
+              "src/payments/service.py",
+              "src/payments/repository.py"
+            ],
+            "flowStepIds": [
+              "endpoint:src/payments/routes.py:GET:/payments/{payment_id}",
+              "file:src/payments/routes.py",
+              "file:src/payments/service.py",
+              "external:fastapi",
+              "file:src/payments/repository.py"
+            ],
+            "relatedTestPaths": ["src/payments/service_test.py"]
+          },
+          "staleContext": {
+            "nodeId": "endpoint:src/payments/routes.py:GET:/payments/{payment_id}",
+            "changedPath": "src/payments/routes.py"
+          }
+        }
+      ]
+    }
+  ]
+}

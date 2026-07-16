@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "flowpeek-agent-comparison-runs/v1",
+  "studyId": "flowpeek-agent-comparison-template",
+  "status": "template",
+  "consent": {
+    "explicit": false,
+    "privacyReviewed": true,
+    "source": "operator-supplied"
+  },
+  "executions": []
+}

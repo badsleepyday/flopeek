@@ -1,0 +1,7 @@
+{
+  "name": "runner-adapter-repository-fixture",
+  "private": true,
+  "scripts": {
+    "test": "node --test test/flow-contract.test.js"
+  }
+}

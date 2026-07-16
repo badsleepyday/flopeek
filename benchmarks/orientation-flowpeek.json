@@ -1,0 +1,528 @@
+{
+  "schemaVersion": "flowpeek-orientation-benchmark/v2",
+  "generatedAt": "2026-07-15T09:33:29.121Z",
+  "runEnvironment": {
+    "flowpeekVersion": "0.2.0",
+    "nodeVersion": "24.18.0",
+    "platform": "win32",
+    "architecture": "x64",
+    "logicalCpuCount": 12,
+    "cpuModel": "12th Gen Intel(R) Core(TM) i5-1235U",
+    "timingClock": "process.hrtime.bigint",
+    "timingPolicy": "host-specific-non-gating"
+  },
+  "suite": {
+    "id": "flowpeek-initial-orientation-suite",
+    "casesSchemaVersion": "flowpeek-orientation-cases/v1",
+    "repositoryCount": 3,
+    "caseCount": 3
+  },
+  "condition": "flowpeek",
+  "evidenceClass": "deterministic-retrieval",
+  "repositories": [
+    {
+      "id": "legacy-handoff-typescript",
+      "declaredPath": "test/fixtures/legacy-handoff",
+      "sourcePin": {
+        "kind": "tree-sha256",
+        "value": "759094042f43d6e7e72c639ceb270c396264cbbe7925cd8f0788fc9590723f4a",
+        "verified": true
+      },
+      "retrievalExclusions": [
+        "expectations.json"
+      ],
+      "timing": {
+        "preparationMilliseconds": 404.614,
+        "preparationPhases": [
+          {
+            "phase": "scope-and-identity",
+            "milliseconds": 3.521
+          },
+          {
+            "phase": "source-analysis",
+            "milliseconds": 65.625
+          },
+          {
+            "phase": "resolver-context",
+            "milliseconds": 11.383
+          },
+          {
+            "phase": "graph-assembly",
+            "milliseconds": 322.493
+          }
+        ]
+      },
+      "cases": [
+        {
+          "id": "locate-legacy-account-listing",
+          "repositoryId": "legacy-handoff-typescript",
+          "task": "Find the account-listing entry point, explain its bounded static path to data loading, and identify directly related tests.",
+          "expected": {
+            "targetPaths": [
+              "src/app/api/accounts/route.ts",
+              "src/legacy/manager.ts",
+              "src/legacy/helper.ts"
+            ],
+            "flowStepIds": [
+              "endpoint:src/app/api/accounts/route.ts:GET:/api/accounts",
+              "symbol:src/app/api/accounts/route.ts:function:GET",
+              "symbol:src/legacy/manager.ts:function:listAccounts",
+              "symbol:src/legacy/helper.ts:function:loadAccounts"
+            ],
+            "relatedTestPaths": [
+              "test/accounts.test.ts"
+            ]
+          },
+          "observed": {
+            "targetPaths": [
+              "src/app/api/accounts/route.ts",
+              "src/legacy/helper.ts",
+              "src/legacy/manager.ts"
+            ],
+            "flowStepIds": [
+              "endpoint:src/app/api/accounts/route.ts:GET:/api/accounts",
+              "symbol:src/app/api/accounts/route.ts:function:GET",
+              "symbol:src/legacy/manager.ts:function:listAccounts",
+              "symbol:src/legacy/helper.ts:function:loadAccounts"
+            ],
+            "relatedTestPaths": [
+              "test/accounts.test.ts"
+            ],
+            "repositoryFilesProcessed": 6
+          },
+          "metrics": {
+            "correctTargetRetrieval": {
+              "matched": 3,
+              "expected": 3,
+              "recall": 1,
+              "missing": []
+            },
+            "flowSteps": {
+              "status": "measured",
+              "matchedInExpectedOrder": 4,
+              "expected": 4,
+              "returned": 4,
+              "recall": 1,
+              "precision": 1,
+              "exactOrderMatch": true
+            },
+            "relatedTests": {
+              "matched": 1,
+              "expected": 1,
+              "recall": 1,
+              "missing": []
+            },
+            "staleContextDetection": {
+              "status": "measured",
+              "requested": 1,
+              "detected": 1,
+              "rate": 1,
+              "resolutionStatus": "stale",
+              "contextRefKind": "node",
+              "sourceContentsReturned": false
+            },
+            "context": {
+              "filesInspected": 4,
+              "paths": [
+                "src/app/api/accounts/route.ts",
+                "src/legacy/helper.ts",
+                "src/legacy/manager.ts",
+                "test/accounts.test.ts"
+              ],
+              "estimatedCharacters": 1119,
+              "estimatedTokens": 280,
+              "tokenizerId": "flowpeek-char4-estimator/v1"
+            },
+            "timing": {
+              "preparationMilliseconds": 404.614,
+              "sharedRepositoryPreparationMilliseconds": 404.614,
+              "retrievalMilliseconds": 13.63,
+              "coldTimeToUsefulContextMilliseconds": 418.244,
+              "warmTimeToUsefulContextMilliseconds": 13.63,
+              "gating": false,
+              "separateValidationMilliseconds": 988.882
+            },
+            "unsupportedClaims": {
+              "status": "no-claims-emitted",
+              "evaluated": 0,
+              "unsupported": 0,
+              "rate": null,
+              "reason": "The deterministic harness emits retrieval evidence rather than natural-language runtime or business claims."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "orders-typescript",
+      "declaredPath": "test/fixtures/typescript-order-flow",
+      "sourcePin": {
+        "kind": "tree-sha256",
+        "value": "f914ae7f469e25182efa9adc38443b33ed340a74738408e86e4e91cb804035bd",
+        "verified": true
+      },
+      "retrievalExclusions": [
+        "expectations.json"
+      ],
+      "timing": {
+        "preparationMilliseconds": 335.287,
+        "preparationPhases": [
+          {
+            "phase": "scope-and-identity",
+            "milliseconds": 1.711
+          },
+          {
+            "phase": "source-analysis",
+            "milliseconds": 29.546
+          },
+          {
+            "phase": "resolver-context",
+            "milliseconds": 4.681
+          },
+          {
+            "phase": "graph-assembly",
+            "milliseconds": 298.873
+          }
+        ]
+      },
+      "cases": [
+        {
+          "id": "trace-order-creation",
+          "repositoryId": "orders-typescript",
+          "task": "Find the order-creation endpoint, trace its bounded static service and persistence dependencies, and identify directly related tests.",
+          "expected": {
+            "targetPaths": [
+              "src/orders/orders.routes.ts",
+              "src/orders/orders.service.ts",
+              "src/orders/orders.repository.ts",
+              "src/orders/validation.ts"
+            ],
+            "flowStepIds": [
+              "endpoint:src/orders/orders.routes.ts:POST:/orders",
+              "file:src/orders/orders.routes.ts",
+              "file:src/orders/orders.service.ts",
+              "file:src/orders/orders.repository.ts",
+              "file:src/orders/validation.ts"
+            ],
+            "relatedTestPaths": [
+              "src/orders/orders.service.spec.ts"
+            ]
+          },
+          "observed": {
+            "targetPaths": [
+              "src/orders/orders.repository.ts",
+              "src/orders/orders.routes.ts",
+              "src/orders/orders.service.ts",
+              "src/orders/validation.ts"
+            ],
+            "flowStepIds": [
+              "endpoint:src/orders/orders.routes.ts:POST:/orders",
+              "file:src/orders/orders.routes.ts",
+              "file:src/orders/orders.service.ts",
+              "file:src/orders/orders.repository.ts",
+              "file:src/orders/validation.ts"
+            ],
+            "relatedTestPaths": [
+              "src/orders/orders.service.spec.ts"
+            ],
+            "repositoryFilesProcessed": 5
+          },
+          "metrics": {
+            "correctTargetRetrieval": {
+              "matched": 4,
+              "expected": 4,
+              "recall": 1,
+              "missing": []
+            },
+            "flowSteps": {
+              "status": "measured",
+              "matchedInExpectedOrder": 5,
+              "expected": 5,
+              "returned": 5,
+              "recall": 1,
+              "precision": 1,
+              "exactOrderMatch": true
+            },
+            "relatedTests": {
+              "matched": 1,
+              "expected": 1,
+              "recall": 1,
+              "missing": []
+            },
+            "staleContextDetection": {
+              "status": "measured",
+              "requested": 1,
+              "detected": 1,
+              "rate": 1,
+              "resolutionStatus": "stale",
+              "contextRefKind": "node",
+              "sourceContentsReturned": false
+            },
+            "context": {
+              "filesInspected": 5,
+              "paths": [
+                "src/orders/orders.repository.ts",
+                "src/orders/orders.routes.ts",
+                "src/orders/orders.service.spec.ts",
+                "src/orders/orders.service.ts",
+                "src/orders/validation.ts"
+              ],
+              "estimatedCharacters": 1333,
+              "estimatedTokens": 334,
+              "tokenizerId": "flowpeek-char4-estimator/v1"
+            },
+            "timing": {
+              "preparationMilliseconds": 335.287,
+              "sharedRepositoryPreparationMilliseconds": 335.287,
+              "retrievalMilliseconds": 0.911,
+              "coldTimeToUsefulContextMilliseconds": 336.199,
+              "warmTimeToUsefulContextMilliseconds": 0.911,
+              "gating": false,
+              "separateValidationMilliseconds": 620.241
+            },
+            "unsupportedClaims": {
+              "status": "no-claims-emitted",
+              "evaluated": 0,
+              "unsupported": 0,
+              "rate": null,
+              "reason": "The deterministic harness emits retrieval evidence rather than natural-language runtime or business claims."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "payments-python",
+      "declaredPath": "test/fixtures/python-payment-flow",
+      "sourcePin": {
+        "kind": "tree-sha256",
+        "value": "cd63b308cc617df897bc5dc9e447760d2f7d22a9ee44b63587caef86f3706ae5",
+        "verified": true
+      },
+      "retrievalExclusions": [
+        "expectations.json"
+      ],
+      "timing": {
+        "preparationMilliseconds": 363.542,
+        "preparationPhases": [
+          {
+            "phase": "scope-and-identity",
+            "milliseconds": 1.057
+          },
+          {
+            "phase": "source-analysis",
+            "milliseconds": 78.298
+          },
+          {
+            "phase": "resolver-context",
+            "milliseconds": 3.135
+          },
+          {
+            "phase": "graph-assembly",
+            "milliseconds": 280.606
+          }
+        ]
+      },
+      "cases": [
+        {
+          "id": "trace-payment-lookup",
+          "repositoryId": "payments-python",
+          "task": "Find the payment lookup endpoint, trace its bounded static route, service, and repository context, and identify directly related tests.",
+          "expected": {
+            "targetPaths": [
+              "src/payments/routes.py",
+              "src/payments/service.py",
+              "src/payments/repository.py"
+            ],
+            "flowStepIds": [
+              "endpoint:src/payments/routes.py:GET:/payments/{payment_id}",
+              "file:src/payments/routes.py",
+              "file:src/payments/service.py",
+              "external:fastapi",
+              "file:src/payments/repository.py"
+            ],
+            "relatedTestPaths": [
+              "src/payments/service_test.py"
+            ]
+          },
+          "observed": {
+            "targetPaths": [
+              "src/payments/repository.py",
+              "src/payments/routes.py",
+              "src/payments/service.py"
+            ],
+            "flowStepIds": [
+              "endpoint:src/payments/routes.py:GET:/payments/{payment_id}",
+              "file:src/payments/routes.py",
+              "file:src/payments/service.py",
+              "external:fastapi",
+              "file:src/payments/repository.py"
+            ],
+            "relatedTestPaths": [
+              "src/payments/service_test.py"
+            ],
+            "repositoryFilesProcessed": 4
+          },
+          "metrics": {
+            "correctTargetRetrieval": {
+              "matched": 3,
+              "expected": 3,
+              "recall": 1,
+              "missing": []
+            },
+            "flowSteps": {
+              "status": "measured",
+              "matchedInExpectedOrder": 5,
+              "expected": 5,
+              "returned": 5,
+              "recall": 1,
+              "precision": 1,
+              "exactOrderMatch": true
+            },
+            "relatedTests": {
+              "matched": 1,
+              "expected": 1,
+              "recall": 1,
+              "missing": []
+            },
+            "staleContextDetection": {
+              "status": "measured",
+              "requested": 1,
+              "detected": 1,
+              "rate": 1,
+              "resolutionStatus": "stale",
+              "contextRefKind": "node",
+              "sourceContentsReturned": false
+            },
+            "context": {
+              "filesInspected": 4,
+              "paths": [
+                "src/payments/repository.py",
+                "src/payments/routes.py",
+                "src/payments/service.py",
+                "src/payments/service_test.py"
+              ],
+              "estimatedCharacters": 2173,
+              "estimatedTokens": 544,
+              "tokenizerId": "flowpeek-char4-estimator/v1"
+            },
+            "timing": {
+              "preparationMilliseconds": 363.542,
+              "sharedRepositoryPreparationMilliseconds": 363.542,
+              "retrievalMilliseconds": 1.135,
+              "coldTimeToUsefulContextMilliseconds": 364.677,
+              "warmTimeToUsefulContextMilliseconds": 1.135,
+              "gating": false,
+              "separateValidationMilliseconds": 804.241
+            },
+            "unsupportedClaims": {
+              "status": "no-claims-emitted",
+              "evaluated": 0,
+              "unsupported": 0,
+              "rate": null,
+              "reason": "The deterministic harness emits retrieval evidence rather than natural-language runtime or business claims."
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "caseCount": 3,
+    "correctTargetRetrieval": {
+      "matched": 10,
+      "expected": 10,
+      "recall": 1
+    },
+    "flowSteps": {
+      "status": "measured",
+      "casesMeasured": 3,
+      "matchedInExpectedOrder": 14,
+      "expected": 14,
+      "recall": 1,
+      "exactCaseMatches": 3
+    },
+    "relatedTests": {
+      "matched": 3,
+      "expected": 3,
+      "recall": 1
+    },
+    "context": {
+      "filesInspected": 13,
+      "estimatedCharacters": 4625,
+      "estimatedTokens": 1158,
+      "tokenizerId": "flowpeek-char4-estimator/v1"
+    },
+    "staleContextDetection": {
+      "status": "measured",
+      "requested": 3,
+      "detected": 3,
+      "rate": 1
+    },
+    "timing": {
+      "processStartupAndModuleLoad": {
+        "status": "unavailable",
+        "milliseconds": null,
+        "reason": "The in-process evaluator starts timing after its modules are loaded; CLI process startup is not folded into scan or retrieval timing."
+      },
+      "repositoryPreparationMilliseconds": 1103.443,
+      "preparationPhases": [
+        {
+          "phase": "scope-and-identity",
+          "milliseconds": 6.289
+        },
+        {
+          "phase": "source-analysis",
+          "milliseconds": 173.469
+        },
+        {
+          "phase": "resolver-context",
+          "milliseconds": 19.199
+        },
+        {
+          "phase": "graph-assembly",
+          "milliseconds": 901.972
+        }
+      ],
+      "caseRetrievalMilliseconds": 15.676,
+      "totalTimeToUsefulContextMilliseconds": 1119.119,
+      "separateValidationMilliseconds": 2413.364,
+      "coldTimeToUsefulContextMilliseconds": 1119.119,
+      "warmTimeToUsefulContextMilliseconds": 15.676,
+      "gating": false,
+      "accounting": "Repository preparation is counted once per repository; case retrieval is counted once per case; stale-ref validation is reported separately and excluded from time to useful context."
+    },
+    "unsupportedClaims": {
+      "evaluated": 0,
+      "unsupported": 0,
+      "rate": null,
+      "status": "no-claims-emitted"
+    }
+  },
+  "studyEvidence": {
+    "deterministicRetrieval": {
+      "status": "measured",
+      "evidenceClass": "deterministic-retrieval"
+    },
+    "humanStudy": {
+      "status": "not-run",
+      "evidenceClass": "human-observation",
+      "reason": "No consented human observation artifact was supplied or inferred."
+    },
+    "agentStudy": {
+      "status": "not-run",
+      "evidenceClass": "agent-declared-or-independently-reviewed",
+      "reason": "No provider execution was invoked, supplied, or inferred."
+    }
+  },
+  "limitations": [
+    "This is a deterministic retrieval benchmark, not a human productivity study or an AI-agent task-outcome study.",
+    "Direct-repository uses plain case-insensitive substring retrieval and does not produce or score relationship order.",
+    "Repository-declared benchmark oracle files are excluded from direct retrieval and disclosed per repository.",
+    "Flowpeek results are static parser and graph projections; they do not prove runtime order, business intent, successful behavior, or complete coverage.",
+    "Timing is host-specific and non-gating. Repository preparation, bounded case retrieval, separate stale-ref validation, and unavailable process startup/module load are disclosed independently.",
+    "Repository preparation is counted once per repository even when that repository contains multiple cases.",
+    "Files inspected means unique paths exposed in the bounded result. Repository files processed is reported separately per case.",
+    "Estimated tokens use the disclosed four-characters-per-token fallback and are not provider tokenizer measurements."
+  ]
+}

@@ -1,0 +1,2805 @@
+const fs = require("node:fs");
+const path = require("node:path");
+const { execFileSync } = require("node:child_process");
+const { createHash } = require("node:crypto");
+const { createRequire } = require("node:module");
+const ts = require("typescript");
+const { goFacts } = require("./go-adapter");
+const { csharpFacts } = require("./csharp-adapter");
+const { frameworkRoute } = require("./framework-route");
+const { classifyFile, deriveDomain, deriveFeature, isTestPath, titleCase } = require("./source-classification");
+const { analyzeCSharpFact, analyzeGoFact, analyzeInventory } = require("./structural-fact-adapter");
+const { getAdapterRegistry } = require("./adapter-registry");
+const { readGitMetadata } = require("./git-metadata");
+const { CONFIG_FILENAME, classifyRepositoryPath, readRepositoryScope, scopeSignature, scopeSummary } = require("./scope");
+const { GRAPH_SCHEMA_VERSION } = require("./graph-schema");
+const { readGraphCache } = require("./graph-cache");
+const { persistGraphState } = require("./graph-state");
+const { resolveProjectIdentity } = require("./project-identity");
+
+const CODE_EXTENSIONS = new Set([
+  ".js", ".cjs", ".mjs", ".jsx", ".ts", ".tsx", ".svelte", ".vue", ".astro",
+  ".py", ".go", ".java", ".c", ".h", ".cc", ".cpp", ".cxx", ".cs", ".rs", ".rb", ".php", ".kt", ".kts", ".swift", ".scala", ".sh", ".bash", ".zsh",
+]);
+const RESOLVE_EXTENSIONS = ["", ".js", ".cjs", ".mjs", ".jsx", ".ts", ".tsx", ".svelte", ".vue", ".json"];
+const JS_TS_EXTENSIONS = new Set([".js", ".cjs", ".mjs", ".jsx", ".ts", ".tsx"]);
+const IGNORED_DIRECTORIES = new Set([
+  ".flowpeek", ".git", ".next", ".nuxt", ".project-flow", ".turbo", "build", "coverage", "dist", "node_modules", "out", "target", "vendor",
+]);
+const NODE_BUILTINS = new Set(require("node:module").builtinModules.map((name) => name.replace("node:", "")));
+const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+const DEV_TOOL_NAMES = new Set(["vite", "vitest", "eslint", "prettier", "tailwindcss", "postcss", "typescript", "tsx", "drizzle-kit", "playwright", "storybook", "pgtyped"]);
+const BUNDLER_CONFIG_FILENAMES = ["vite.config.js", "vite.config.cjs", "vite.config.mjs", "vite.config.ts", "vite.config.mts", "vite.config.cts", "vite.config.tsx", "webpack.config.js", "webpack.config.cjs", "webpack.config.mjs", "webpack.config.ts", "webpack.config.mts", "webpack.config.cts", "webpack.config.tsx"];
+const RUNTIME_FACTORIES = {
+  "@prisma/client": { PrismaClient: { type: "database", label: "Prisma client", invocation: "new" } },
+  typeorm: { DataSource: { type: "database", label: "TypeORM data source", invocation: "new" }, createConnection: { type: "database", label: "TypeORM connection", invocation: "call" } },
+  "drizzle-orm": { drizzle: { type: "database", label: "Drizzle database", invocation: "call" } },
+  bullmq: { Queue: { type: "queue", label: "Queue", invocation: "new" }, Worker: { type: "queue", label: "Worker", invocation: "new" }, FlowProducer: { type: "queue", label: "Flow producer", invocation: "new" } },
+};
+const DATABASE_OPERATION_NAMES = new Set(["find", "findFirst", "findMany", "findUnique", "create", "createMany", "update", "updateMany", "delete", "deleteMany", "upsert", "query", "execute", "select", "insert", "transaction", "getRepository"]);
+const QUEUE_OPERATION_NAMES = new Set(["add", "addBulk", "close", "pause", "resume", "obliterate"]);
+let phpParser;
+let pythonParser;
+let javaTreeParser;
+let rustTreeParser;
+
+function getPhpParser() {
+  if (!phpParser) {
+    const PhpParser = require("php-parser");
+    phpParser = new PhpParser({ parser: { version: 803, suppressErrors: true }, ast: { withPositions: true } });
+  }
+  return phpParser;
+}
+
+function getPythonParser() {
+  if (!pythonParser) pythonParser = require("@lezer/python").parser;
+  return pythonParser;
+}
+
+function getTreeParser(languagePackage) {
+  const TreeSitter = require("tree-sitter");
+  const parser = new TreeSitter();
+  parser.setLanguage(require(languagePackage));
+  return parser;
+}
+
+function getJavaTreeParser() {
+  if (!javaTreeParser) javaTreeParser = getTreeParser("tree-sitter-java");
+  return javaTreeParser;
+}
+
+function getRustTreeParser() {
+  if (!rustTreeParser) rustTreeParser = getTreeParser("tree-sitter-rust");
+  return rustTreeParser;
+}
+
+function toPosix(value) {
+  return value.split(path.sep).join("/");
+}
+
+function extensionOf(filePath) {
+  return path.extname(filePath).toLowerCase();
+}
+
+function removeExtension(filePath) {
+  const extension = path.extname(filePath);
+  return extension ? filePath.slice(0, -extension.length) : filePath;
+}
+
+function walk(root, directory = root, output = []) {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (!IGNORED_DIRECTORIES.has(entry.name) && !entry.name.startsWith(".")) walk(root, path.join(directory, entry.name), output);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    const absolute = path.join(directory, entry.name);
+    if (CODE_EXTENSIONS.has(extensionOf(entry.name)) && fs.statSync(absolute).size <= 1_000_000) output.push(absolute);
+  }
+  return output;
+}
+
+function safelyReadJson(filePath, fallback = {}) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return fallback;
+  }
+}
+
+function readDescriptions(root) {
+  const current = path.join(root, ".flowpeek", "descriptions.json");
+  if (fs.existsSync(current)) return safelyReadJson(current, {});
+  return safelyReadJson(path.join(root, ".project-flow", "descriptions.json"), {});
+}
+
+function scriptKind(extension) {
+  if (extension === ".tsx") return ts.ScriptKind.TSX;
+  if (extension === ".jsx") return ts.ScriptKind.JSX;
+  if (extension === ".js" || extension === ".cjs" || extension === ".mjs") return ts.ScriptKind.JS;
+  return ts.ScriptKind.TS;
+}
+
+function isExported(node) {
+  return Boolean(node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword));
+}
+
+function hasHttpMethodName(node) {
+  return Boolean(node.name && HTTP_METHODS.has(node.name.text));
+}
+
+function classMethodNames(node) {
+  return node.members
+    .filter((member) => ts.isMethodDeclaration(member) && member.name && ts.isIdentifier(member.name))
+    .map((member) => member.name.text);
+}
+
+function evidenceFor(sourceFile, node, relativePath, parser) {
+  const start = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+  const end = sourceFile.getLineAndCharacterOfPosition(node.getEnd());
+  return {
+    parser,
+    file: relativePath,
+    range: { start: { line: start.line + 1, column: start.character + 1 }, end: { line: end.line + 1, column: end.character + 1 } },
+  };
+}
+
+function memberName(expression) {
+  if (ts.isPropertyAccessExpression(expression)) return expression.name.text;
+  return null;
+}
+
+function receiverName(expression) {
+  if (!ts.isPropertyAccessExpression(expression)) return null;
+  const receiver = expression.expression;
+  return ts.isIdentifier(receiver) ? receiver.text.toLowerCase() : null;
+}
+
+function stringLiteralValue(node) {
+  return node && (ts.isStringLiteralLike(node) || ts.isNoSubstitutionTemplateLiteral(node)) ? node.text : null;
+}
+
+function fetchMethod(node) {
+  const options = node.arguments[1];
+  if (!options || !ts.isObjectLiteralExpression(options)) return "GET";
+  for (const property of options.properties) {
+    if (!ts.isPropertyAssignment(property) || property.name.getText() !== "method") continue;
+    const method = stringLiteralValue(property.initializer)?.toUpperCase();
+    return HTTP_METHODS.has(method) ? method : "GET";
+  }
+  return "GET";
+}
+
+function joinHttpRoute(base = "", route = "") {
+  const segments = [base, route]
+    .map((value) => value.trim().replace(/^\/+|\/+$/g, ""))
+    .filter(Boolean);
+  return segments.length ? `/${segments.join("/")}` : "/";
+}
+
+function namedImportBindings(sourceFile, moduleName) {
+  const bindings = new Map();
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) || statement.moduleSpecifier.text !== moduleName) continue;
+    const named = statement.importClause?.namedBindings;
+    if (!named || !ts.isNamedImports(named)) continue;
+    for (const element of named.elements) bindings.set(element.name.text, element.propertyName?.text || element.name.text);
+  }
+  return bindings;
+}
+
+function namedImportReferences(sourceFile) {
+  const bindings = new Map();
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
+      const named = statement.importClause?.namedBindings;
+      if (named && ts.isNamedImports(named)) {
+        for (const element of named.elements) {
+          bindings.set(element.name.text, { specifier: statement.moduleSpecifier.text, exportedName: element.propertyName?.text || element.name.text });
+        }
+      }
+    }
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (!ts.isObjectBindingPattern(declaration.name) || !declaration.initializer || !ts.isCallExpression(declaration.initializer) || !ts.isIdentifier(declaration.initializer.expression) || declaration.initializer.expression.text !== "require") continue;
+        const specifier = stringLiteralValue(declaration.initializer.arguments[0]);
+        if (!specifier) continue;
+        for (const element of declaration.name.elements) {
+          if (!ts.isIdentifier(element.name)) continue;
+          bindings.set(element.name.text, { specifier, exportedName: element.propertyName?.getText(sourceFile) || element.name.text });
+        }
+      }
+    }
+  }
+  return bindings;
+}
+
+function enclosingTopLevelSymbol(node, sourceFile) {
+  for (let current = node.parent; current && current !== sourceFile; current = current.parent) {
+    if (ts.isClassDeclaration(current) && current.parent === sourceFile && current.name && ts.isIdentifier(current.name)) return { type: "class", name: current.name.text };
+    if (ts.isFunctionDeclaration(current) && current.parent === sourceFile && current.name && ts.isIdentifier(current.name)) return { type: "function", name: current.name.text };
+    if (ts.isVariableDeclaration(current) && ts.isIdentifier(current.name) && ts.isVariableDeclarationList(current.parent) && ts.isVariableStatement(current.parent.parent) && current.parent.parent.parent === sourceFile) {
+      return { type: "function", name: current.name.text };
+    }
+  }
+  return null;
+}
+
+function bindingHasName(binding, name) {
+  return Boolean(binding && ts.isIdentifier(binding.name) && binding.name.text === name);
+}
+
+function declarationListHasName(list, name) {
+  return Boolean(list?.declarations?.some((declaration) => bindingHasName(declaration, name)));
+}
+
+function blockShadowsName(block, name) {
+  return block.statements.some((statement) => {
+    if (ts.isVariableStatement(statement)) return declarationListHasName(statement.declarationList, name);
+    if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) return statement.name?.text === name;
+    return false;
+  });
+}
+
+function callNameIsShadowed(node, name, sourceFile) {
+  for (let current = node.parent; current && current !== sourceFile; current = current.parent) {
+    if (current.parameters?.some((parameter) => bindingHasName(parameter, name))) return true;
+    if (ts.isBlock(current) && blockShadowsName(current, name)) return true;
+    if (ts.isCatchClause(current) && bindingHasName(current.variableDeclaration, name)) return true;
+    if ((ts.isForStatement(current) || ts.isForInStatement(current) || ts.isForOfStatement(current)) && current.initializer && ts.isVariableDeclarationList(current.initializer) && declarationListHasName(current.initializer, name)) return true;
+  }
+  return false;
+}
+
+function runtimeIntegrationFacts(sourceFile, relativePath) {
+  const bindings = new Map();
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const factories = RUNTIME_FACTORIES[statement.moduleSpecifier.text];
+    const named = statement.importClause?.namedBindings;
+    if (!factories || !named || !ts.isNamedImports(named)) continue;
+    for (const element of named.elements) {
+      const exported = element.propertyName?.text || element.name.text;
+      if (factories[exported]) bindings.set(element.name.text, { ...factories[exported], package: statement.moduleSpecifier.text });
+    }
+  }
+  const integrations = [];
+  const runtimeActions = [];
+  const instances = new Map();
+  const rootIdentifier = (expression) => {
+    let current = expression;
+    while (ts.isPropertyAccessExpression(current)) current = current.expression;
+    return ts.isIdentifier(current) ? current.text : null;
+  };
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && (ts.isNewExpression(node.initializer) || ts.isCallExpression(node.initializer)) && ts.isIdentifier(node.initializer.expression)) {
+      const binding = bindings.get(node.initializer.expression.text);
+      const invocation = ts.isNewExpression(node.initializer) ? "new" : "call";
+      if (binding?.invocation === invocation) {
+        const queueName = binding.type === "queue" ? stringLiteralValue(node.initializer.arguments?.[0]) : null;
+        const integration = { instance: node.name.text, type: binding.type, package: binding.package, label: queueName ? `${queueName} ${binding.label}` : binding.label, evidence: evidenceFor(sourceFile, node, relativePath, "typescript-ast") };
+        integrations.push(integration);
+        instances.set(integration.instance, integration);
+      }
+    }
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const instance = instances.get(rootIdentifier(node.expression));
+      const method = node.expression.name.text;
+      const action = instance?.type === "database" && DATABASE_OPERATION_NAMES.has(method) ? "queries" : instance?.type === "queue" && QUEUE_OPERATION_NAMES.has(method) ? "queues" : null;
+      if (action) runtimeActions.push({ instance: instance.instance, type: action, source: enclosingTopLevelSymbol(node, sourceFile), evidence: evidenceFor(sourceFile, node, relativePath, "typescript-ast") });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return { integrations, runtimeActions };
+}
+
+function decoratorsFor(node) {
+  return ts.canHaveDecorators(node) ? ts.getDecorators(node) || [] : [];
+}
+
+function decoratorCall(node) {
+  if (!ts.isDecorator(node) || !ts.isCallExpression(node.expression) || !ts.isIdentifier(node.expression.expression)) return null;
+  return { name: node.expression.expression.text, argument: stringLiteralValue(node.expression.arguments[0]) || "" };
+}
+
+function nestEndpoints(sourceFile, relativePath) {
+  const bindings = namedImportBindings(sourceFile, "@nestjs/common");
+  if (!bindings.size) return [];
+  const endpoints = [];
+  const visit = (node) => {
+    if (ts.isClassDeclaration(node)) {
+      const controller = decoratorsFor(node)
+        .map(decoratorCall)
+        .find((decorator) => decorator && bindings.get(decorator.name) === "Controller");
+      if (controller) {
+        for (const member of node.members) {
+          if (!ts.isMethodDeclaration(member)) continue;
+          for (const decorator of decoratorsFor(member).map(decoratorCall)) {
+            const method = decorator && bindings.get(decorator.name);
+            if (method && HTTP_METHODS.has(method.toUpperCase())) {
+              endpoints.push({
+                method: method.toUpperCase(),
+                route: joinHttpRoute(controller.argument, decorator.argument),
+                evidence: evidenceFor(sourceFile, member, relativePath, "typescript-ast"),
+              });
+            }
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return endpoints;
+}
+
+function fastifyReceivers(sourceFile) {
+  const factories = new Set();
+  const receivers = new Set();
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) || statement.moduleSpecifier.text !== "fastify") continue;
+    if (statement.importClause?.name) factories.add(statement.importClause.name.text);
+    const named = statement.importClause?.namedBindings;
+    if (named && ts.isNamedImports(named)) {
+      for (const element of named.elements) if ((element.propertyName?.text || element.name.text) === "fastify") factories.add(element.name.text);
+    }
+  }
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && ts.isCallExpression(node.initializer)) {
+      if (ts.isIdentifier(node.initializer.expression) && factories.has(node.initializer.expression.text)) receivers.add(node.name.text.toLowerCase());
+      if (ts.isIdentifier(node.name) && ts.isIdentifier(node.initializer.expression) && node.initializer.expression.text === "require" && ts.isStringLiteralLike(node.initializer.arguments[0]) && node.initializer.arguments[0].text === "fastify") factories.add(node.name.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return receivers;
+}
+
+function contractPropertyName(node) {
+  if (ts.isIdentifier(node) || ts.isStringLiteralLike(node) || ts.isNumericLiteral(node)) return node.text;
+  return null;
+}
+
+function contractFieldType(node) {
+  if (!node) return "unknown";
+  if (node.kind === ts.SyntaxKind.StringKeyword) return "string";
+  if (node.kind === ts.SyntaxKind.NumberKeyword) return "number";
+  if (node.kind === ts.SyntaxKind.BooleanKeyword) return "boolean";
+  if (node.kind === ts.SyntaxKind.NullKeyword) return "null";
+  if (ts.isArrayTypeNode(node) || ts.isTupleTypeNode(node)) return "array";
+  if (ts.isTypeLiteralNode(node)) return "object";
+  if (ts.isLiteralTypeNode(node)) return contractFieldType(node.literal);
+  return "unknown";
+}
+
+function staticTypeLiteralFields(sourceFile, typeNode, relativePath) {
+  if (!typeNode || !ts.isTypeLiteralNode(typeNode)) return null;
+  const fields = [];
+  for (const member of typeNode.members) {
+    if (!ts.isPropertySignature(member) || !member.name) return null;
+    const name = contractPropertyName(member.name);
+    if (!name) return null;
+    fields.push({
+      name,
+      required: !member.questionToken,
+      type: contractFieldType(member.type),
+      evidence: evidenceFor(sourceFile, member, relativePath, "typescript-ast"),
+    });
+  }
+  return fields.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function staticObjectLiteralFields(sourceFile, object, relativePath) {
+  if (!object || !ts.isObjectLiteralExpression(object)) return null;
+  const fields = [];
+  for (const property of object.properties) {
+    if (ts.isSpreadAssignment(property)) return null;
+    if (ts.isPropertyAssignment(property)) {
+      const name = contractPropertyName(property.name);
+      if (!name) return null;
+      fields.push({ name, required: true, type: contractFieldType(property.initializer), evidence: evidenceFor(sourceFile, property, relativePath, "typescript-ast") });
+      continue;
+    }
+    if (ts.isShorthandPropertyAssignment(property)) {
+      fields.push({ name: property.name.text, required: true, type: "unknown", evidence: evidenceFor(sourceFile, property, relativePath, "typescript-ast") });
+      continue;
+    }
+    return null;
+  }
+  return fields.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function requestJsonTypeLiteral(call) {
+  let current = call;
+  while (current.parent) {
+    const parent = current.parent;
+    if (ts.isAwaitExpression(parent) || ts.isParenthesizedExpression(parent)) {
+      current = parent;
+      continue;
+    }
+    if ((ts.isAsExpression(parent) || ts.isTypeAssertionExpression(parent)) && parent.expression === current) return parent.type;
+    if (ts.isVariableDeclaration(parent) && parent.initializer === current) return parent.type || null;
+    return null;
+  }
+  return null;
+}
+
+function isRequestJsonCall(node, requestName) {
+  return ts.isCallExpression(node)
+    && ts.isPropertyAccessExpression(node.expression)
+    && node.expression.name.text === "json"
+    && ts.isIdentifier(node.expression.expression)
+    && node.expression.expression.text === requestName;
+}
+
+function isResponseJsonCall(node) {
+  return ts.isCallExpression(node)
+    && ts.isPropertyAccessExpression(node.expression)
+    && node.expression.name.text === "json"
+    && ts.isIdentifier(node.expression.expression)
+    && ["Response", "NextResponse"].includes(node.expression.expression.text);
+}
+
+function explicitResponseStatus(node) {
+  const options = node.arguments[1];
+  if (!options || !ts.isObjectLiteralExpression(options)) return null;
+  for (const property of options.properties) {
+    if (!ts.isPropertyAssignment(property) || contractPropertyName(property.name) !== "status" || !ts.isNumericLiteral(property.initializer)) continue;
+    return Number(property.initializer.text);
+  }
+  return null;
+}
+
+function returnedByHandler(node, handler) {
+  for (let current = node; current && current !== handler; current = current.parent) {
+    if (ts.isReturnStatement(current)) return true;
+    if (current !== node && ts.isFunctionLike(current)) return false;
+  }
+  return ts.isArrowFunction(handler) && handler.body === node;
+}
+
+function walkHandlerBody(handler, visit) {
+  const walk = (node) => {
+    if (node !== handler && ts.isFunctionLike(node)) return;
+    visit(node);
+    ts.forEachChild(node, walk);
+  };
+  if (handler.body) walk(handler.body);
+}
+
+function nextHandlerDefinitions(sourceFile) {
+  const handlers = [];
+  for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement) && isExported(statement) && hasHttpMethodName(statement)) handlers.push({ name: statement.name.text, node: statement });
+    if (!ts.isVariableStatement(statement) || !isExported(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name) || !HTTP_METHODS.has(declaration.name.text) || (!ts.isArrowFunction(declaration.initializer) && !ts.isFunctionExpression(declaration.initializer))) continue;
+      handlers.push({ name: declaration.name.text, node: declaration.initializer });
+    }
+  }
+  return handlers;
+}
+
+function nextRouteHandlerContracts(sourceFile, relativePath, routeInfo) {
+  const contracts = new Map();
+  if (!routeInfo?.handler) return contracts;
+  for (const handler of nextHandlerDefinitions(sourceFile)) {
+    const requestName = handler.node.parameters[0] && ts.isIdentifier(handler.node.parameters[0].name) ? handler.node.parameters[0].name.text : null;
+    const requestCandidates = [];
+    const variants = [];
+    walkHandlerBody(handler.node, (node) => {
+      if (requestName && isRequestJsonCall(node, requestName)) {
+        const fields = staticTypeLiteralFields(sourceFile, requestJsonTypeLiteral(node), relativePath);
+        if (fields) requestCandidates.push(fields);
+      }
+      if (!isResponseJsonCall(node) || !returnedByHandler(node, handler.node)) return;
+      const fields = staticObjectLiteralFields(sourceFile, node.arguments[0], relativePath);
+      const status = explicitResponseStatus(node);
+      if (!fields || !Number.isInteger(status)) return;
+      variants.push({ status, fields, evidence: evidenceFor(sourceFile, node, relativePath, "typescript-ast") });
+    });
+    const requestFields = requestCandidates.length === 1 ? requestCandidates[0] : null;
+    const responseVariants = [...new Map(variants.map((variant) => [`${variant.status}:${variant.fields.map((field) => `${field.name}:${field.type}:${field.required}`).join(",")}`, variant])).values()]
+      .sort((left, right) => left.status - right.status || left.fields.map((field) => field.name).join(",").localeCompare(right.fields.map((field) => field.name).join(",")));
+    contracts.set(handler.name, {
+      schemaVersion: "flowpeek-next-route-contract/v1",
+      adapter: "next-route-handler",
+      handlerName: handler.name,
+      request: requestFields
+        ? { status: "available", fields: requestFields, reason: null }
+        : { status: "unavailable", fields: [], reason: requestName ? "No single inline TypeScript object-literal schema was found for this handler's request.json() call." : "The handler has no simple identifier request parameter for parser-backed payload extraction." },
+      responses: responseVariants.length
+        ? { status: "available", variants: responseVariants, reason: null }
+        : { status: "unavailable", variants: [], reason: "No returned Response.json/NextResponse.json call with an object-literal body and explicit numeric status was found in this handler." },
+    });
+  }
+  return contracts;
+}
+
+function analyzeJavaScriptTypeScript(content, extension, relativePath, routeInfo) {
+  const sourceFile = ts.createSourceFile(relativePath, content, ts.ScriptTarget.Latest, true, scriptKind(extension));
+  const imports = [];
+  const endpoints = nestEndpoints(sourceFile, relativePath);
+  const requests = [];
+  const calls = [];
+  const methods = [];
+  const symbols = [];
+  const runtime = runtimeIntegrationFacts(sourceFile, relativePath);
+  const fastifyInstances = fastifyReceivers(sourceFile);
+  const importedBindings = namedImportReferences(sourceFile);
+  const nextContracts = nextRouteHandlerContracts(sourceFile, relativePath, routeInfo);
+  const addImport = (specifier, node) => imports.push({ specifier, evidence: evidenceFor(sourceFile, node, relativePath, "typescript-ast") });
+  const visit = (node) => {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) addImport(node.moduleSpecifier.text, node);
+    if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) addImport(node.moduleSpecifier.text, node);
+    if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference) && node.moduleReference.expression && ts.isStringLiteral(node.moduleReference.expression)) addImport(node.moduleReference.expression.text, node);
+    if (ts.isCallExpression(node)) {
+      const method = memberName(node.expression)?.toUpperCase();
+      const receiver = receiverName(node.expression);
+      const routeArgument = node.arguments[0];
+      if (HTTP_METHODS.has(method) && (["app", "router", "server"].includes(receiver) || fastifyInstances.has(receiver)) && routeArgument && ts.isStringLiteralLike(routeArgument)) {
+        endpoints.push({ method, route: routeArgument.text, evidence: evidenceFor(sourceFile, node, relativePath, "typescript-ast") });
+      }
+      if (ts.isIdentifier(node.expression) && node.expression.text === "fetch") {
+        const route = stringLiteralValue(node.arguments[0]);
+        if (route && route.startsWith("/")) requests.push({ method: fetchMethod(node), route, evidence: evidenceFor(sourceFile, node, relativePath, "typescript-ast") });
+      }
+      if (ts.isIdentifier(node.expression) && node.expression.text === "require" && node.arguments[0] && ts.isStringLiteralLike(node.arguments[0])) addImport(node.arguments[0].text, node);
+      if (ts.isIdentifier(node.expression) && node.expression.text !== "require" && !callNameIsShadowed(node, node.expression.text, sourceFile)) {
+        calls.push({ name: node.expression.text, source: enclosingTopLevelSymbol(node, sourceFile), imported: importedBindings.get(node.expression.text) || null, evidence: evidenceFor(sourceFile, node, relativePath, "typescript-ast") });
+      }
+    }
+    if (node.parent === sourceFile && ts.isClassDeclaration(node) && node.name && ts.isIdentifier(node.name)) {
+      symbols.push({ type: "class", name: node.name.text, methods: classMethodNames(node), evidence: evidenceFor(sourceFile, node, relativePath, "typescript-ast") });
+    }
+    if (node.parent === sourceFile && ts.isFunctionDeclaration(node) && node.name && ts.isIdentifier(node.name)) {
+      symbols.push({ type: "function", name: node.name.text, methods: [], evidence: evidenceFor(sourceFile, node, relativePath, "typescript-ast") });
+    }
+    if (node.parent === sourceFile && ts.isVariableStatement(node)) {
+      for (const declaration of node.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name) || !declaration.initializer || (!ts.isArrowFunction(declaration.initializer) && !ts.isFunctionExpression(declaration.initializer))) continue;
+        symbols.push({ type: "function", name: declaration.name.text, methods: [], evidence: evidenceFor(sourceFile, declaration, relativePath, "typescript-ast") });
+      }
+    }
+    if ((ts.isFunctionDeclaration(node) || ts.isVariableStatement(node)) && isExported(node)) {
+      if (ts.isFunctionDeclaration(node) && hasHttpMethodName(node) && routeInfo?.handler) endpoints.push({ method: node.name.text, route: routeInfo.route, handlerName: node.name.text, handlerType: "function", contract: nextContracts.get(node.name.text) || null, evidence: evidenceFor(sourceFile, node, relativePath, "typescript-ast") });
+      if (ts.isVariableStatement(node)) {
+        for (const declaration of node.declarationList.declarations) if (routeInfo?.handler && ts.isIdentifier(declaration.name) && HTTP_METHODS.has(declaration.name.text)) endpoints.push({ method: declaration.name.text, route: routeInfo.route, handlerName: declaration.name.text, handlerType: "function", contract: nextContracts.get(declaration.name.text) || null, evidence: evidenceFor(sourceFile, declaration, relativePath, "typescript-ast") });
+      }
+    }
+    if ((ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isMethodSignature(node)) && node.name && ts.isIdentifier(node.name)) methods.push(node.name.text);
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return {
+    imports,
+    endpoints,
+    requests,
+    calls,
+    integrations: runtime.integrations,
+    runtimeActions: runtime.runtimeActions,
+    methods: [...new Set(methods)].slice(0, 12),
+    symbols,
+    analysis: { parser: "typescript-ast", status: sourceFile.parseDiagnostics.length ? "parsed-with-diagnostics" : "parsed", confidence: "exact", diagnostics: sourceFile.parseDiagnostics.length },
+  };
+}
+
+function phpName(node) {
+  if (typeof node === "string") return node;
+  return typeof node?.name === "string" ? node.name : null;
+}
+
+function phpEvidence(node, relativePath) {
+  const location = node?.loc;
+  return {
+    parser: "php-parser",
+    file: relativePath,
+    range: {
+      start: { line: (location?.start?.line || 1), column: (location?.start?.column || 0) + 1 },
+      end: { line: (location?.end?.line || location?.start?.line || 1), column: (location?.end?.column || location?.start?.column || 0) + 1 },
+    },
+  };
+}
+
+function visitPhpAst(node, visit) {
+  if (Array.isArray(node)) {
+    for (const child of node) visitPhpAst(child, visit);
+    return;
+  }
+  if (!node || typeof node !== "object") return;
+  if (typeof node.kind === "string") visit(node);
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "loc" || key === "errors") continue;
+    visitPhpAst(value, visit);
+  }
+}
+
+function phpTopLevelDeclarations(nodes, declarations) {
+  for (const node of nodes || []) {
+    if (!node || typeof node !== "object") continue;
+    if (node.kind === "namespace") {
+      phpTopLevelDeclarations(node.children, declarations);
+      continue;
+    }
+    if (["class", "interface", "trait", "enum", "function"].includes(node.kind)) declarations.push(node);
+  }
+}
+
+function phpUseSpecifier(group, item) {
+  const prefix = phpName(group.name);
+  const name = phpName(item.name);
+  if (!name) return null;
+  return prefix ? `${prefix}\\${name}` : name;
+}
+
+function analyzePhp(content, relativePath) {
+  let ast;
+  try {
+    ast = getPhpParser().parseCode(content, relativePath);
+  } catch (error) {
+    return {
+      imports: [], endpoints: [], requests: [], calls: [], methods: [], symbols: [],
+      analysis: { parser: "php-parser", status: "parse-failed", confidence: "not-analyzed", diagnostics: 1, reason: error.message || "PHP parser failed." },
+    };
+  }
+
+  const imports = [];
+  visitPhpAst(ast, (node) => {
+    if (node.kind !== "usegroup") return;
+    for (const item of node.items || []) {
+      const specifier = phpUseSpecifier(node, item);
+      if (specifier) imports.push({ specifier, evidence: phpEvidence(item, relativePath) });
+    }
+  });
+
+  const declarations = [];
+  phpTopLevelDeclarations(ast.children, declarations);
+  const symbols = [];
+  const localFunctions = new Set();
+  const methods = [];
+  for (const declaration of declarations) {
+    const name = phpName(declaration.name);
+    if (!name) continue;
+    if (declaration.kind === "function") {
+      localFunctions.add(name);
+      symbols.push({ type: "function", name, methods: [], evidence: phpEvidence(declaration, relativePath) });
+      continue;
+    }
+    const declarationMethods = (declaration.body || [])
+      .filter((member) => member.kind === "method")
+      .map((member) => phpName(member.name))
+      .filter(Boolean);
+    methods.push(...declarationMethods);
+    symbols.push({ type: "class", name, methods: declarationMethods, evidence: phpEvidence(declaration, relativePath) });
+  }
+
+  const calls = [];
+  const declarationKinds = new Set(["class", "interface", "trait", "enum", "function"]);
+  const visitExecution = (node, source = null) => {
+    if (Array.isArray(node)) {
+      for (const child of node) visitExecution(child, source);
+      return;
+    }
+    if (!node || typeof node !== "object") return;
+    if (node.kind === "namespace") {
+      visitExecution(node.children, source);
+      return;
+    }
+    if (node.kind === "function") {
+      const name = phpName(node.name);
+      if (name) visitExecution(node.body, { type: "function", name });
+      return;
+    }
+    if (["class", "interface", "trait", "enum"].includes(node.kind)) {
+      const name = phpName(node.name);
+      for (const member of node.body || []) if (member.kind === "method" && member.body && name) visitExecution(member.body, { type: "class", name });
+      return;
+    }
+    if (node.kind === "closure" || node.kind === "arrowfunc") return;
+    if (node.kind === "call") {
+      const name = phpName(node.what);
+      if (name && !name.includes("\\") && localFunctions.has(name)) calls.push({ name, source, imported: null, evidence: phpEvidence(node, relativePath) });
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (key === "loc" || key === "errors" || (value && declarationKinds.has(value.kind))) continue;
+      visitExecution(value, source);
+    }
+  };
+  visitExecution(ast.children);
+
+  const diagnostics = Array.isArray(ast.errors) ? ast.errors.length : 0;
+  return {
+    imports,
+    endpoints: [],
+    requests: [],
+    calls,
+    methods: [...new Set(methods)].slice(0, 12),
+    symbols,
+    analysis: { parser: "php-parser", status: diagnostics ? "parsed-with-diagnostics" : "parsed", confidence: "exact", diagnostics },
+  };
+}
+
+function treeText(source, node) {
+  return node ? source.slice(node.startIndex, node.endIndex) : null;
+}
+
+function treeEvidence(node, relativePath, parser) {
+  return {
+    parser,
+    file: relativePath,
+    range: {
+      start: { line: node.startPosition.row + 1, column: node.startPosition.column + 1 },
+      end: { line: node.endPosition.row + 1, column: node.endPosition.column + 1 },
+    },
+  };
+}
+
+function treeErrorCount(node) {
+  let count = node.type === "ERROR" || node.isMissing ? 1 : 0;
+  for (const child of node.children) count += treeErrorCount(child);
+  return count;
+}
+
+function parseTreeSource(parser, content) {
+  // The Node Tree-sitter bridge asks string inputs through a fixed-size buffer.
+  // Size it for the whole source so larger files do not make a repository scan fail.
+  return parser.parse(content, undefined, { bufferSize: Math.max(32_769, Buffer.byteLength(content, "utf8") + 1) });
+}
+
+function javaTypeBody(node) {
+  return node.childForFieldName("body") || node.namedChildren.find((child) => child.type.endsWith("_body")) || null;
+}
+
+function javaMethodDetails(typeDeclaration, content) {
+  return (javaTypeBody(typeDeclaration)?.namedChildren || [])
+    .filter((member) => member.type === "method_declaration")
+    .map((method) => {
+      const name = treeText(content, method.childForFieldName("name"));
+      const modifiers = method.namedChildren.find((child) => child.type === "modifiers");
+      const isStatic = Boolean(modifiers?.children.some((child) => child.type === "static"));
+      return name ? { node: method, name, isStatic } : null;
+    })
+    .filter(Boolean);
+}
+
+function javaInvocationBelongsToMethod(invocation, method) {
+  let current = invocation.parent;
+  for (; current && current !== method; current = current.parent) {
+    if (["class_declaration", "interface_declaration", "enum_declaration", "record_declaration", "annotation_type_declaration", "lambda_expression"].includes(current.type)) return false;
+  }
+  return current === method;
+}
+
+function analyzeJava(content, relativePath) {
+  const tree = parseTreeSource(getJavaTreeParser(), content);
+  const root = tree.rootNode;
+  const imports = root.namedChildren
+    .filter((node) => node.type === "import_declaration")
+    .map((node) => node.namedChildren.find((child) => child.type === "identifier" || child.type === "scoped_identifier"))
+    .filter(Boolean)
+    .map((node) => {
+      const specifier = treeText(content, node);
+      return { specifier, standard: specifier.startsWith("java.") || specifier.startsWith("javax."), evidence: treeEvidence(node, relativePath, "tree-sitter-java") };
+    });
+  const symbols = [];
+  const calls = [];
+  for (const declaration of root.namedChildren.filter((node) => ["class_declaration", "interface_declaration", "enum_declaration", "record_declaration", "annotation_type_declaration"].includes(node.type))) {
+    const typeName = treeText(content, declaration.childForFieldName("name"));
+    if (!typeName) continue;
+    const methods = javaMethodDetails(declaration, content);
+    symbols.push({ type: "class", name: typeName, methods: methods.map((method) => method.name), evidence: treeEvidence(declaration, relativePath, "tree-sitter-java") });
+    const staticNameCounts = new Map();
+    for (const method of methods.filter((method) => method.isStatic)) staticNameCounts.set(method.name, (staticNameCounts.get(method.name) || 0) + 1);
+    const uniqueStaticMethods = methods.filter((method) => method.isStatic && staticNameCounts.get(method.name) === 1);
+    const uniqueStaticNames = new Set(uniqueStaticMethods.map((method) => method.name));
+    for (const method of uniqueStaticMethods) {
+      const qualifiedName = `${typeName}.${method.name}`;
+      symbols.push({ type: "function", name: qualifiedName, methods: [], evidence: treeEvidence(method.node, relativePath, "tree-sitter-java") });
+      const body = method.node.childForFieldName("body");
+      for (const invocation of body?.descendantsOfType("method_invocation") || []) {
+        if (!javaInvocationBelongsToMethod(invocation, method.node) || invocation.childForFieldName("object")) continue;
+        const targetName = treeText(content, invocation.childForFieldName("name"));
+        if (targetName && uniqueStaticNames.has(targetName)) calls.push({ name: `${typeName}.${targetName}`, source: { type: "function", name: qualifiedName }, imported: null, evidence: treeEvidence(invocation, relativePath, "tree-sitter-java") });
+      }
+    }
+  }
+  const diagnostics = root.hasError ? treeErrorCount(root) : 0;
+  return {
+    imports,
+    endpoints: [],
+    requests: [],
+    calls,
+    methods: [...new Set(symbols.flatMap((symbol) => symbol.methods))].slice(0, 12),
+    symbols,
+    analysis: { parser: "tree-sitter-java", status: diagnostics ? "parsed-with-diagnostics" : "parsed", confidence: "exact", diagnostics },
+  };
+}
+
+function rustTypeName(node, content) {
+  const type = node.childForFieldName("type");
+  if (!type) return null;
+  if (type.type === "type_identifier") return treeText(content, type);
+  const nested = type.descendantsOfType("type_identifier")[0];
+  return treeText(content, nested);
+}
+
+function rustDeclarationMethods(node, content) {
+  const body = node.childForFieldName("body");
+  return (body?.namedChildren || [])
+    .filter((member) => member.type === "function_item" || member.type === "function_signature_item")
+    .map((member) => treeText(content, member.childForFieldName("name")))
+    .filter(Boolean);
+}
+
+function rustPathSegments(node, content) {
+  if (!node) return [];
+  if (["identifier", "crate", "self", "super"].includes(node.type)) {
+    const segment = treeText(content, node);
+    return segment ? [segment] : [];
+  }
+  if (node.type === "scoped_identifier") {
+    return [
+      ...rustPathSegments(node.childForFieldName("path"), content),
+      ...rustPathSegments(node.childForFieldName("name"), content),
+    ];
+  }
+  return [];
+}
+
+function rustImportFact(segments, evidence, localName = null) {
+  const specifier = segments.join("::");
+  const exportedName = segments.at(-1);
+  const standard = ["std", "core", "alloc"].includes(segments[0]);
+  const internal = ["crate", "self", "super"].includes(segments[0]);
+  const binding = localName || (exportedName && exportedName !== "*" ? exportedName : null);
+  return {
+    specifier,
+    language: "rust",
+    standard,
+    internal,
+    ...(binding ? { binding: { localName: binding, exportedName } } : {}),
+    evidence,
+  };
+}
+
+function rustUseFacts(node, content, relativePath, prefix = []) {
+  if (node.type === "scoped_use_list") {
+    const nextPrefix = [...prefix, ...rustPathSegments(node.childForFieldName("path"), content)];
+    const list = node.childForFieldName("list");
+    return (list?.namedChildren || []).flatMap((child) => rustUseFacts(child, content, relativePath, nextPrefix));
+  }
+  if (node.type === "use_list") return node.namedChildren.flatMap((child) => rustUseFacts(child, content, relativePath, prefix));
+  if (node.type === "use_as_clause") {
+    const segments = [...prefix, ...rustPathSegments(node.childForFieldName("path"), content)];
+    const alias = treeText(content, node.childForFieldName("alias"));
+    return segments.length ? [rustImportFact(segments, treeEvidence(node, relativePath, "tree-sitter-rust"), alias || null)] : [];
+  }
+  if (node.type === "use_wildcard") {
+    const segments = [...prefix, ...rustPathSegments(node.namedChildren[0], content), "*"];
+    return segments.length > 1 ? [rustImportFact(segments, treeEvidence(node, relativePath, "tree-sitter-rust"))] : [];
+  }
+  const segments = [...prefix, ...rustPathSegments(node, content)];
+  return segments.length ? [rustImportFact(segments, treeEvidence(node, relativePath, "tree-sitter-rust"))] : [];
+}
+
+function visitRustCalls(node, source, localFunctions, importedBindings, content, relativePath, calls) {
+  if (node.type === "closure_expression") return;
+  if (node.type === "call_expression") {
+    const target = node.childForFieldName("function");
+    if (target?.type === "identifier") {
+      const name = treeText(content, target);
+      if (localFunctions.has(name)) calls.push({ name, source, imported: null, evidence: treeEvidence(node, relativePath, "tree-sitter-rust") });
+      else if (importedBindings.has(name)) calls.push({ name, source, imported: importedBindings.get(name), evidence: treeEvidence(node, relativePath, "tree-sitter-rust") });
+    }
+  }
+  for (const child of node.namedChildren) visitRustCalls(child, source, localFunctions, importedBindings, content, relativePath, calls);
+}
+
+function analyzeRust(content, relativePath) {
+  const tree = parseTreeSource(getRustTreeParser(), content);
+  const root = tree.rootNode;
+  const imports = root.namedChildren
+    .filter((node) => node.type === "use_declaration")
+    .map((node) => node.childForFieldName("argument"))
+    .filter(Boolean)
+    .flatMap((node) => rustUseFacts(node, content, relativePath));
+  const importedBindings = new Map(imports
+    .filter((imported) => imported.binding)
+    .map((imported) => [imported.binding.localName, { specifier: imported.specifier, exportedName: imported.binding.exportedName }]));
+  const typeDeclarations = root.namedChildren.filter((node) => ["struct_item", "enum_item", "trait_item", "union_item"].includes(node.type));
+  const typeSymbols = new Map();
+  for (const declaration of typeDeclarations) {
+    const name = treeText(content, declaration.childForFieldName("name"));
+    if (name) typeSymbols.set(name, { type: "class", name, methods: rustDeclarationMethods(declaration, content), evidence: treeEvidence(declaration, relativePath, "tree-sitter-rust") });
+  }
+  for (const implementation of root.namedChildren.filter((node) => node.type === "impl_item")) {
+    const name = rustTypeName(implementation, content);
+    const symbol = typeSymbols.get(name);
+    if (symbol) symbol.methods.push(...rustDeclarationMethods(implementation, content));
+  }
+  const functionDeclarations = root.namedChildren.filter((node) => node.type === "function_item");
+  const localFunctions = new Set(functionDeclarations.map((node) => treeText(content, node.childForFieldName("name"))).filter(Boolean));
+  const symbols = [
+    ...[...typeSymbols.values()].map((symbol) => ({ ...symbol, methods: [...new Set(symbol.methods)] })),
+    ...functionDeclarations.map((node) => {
+      const name = treeText(content, node.childForFieldName("name"));
+      return name ? { type: "function", name, methods: [], evidence: treeEvidence(node, relativePath, "tree-sitter-rust") } : null;
+    }).filter(Boolean),
+  ];
+  const calls = [];
+  for (const declaration of functionDeclarations) {
+    const name = treeText(content, declaration.childForFieldName("name"));
+    const body = declaration.childForFieldName("body");
+    if (name && body) visitRustCalls(body, { type: "function", name }, localFunctions, importedBindings, content, relativePath, calls);
+  }
+  for (const implementation of root.namedChildren.filter((node) => node.type === "impl_item")) {
+    const name = rustTypeName(implementation, content);
+    const body = implementation.childForFieldName("body");
+    if (name && typeSymbols.has(name) && body) {
+      for (const method of body.namedChildren.filter((node) => node.type === "function_item")) {
+        const methodBody = method.childForFieldName("body");
+        if (methodBody) visitRustCalls(methodBody, { type: "class", name }, localFunctions, importedBindings, content, relativePath, calls);
+      }
+    }
+  }
+  const diagnostics = root.hasError ? treeErrorCount(root) : 0;
+  return {
+    imports,
+    endpoints: [],
+    requests: [],
+    calls,
+    methods: [...new Set(symbols.filter((symbol) => symbol.type === "class").flatMap((symbol) => symbol.methods))].slice(0, 12),
+    symbols,
+    analysis: { parser: "tree-sitter-rust", status: diagnostics ? "parsed-with-diagnostics" : "parsed", confidence: "exact", diagnostics },
+  };
+}
+
+function syntaxTreeChildren(node) {
+  const children = [];
+  for (let child = node.firstChild; child; child = child.nextSibling) children.push(child);
+  return children;
+}
+
+function visitSyntaxTree(node, visit) {
+  visit(node);
+  for (const child of syntaxTreeChildren(node)) visitSyntaxTree(child, visit);
+}
+
+function findSyntaxTreeNode(node, name) {
+  if (node.name === name) return node;
+  for (const child of syntaxTreeChildren(node)) {
+    const match = findSyntaxTreeNode(child, name);
+    if (match) return match;
+  }
+  return null;
+}
+
+function pythonEvidence(content, node, relativePath) {
+  return {
+    parser: "python-lezer",
+    file: relativePath,
+    range: { start: positionFromOffset(content, node.from), end: positionFromOffset(content, node.to) },
+  };
+}
+
+function pythonImportFacts(node, content) {
+  const tokens = syntaxTreeChildren(node).map((child) => ({ name: child.name, text: content.slice(child.from, child.to) }));
+  if (tokens[0]?.name === "import") {
+    const imports = [];
+    let specifier = "";
+    let readingAlias = false;
+    const finish = () => {
+      if (specifier) imports.push(specifier);
+      specifier = "";
+      readingAlias = false;
+    };
+    for (const token of tokens.slice(1)) {
+      if (token.name === ",") finish();
+      else if (token.name === "as") readingAlias = true;
+      else if (!readingAlias) specifier += token.text;
+    }
+    finish();
+    return imports;
+  }
+  if (tokens[0]?.name !== "from") return [];
+  let module = "";
+  let hasModuleName = false;
+  let readingModule = true;
+  let readingAlias = false;
+  const importedNames = [];
+  for (const token of tokens.slice(1)) {
+    if (token.name === "import") {
+      readingModule = false;
+      continue;
+    }
+    if (readingModule) {
+      module += token.text;
+      if (token.name === "VariableName") hasModuleName = true;
+      continue;
+    }
+    if (token.name === ",") {
+      readingAlias = false;
+      continue;
+    }
+    if (token.name === "as") {
+      readingAlias = true;
+      continue;
+    }
+    if (!readingAlias && token.name === "VariableName") importedNames.push(token.text);
+  }
+  if (hasModuleName) return module ? [module] : [];
+  return importedNames.map((name) => `${module}${name}`);
+}
+
+function pythonStringLiteral(content, node) {
+  const text = content.slice(node.from, node.to);
+  const quote = text[0];
+  if ((quote !== "\"" && quote !== "'") || text.length < 2 || text.at(-1) !== quote) return null;
+  const value = text.slice(1, -1);
+  return value.includes("\\") ? null : value;
+}
+
+function pythonStringValues(node, content) {
+  const values = [];
+  visitSyntaxTree(node, (child) => {
+    if (child.name !== "String") return;
+    const value = pythonStringLiteral(content, child);
+    if (value !== null) values.push(value);
+  });
+  return values;
+}
+
+function pythonRouteDecoratorMethods(argumentList, content) {
+  const children = syntaxTreeChildren(argumentList);
+  for (let index = 0; index < children.length; index += 1) {
+    const candidate = children[index];
+    if (candidate.name !== "VariableName" || content.slice(candidate.from, candidate.to) !== "methods") continue;
+    const value = children[index + 2];
+    if (children[index + 1]?.name !== "AssignOp") return { declared: true, methods: [] };
+    if (value?.name !== "ArrayExpression") return { declared: true, methods: [] };
+    return { declared: true, methods: pythonStringValues(value, content).map((method) => method.toUpperCase()).filter((method) => HTTP_METHODS.has(method)) };
+  }
+  return { declared: false, methods: [] };
+}
+
+function pythonDecoratorEndpoints(node, content, relativePath, routeReceivers) {
+  const children = syntaxTreeChildren(node);
+  const names = children.filter((child) => child.name === "VariableName").map((child) => content.slice(child.from, child.to).toLowerCase());
+  const argumentList = children.find((child) => child.name === "ArgList");
+  const routeNode = argumentList && findSyntaxTreeNode(argumentList, "String");
+  const route = routeNode && pythonStringLiteral(content, routeNode);
+  if (!route || !routeReceivers.has(names[0])) return [];
+  const method = names[1]?.toUpperCase();
+  const methods = HTTP_METHODS.has(method)
+    ? [method]
+    : names[1] === "route"
+      ? (() => {
+        const explicit = pythonRouteDecoratorMethods(argumentList, content);
+        return explicit.declared ? explicit.methods : ["GET"];
+      })()
+      : [];
+  return methods.map((httpMethod) => ({
+    method: httpMethod,
+    route,
+    confidence: "likely",
+    detectedResponsibility: "Possible HTTP endpoint detected from a Python framework decorator.",
+    evidence: pythonEvidence(content, node, relativePath),
+  }));
+}
+
+function pythonFlaskFactoryNames(importedBindings) {
+  const names = new Set(["Flask", "Blueprint"]);
+  for (const [localName, binding] of importedBindings) {
+    if (binding.specifier === "flask" && ["Flask", "Blueprint"].includes(binding.exportedName)) names.add(localName);
+  }
+  return names;
+}
+
+function pythonFlaskRouteReceivers(root, content, factoryNames) {
+  const receivers = new Set(["app", "api", "router", "server", "blueprint", "bp"]);
+  visitSyntaxTree(root, (node) => {
+    if (node.name !== "AssignStatement") return;
+    const children = syntaxTreeChildren(node);
+    const assignmentIndex = children.findIndex((child) => child.name === "AssignOp");
+    if (assignmentIndex < 1) return;
+    const targetNames = children.slice(0, assignmentIndex)
+      .filter((child) => child.name === "VariableName")
+      .map((child) => content.slice(child.from, child.to).toLowerCase());
+    const call = children.slice(assignmentIndex + 1).find((child) => child.name === "CallExpression");
+    const callee = call && syntaxTreeChildren(call).find((child) => child.name === "VariableName");
+    if (!callee || !factoryNames.has(content.slice(callee.from, callee.to))) return;
+    targetNames.forEach((name) => receivers.add(name));
+  });
+  return receivers;
+}
+
+function pythonSymbol(node, content, relativePath) {
+  const name = syntaxTreeChildren(node).find((child) => child.name === "VariableName");
+  if (!name) return null;
+  if (node.name === "ClassDefinition") {
+    const body = syntaxTreeChildren(node).find((child) => child.name === "Body");
+    const methods = body
+      ? syntaxTreeChildren(body)
+        .filter((child) => child.name === "FunctionDefinition")
+        .map((child) => syntaxTreeChildren(child).find((nested) => nested.name === "VariableName"))
+        .filter(Boolean)
+        .map((child) => content.slice(child.from, child.to))
+      : [];
+    return { type: "class", name: content.slice(name.from, name.to), methods, evidence: pythonEvidence(content, node, relativePath) };
+  }
+  if (node.name === "FunctionDefinition") return { type: "function", name: content.slice(name.from, name.to), methods: [], evidence: pythonEvidence(content, node, relativePath) };
+  return null;
+}
+
+function pythonNamedImportReferences(node, content) {
+  const tokens = syntaxTreeChildren(node).map((child) => ({ name: child.name, text: content.slice(child.from, child.to) }));
+  if (tokens[0]?.name !== "from") return new Map();
+  let module = "";
+  let importIndex = -1;
+  for (let index = 1; index < tokens.length; index += 1) {
+    if (tokens[index].name === "import") {
+      importIndex = index;
+      break;
+    }
+    module += tokens[index].text;
+  }
+  if (!module || importIndex < 0) return new Map();
+  const bindings = new Map();
+  let pendingName = null;
+  let readingAlias = false;
+  const finish = () => {
+    if (pendingName) bindings.set(pendingName, { specifier: module, exportedName: pendingName });
+    pendingName = null;
+    readingAlias = false;
+  };
+  for (const token of tokens.slice(importIndex + 1)) {
+    if (token.name === ",") {
+      finish();
+      continue;
+    }
+    if (token.name === "as") {
+      readingAlias = true;
+      continue;
+    }
+    if (token.name !== "VariableName") continue;
+    if (readingAlias && pendingName) {
+      bindings.set(token.text, { specifier: module, exportedName: pendingName });
+      pendingName = null;
+      readingAlias = false;
+    } else {
+      finish();
+      pendingName = token.text;
+    }
+  }
+  finish();
+  return bindings;
+}
+
+function pythonDeclarationName(node, content) {
+  const name = syntaxTreeChildren(node).find((child) => child.name === "VariableName");
+  return name ? content.slice(name.from, name.to) : null;
+}
+
+function pythonIsTopLevelDeclaration(node, root) {
+  const isRoot = (candidate) => candidate && candidate.name === root.name && candidate.from === root.from && candidate.to === root.to;
+  return isRoot(node.parent) || (node.parent?.name === "DecoratedStatement" && isRoot(node.parent.parent));
+}
+
+function pythonEnclosingTopLevelSymbol(node, root, content) {
+  for (let current = node.parent; current && current !== root; current = current.parent) {
+    if (!pythonIsTopLevelDeclaration(current, root)) continue;
+    if (current.name === "FunctionDefinition") return { type: "function", name: pythonDeclarationName(current, content) };
+    if (current.name === "ClassDefinition") return { type: "class", name: pythonDeclarationName(current, content) };
+  }
+  return null;
+}
+
+function pythonBoundNames(functionNode, content) {
+  const names = new Set();
+  const parameterList = syntaxTreeChildren(functionNode).find((child) => child.name === "ParamList");
+  for (const parameter of parameterList ? syntaxTreeChildren(parameterList) : []) {
+    if (parameter.name === "VariableName") names.add(content.slice(parameter.from, parameter.to));
+  }
+  const body = syntaxTreeChildren(functionNode).find((child) => child.name === "Body");
+  const visit = (node) => {
+    if (node !== body && node.name === "FunctionDefinition") {
+      const name = pythonDeclarationName(node, content);
+      if (name) names.add(name);
+      return;
+    }
+    const children = syntaxTreeChildren(node);
+    if (node.name === "AssignStatement") {
+      for (const child of children) {
+        if (child.name === "AssignOp") break;
+        if (child.name === "VariableName") names.add(content.slice(child.from, child.to));
+      }
+    }
+    if (node.name === "ForStatement") {
+      for (const child of children) {
+        if (child.name === "in") break;
+        if (child.name === "VariableName") names.add(content.slice(child.from, child.to));
+      }
+    }
+    for (const child of children) visit(child);
+  };
+  if (body) visit(body);
+  return names;
+}
+
+function pythonCallNameIsShadowed(node, name, content, bindingCache) {
+  for (let current = node.parent; current; current = current.parent) {
+    if (current.name !== "FunctionDefinition") continue;
+    if (!bindingCache.has(current)) bindingCache.set(current, pythonBoundNames(current, content));
+    return bindingCache.get(current).has(name);
+  }
+  return false;
+}
+
+function analyzePython(content, relativePath) {
+  try {
+    const tree = getPythonParser().parse(content);
+    const imports = [];
+    const endpoints = [];
+    const calls = [];
+    const methods = [];
+    const symbols = [];
+    const importedBindings = new Map();
+    const bindingCache = new Map();
+    let diagnostics = 0;
+    visitSyntaxTree(tree.topNode, (node) => {
+      if (node.name !== "ImportStatement") return;
+      for (const specifier of pythonImportFacts(node, content)) imports.push({ specifier, language: "python", evidence: pythonEvidence(content, node, relativePath) });
+      for (const [name, binding] of pythonNamedImportReferences(node, content)) importedBindings.set(name, binding);
+    });
+    const routeReceivers = pythonFlaskRouteReceivers(tree.topNode, content, pythonFlaskFactoryNames(importedBindings));
+    visitSyntaxTree(tree.topNode, (node) => {
+      if (node.name === "⚠") diagnostics += 1;
+      if (node.name === "CallExpression") {
+        const callee = syntaxTreeChildren(node).find((child) => child.name === "VariableName");
+        const name = callee && content.slice(callee.from, callee.to);
+        if (name && !pythonCallNameIsShadowed(node, name, content, bindingCache)) {
+          calls.push({ name, source: pythonEnclosingTopLevelSymbol(node, tree.topNode, content), imported: importedBindings.get(name) || null, evidence: pythonEvidence(content, node, relativePath) });
+        }
+      }
+      if (node.name === "FunctionDefinition") {
+        const name = syntaxTreeChildren(node).find((child) => child.name === "VariableName");
+        if (name) methods.push(content.slice(name.from, name.to));
+      }
+      if (node.name === "DecoratedStatement") {
+        for (const decorator of syntaxTreeChildren(node).filter((child) => child.name === "Decorator")) {
+          endpoints.push(...pythonDecoratorEndpoints(decorator, content, relativePath, routeReceivers));
+        }
+      }
+    });
+    for (const statement of syntaxTreeChildren(tree.topNode)) {
+      const declaration = statement.name === "DecoratedStatement"
+        ? syntaxTreeChildren(statement).find((child) => ["ClassDefinition", "FunctionDefinition"].includes(child.name))
+        : statement;
+      const symbol = declaration && pythonSymbol(declaration, content, relativePath);
+      if (symbol) symbols.push(symbol);
+    }
+    return {
+      imports,
+      endpoints,
+      requests: [],
+      calls,
+      methods: [...new Set(methods)].slice(0, 12),
+      symbols,
+      analysis: { parser: "python-lezer", status: diagnostics ? "parsed-with-diagnostics" : "parsed", confidence: "exact", diagnostics },
+    };
+  } catch (error) {
+    return { imports: [], endpoints: [], requests: [], calls: [], methods: [], symbols: [], analysis: { parser: "python-lezer", status: "parse-failed", confidence: "not-analyzed", reason: error.message } };
+  }
+}
+
+function positionFromOffset(content, offset) {
+  let line = 1;
+  let column = 1;
+  for (let index = 0; index < offset; index += 1) {
+    if (content[index] === "\n") {
+      line += 1;
+      column = 1;
+    } else column += 1;
+  }
+  return { line, column };
+}
+
+function svelteCompiler(root) {
+  try {
+    const targetCompiler = createRequire(path.join(root, "package.json"))("svelte/compiler");
+    if (targetCompiler?.parse) return targetCompiler;
+  } catch {}
+  try {
+    return require("svelte/compiler");
+  } catch {
+    return null;
+  }
+}
+
+function analyzeSvelte(content, relativePath, root) {
+  const compiler = svelteCompiler(root);
+  if (!compiler?.parse) return analyzeInventory(relativePath, ".svelte");
+  try {
+    const ast = compiler.parse(content);
+    const imports = [];
+    const visited = new WeakSet();
+    const visit = (value) => {
+      if (!value || typeof value !== "object") return;
+      if (visited.has(value)) return;
+      visited.add(value);
+      if (value.type === "ImportDeclaration" && typeof value.source?.value === "string") {
+        const start = typeof value.start === "number" ? value.start : 0;
+        const end = typeof value.end === "number" ? value.end : start;
+        imports.push({ specifier: value.source.value, evidence: { parser: "svelte-compiler", file: relativePath, range: { start: positionFromOffset(content, start), end: positionFromOffset(content, end) } } });
+      }
+      for (const child of Object.values(value)) {
+        if (Array.isArray(child)) child.forEach(visit);
+        else visit(child);
+      }
+    };
+    visit(ast.module);
+    visit(ast.instance);
+    return { imports, endpoints: [], requests: [], calls: [], methods: [], symbols: [], analysis: { parser: "svelte-compiler", status: "parsed", confidence: "exact", diagnostics: 0 } };
+  } catch (error) {
+    return { imports: [], endpoints: [], requests: [], calls: [], methods: [], symbols: [], analysis: { parser: "svelte-compiler", status: "parse-failed", confidence: "not-analyzed", reason: error.message } };
+  }
+}
+
+function analyzeFile(content, extension, relativePath, root, goFact = null) {
+  if (JS_TS_EXTENSIONS.has(extension)) return analyzeJavaScriptTypeScript(content, extension, relativePath, frameworkRoute(relativePath));
+  if (extension === ".svelte") return analyzeSvelte(content, relativePath, root);
+  if (extension === ".py") return analyzePython(content, relativePath);
+  if (extension === ".php") return analyzePhp(content, relativePath);
+  if (extension === ".java") return analyzeJava(content, relativePath);
+  if (extension === ".rs") return analyzeRust(content, relativePath);
+  if (extension === ".go") return analyzeGoFact(goFact, relativePath);
+  if (extension === ".cs") return analyzeCSharpFact(goFact, relativePath);
+  return analyzeInventory(relativePath, extension);
+}
+
+function summarizeFileCoverage(records) {
+  const summary = { scannedFiles: 0, parsedFiles: 0, parsedWithDiagnosticsFiles: 0, inventoryOnlyFiles: 0, parseFailedFiles: 0 };
+  const byLanguage = new Map();
+  for (const record of records) {
+    const language = record.node.language;
+    if (!byLanguage.has(language)) byLanguage.set(language, { language, files: 0, parsed: 0, parsedWithDiagnostics: 0, inventoryOnly: 0, parseFailed: 0, parsers: new Set() });
+    const languageSummary = byLanguage.get(language);
+    const status = record.result.analysis.status;
+    summary.scannedFiles += 1;
+    languageSummary.files += 1;
+    languageSummary.parsers.add(record.result.analysis.parser);
+    if (status.startsWith("parsed")) {
+      summary.parsedFiles += 1;
+      languageSummary.parsed += 1;
+    }
+    if (status === "parsed-with-diagnostics") {
+      summary.parsedWithDiagnosticsFiles += 1;
+      languageSummary.parsedWithDiagnostics += 1;
+    }
+    if (status === "inventory-only") {
+      summary.inventoryOnlyFiles += 1;
+      languageSummary.inventoryOnly += 1;
+    }
+    if (status === "parse-failed") {
+      summary.parseFailedFiles += 1;
+      languageSummary.parseFailed += 1;
+    }
+  }
+  return {
+    summary,
+    byLanguage: [...byLanguage.values()]
+      .map(({ parsers, ...languageSummary }) => ({ ...languageSummary, parsers: [...parsers].sort() }))
+      .sort((left, right) => left.language.localeCompare(right.language)),
+    interpretation: "Coverage counts syntax-tree analysis status, not runtime execution coverage or relationship precision.",
+  };
+}
+
+function resolveFile(root, base) {
+  const candidates = [];
+  for (const extension of RESOLVE_EXTENSIONS) candidates.push(base + extension);
+  for (const extension of RESOLVE_EXTENSIONS.slice(1)) candidates.push(path.join(base, `index${extension}`));
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return toPosix(path.relative(root, candidate));
+  }
+  return null;
+}
+
+function pathPatternMatch(pattern, specifier) {
+  const wildcard = pattern.indexOf("*");
+  if (wildcard < 0) return pattern === specifier ? "" : null;
+  const prefix = pattern.slice(0, wildcard);
+  const suffix = pattern.slice(wildcard + 1);
+  if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix)) return null;
+  return specifier.slice(prefix.length, specifier.length - suffix.length);
+}
+
+function resolvePythonFile(root, base) {
+  const candidates = [`${base}.py`, path.join(base, "__init__.py")];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return toPosix(path.relative(root, candidate));
+  }
+  return null;
+}
+
+function resolvePythonImport(root, fromFile, specifier) {
+  if (specifier.startsWith(".")) {
+    let dots = 0;
+    while (specifier[dots] === ".") dots += 1;
+    let base = path.dirname(fromFile);
+    for (let index = 1; index < dots; index += 1) base = path.dirname(base);
+    const segments = specifier.slice(dots).split(".").filter(Boolean);
+    return resolvePythonFile(root, path.join(base, ...segments));
+  }
+  const segments = specifier.split(".").filter(Boolean);
+  for (const sourceRoot of [root, path.join(root, "src")]) {
+    const resolved = resolvePythonFile(root, path.join(sourceRoot, ...segments));
+    if (resolved) return resolved;
+  }
+  return null;
+}
+
+function nearestCargoPackageDirectory(root, fromFile) {
+  for (let directory = path.dirname(fromFile); ; directory = path.dirname(directory)) {
+    const manifest = path.join(directory, "Cargo.toml");
+    if (fs.existsSync(manifest) && fs.statSync(manifest).isFile()) return directory;
+    if (directory === root || path.dirname(directory) === directory) return null;
+  }
+}
+
+function rustSourceRoot(packageDirectory) {
+  const source = path.join(packageDirectory, "src");
+  return fs.existsSync(source) && fs.statSync(source).isDirectory() ? source : null;
+}
+
+function rustModulePath(sourceRoot, fromFile) {
+  const relative = path.relative(sourceRoot, fromFile);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return [];
+  const segments = toPosix(relative).split("/");
+  const filename = segments.pop();
+  if (!filename) return [];
+  if (filename === "lib.rs" || filename === "main.rs" || filename === "mod.rs") return segments;
+  if (segments.length === 1 && segments[0] === "bin" && filename.endsWith(".rs")) return [];
+  return [...segments, filename.endsWith(".rs") ? filename.slice(0, -3) : filename];
+}
+
+function resolveRustModuleFile(root, sourceRoot, segments) {
+  for (let length = segments.length; length > 0; length -= 1) {
+    const base = path.join(sourceRoot, ...segments.slice(0, length));
+    for (const candidate of [`${base}.rs`, path.join(base, "mod.rs")]) {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return toPosix(path.relative(root, candidate));
+    }
+  }
+  return null;
+}
+
+function resolveRustImport(root, fromFile, specifier) {
+  const segments = specifier.split("::").filter((segment) => segment && segment !== "*");
+  if (!segments.length || !["crate", "self", "super"].includes(segments[0])) return null;
+  const packageDirectory = nearestCargoPackageDirectory(root, fromFile);
+  const sourceRoot = packageDirectory && rustSourceRoot(packageDirectory);
+  if (!sourceRoot) return null;
+  let targetSegments;
+  if (segments[0] === "crate") targetSegments = segments.slice(1);
+  else {
+    const current = rustModulePath(sourceRoot, fromFile);
+    let index = 0;
+    let base = current;
+    if (segments[index] === "self") index += 1;
+    while (segments[index] === "super") {
+      if (!base.length) return null;
+      base = base.slice(0, -1);
+      index += 1;
+    }
+    targetSegments = [...base, ...segments.slice(index)];
+  }
+  return resolveRustModuleFile(root, sourceRoot, targetSegments);
+}
+
+function repositoryFilesNamed(filename, directory, output = []) {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (!IGNORED_DIRECTORIES.has(entry.name) && !entry.name.startsWith(".")) repositoryFilesNamed(filename, path.join(directory, entry.name), output);
+      continue;
+    }
+    if (entry.isFile() && entry.name === filename) output.push(path.join(directory, entry.name));
+  }
+  return output;
+}
+
+function readGoModulePath(goModPath) {
+  try {
+    for (const line of fs.readFileSync(goModPath, "utf8").split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("//")) continue;
+      const [keyword, modulePath] = trimmed.split(/\s+/, 2);
+      if (keyword !== "module") continue;
+      if (modulePath && modulePath !== "(") return modulePath.replace(/^"|"$/g, "");
+    }
+  } catch {
+    // An unreadable module manifest is treated as unavailable configuration.
+  }
+  return null;
+}
+
+function createGoModuleResolver(root) {
+  const modules = repositoryFilesNamed("go.mod", root)
+    .map((goModPath) => ({ modulePath: readGoModulePath(goModPath), directory: path.dirname(goModPath) }))
+    .filter((entry) => entry.modulePath)
+    .sort((left, right) => right.modulePath.length - left.modulePath.length || left.modulePath.localeCompare(right.modulePath));
+  const packageFiles = new Map();
+  for (const absolutePath of walk(root).filter((candidate) => extensionOf(candidate) === ".go")) {
+    const relativePath = toPosix(path.relative(root, absolutePath));
+    if (isTestPath(relativePath)) continue;
+    const directory = path.dirname(absolutePath);
+    if (!packageFiles.has(directory)) packageFiles.set(directory, []);
+    packageFiles.get(directory).push(absolutePath);
+  }
+  for (const files of packageFiles.values()) files.sort((left, right) => left.localeCompare(right));
+
+  return (specifier) => {
+    const module = modules.find((entry) => specifier === entry.modulePath || specifier.startsWith(`${entry.modulePath}/`));
+    if (!module) return null;
+    const subpath = specifier.slice(module.modulePath.length).replace(/^\/+/, "");
+    const candidates = packageFiles.get(path.join(module.directory, subpath)) || [];
+    if (candidates.length === 1) return toPosix(path.relative(root, candidates[0]));
+    if (candidates.length > 1) {
+      return {
+        kind: "go-package",
+        path: toPosix(path.relative(root, path.join(module.directory, subpath))) || ".",
+        files: candidates.map((candidate) => toPosix(path.relative(root, candidate))),
+      };
+    }
+    return null;
+  };
+}
+
+function parseProjectConfig(configPath) {
+  const file = ts.readConfigFile(configPath, ts.sys.readFile);
+  if (file.error) return null;
+  const parsed = ts.parseJsonConfigFileContent(file.config, ts.sys, path.dirname(configPath), undefined, configPath);
+  const paths = Object.entries(parsed.options.paths || {})
+    .filter(([, targets]) => Array.isArray(targets) && targets.every((target) => typeof target === "string"))
+    .sort(([left], [right]) => right.replace("*", "").length - left.replace("*", "").length || left.localeCompare(right));
+  if (!paths.length && !parsed.options.baseUrl) return null;
+  return { baseUrl: parsed.options.baseUrl || path.dirname(configPath), paths };
+}
+
+function createConfiguredResolver(root) {
+  const configCache = new Map();
+  const findConfig = (fromFile) => {
+    for (let directory = path.dirname(fromFile); ; directory = path.dirname(directory)) {
+      if (!configCache.has(directory)) {
+        const configPath = ["tsconfig.json", "jsconfig.json"]
+          .map((filename) => path.join(directory, filename))
+          .find((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile());
+        configCache.set(directory, configPath ? parseProjectConfig(configPath) : null);
+      }
+      const config = configCache.get(directory);
+      if (config) return config;
+      if (directory === root || path.dirname(directory) === directory) return null;
+    }
+  };
+
+  return (fromFile, specifier) => {
+    const config = findConfig(fromFile);
+    if (!config) return null;
+    for (const [pattern, targets] of config.paths) {
+      const wildcardValue = pathPatternMatch(pattern, specifier);
+      if (wildcardValue === null) continue;
+      for (const target of targets) {
+        const resolved = resolveFile(root, path.resolve(config.baseUrl, target.replaceAll("*", wildcardValue)));
+        if (resolved) return resolved;
+      }
+    }
+    return resolveFile(root, path.resolve(config.baseUrl, specifier));
+  };
+}
+
+function propertyName(property) {
+  if (!ts.isPropertyAssignment(property)) return null;
+  if (ts.isIdentifier(property.name) || ts.isStringLiteralLike(property.name) || ts.isNumericLiteral(property.name)) return property.name.text;
+  return null;
+}
+
+function objectProperty(object, name) {
+  if (!ts.isObjectLiteralExpression(object)) return null;
+  return object.properties.find((property) => propertyName(property) === name)?.initializer || null;
+}
+
+function literalConfigString(node) {
+  return ts.isStringLiteralLike(node) || ts.isNoSubstitutionTemplateLiteral(node) ? node.text : null;
+}
+
+function staticBundlerExpressionResolver(source, configPath, root) {
+  const configDirectory = path.dirname(configPath);
+  const bindings = new Map();
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) bindings.set(node.name.text, node.initializer);
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  const resolving = new Set();
+  const importMetaUrl = (node) => ts.isPropertyAccessExpression(node)
+    && ts.isIdentifier(node.name) && node.name.text === "url"
+    && ts.isMetaProperty(node.expression) && node.expression.keywordToken === ts.SyntaxKind.ImportKeyword;
+  const pathCall = (node) => {
+    if (!ts.isCallExpression(node)) return null;
+    const expression = node.expression;
+    if (!ts.isPropertyAccessExpression(expression) || !ts.isIdentifier(expression.expression) || expression.expression.text !== "path") return null;
+    if (!["resolve", "join", "dirname"].includes(expression.name.text)) return null;
+    const values = node.arguments.map(evaluate);
+    if (values.some((value) => value === null)) return null;
+    if (expression.name.text === "dirname") return values.length === 1 ? path.dirname(values[0]) : null;
+    return expression.name.text === "resolve" ? path.resolve(...values) : path.join(...values);
+  };
+  const evaluate = (node) => {
+    if (!node) return null;
+    const literal = literalConfigString(node);
+    if (literal !== null) return literal;
+    if (ts.isIdentifier(node)) {
+      if (node.text === "__dirname") return configDirectory;
+      if (!bindings.has(node.text) || resolving.has(node.text)) return null;
+      resolving.add(node.text);
+      const value = evaluate(bindings.get(node.text));
+      resolving.delete(node.text);
+      return value;
+    }
+    const resolvedPath = pathCall(node);
+    if (resolvedPath !== null) return resolvedPath;
+    if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "URL" && node.arguments?.length === 2 && importMetaUrl(node.arguments[1])) {
+      const relative = evaluate(node.arguments[0]);
+      return relative === null ? null : path.resolve(configDirectory, relative);
+    }
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression) && node.expression.expression.text === "process" && node.expression.name.text === "cwd" && node.arguments.length === 0) return configDirectory === root ? root : null;
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "fileURLToPath" && node.arguments.length === 1) return importMetaUrl(node.arguments[0]) ? configPath : evaluate(node.arguments[0]);
+    return null;
+  };
+  return { evaluate, bindings };
+}
+
+function scriptKindFor(filePath) {
+  const extension = extensionOf(filePath);
+  if (extension === ".tsx") return ts.ScriptKind.TSX;
+  if (extension === ".ts" || extension === ".mts" || extension === ".cts") return ts.ScriptKind.TS;
+  if (extension === ".jsx") return ts.ScriptKind.JSX;
+  return ts.ScriptKind.JS;
+}
+
+function parseBundlerAliasEntries(alias, configDirectory, evaluate) {
+  const entries = [];
+  const add = (find, replacement) => {
+    if (find && replacement) entries.push({ find, replacement, configDirectory });
+  };
+  if (ts.isObjectLiteralExpression(alias)) {
+    for (const property of alias.properties) add(propertyName(property), ts.isPropertyAssignment(property) ? evaluate(property.initializer) : null);
+  }
+  if (ts.isArrayLiteralExpression(alias)) {
+    for (const item of alias.elements) {
+      if (!ts.isObjectLiteralExpression(item)) continue;
+      add(evaluate(objectProperty(item, "find")), evaluate(objectProperty(item, "replacement")));
+    }
+  }
+  return entries;
+}
+
+function unwrapBundlerConfigExpression(node) {
+  let current = node;
+  while (current && (ts.isParenthesizedExpression(current) || ts.isAsExpression(current) || ts.isTypeAssertionExpression(current) || ts.isSatisfiesExpression(current))) current = current.expression;
+  return current;
+}
+
+function isModuleExports(node) {
+  return ts.isPropertyAccessExpression(node)
+    && ts.isIdentifier(node.expression) && node.expression.text === "module"
+    && node.name.text === "exports";
+}
+
+function exportedBundlerConfigObjects(source, bindings) {
+  const resolving = new Set();
+  const fromExpression = (expression) => {
+    const node = unwrapBundlerConfigExpression(expression);
+    if (!node) return [];
+    if (ts.isObjectLiteralExpression(node)) return [node];
+    if (ts.isIdentifier(node) && bindings.has(node.text) && !resolving.has(node.text)) {
+      resolving.add(node.text);
+      const objects = fromExpression(bindings.get(node.text));
+      resolving.delete(node.text);
+      return objects;
+    }
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "defineConfig" && node.arguments.length >= 1) return fromExpression(node.arguments[0]);
+    if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+      const body = unwrapBundlerConfigExpression(node.body);
+      if (ts.isObjectLiteralExpression(body)) return [body];
+      if (ts.isBlock(body)) return body.statements.flatMap((statement) => ts.isReturnStatement(statement) && statement.expression ? fromExpression(statement.expression) : []);
+    }
+    return [];
+  };
+  return source.statements.flatMap((statement) => {
+    if (ts.isExportAssignment(statement)) return fromExpression(statement.expression);
+    const expression = ts.isExpressionStatement(statement) ? statement.expression : null;
+    if (expression && ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.EqualsToken && isModuleExports(expression.left)) return fromExpression(expression.right);
+    return [];
+  });
+}
+
+function parseBundlerConfig(configPath, root) {
+  let content;
+  try {
+    content = fs.readFileSync(configPath, "utf8");
+  } catch {
+    return [];
+  }
+  const source = ts.createSourceFile(configPath, content, ts.ScriptTarget.Latest, false, scriptKindFor(configPath));
+  const { evaluate, bindings } = staticBundlerExpressionResolver(source, configPath, root);
+  const aliases = [];
+  for (const object of exportedBundlerConfigObjects(source, bindings)) {
+    const resolve = objectProperty(object, "resolve");
+    const alias = resolve && objectProperty(resolve, "alias");
+    if (alias) aliases.push(...parseBundlerAliasEntries(alias, path.dirname(configPath), evaluate));
+  }
+  return aliases;
+}
+
+function createBundlerAliasResolver(root) {
+  const aliasCache = new Map();
+  const aliasesAt = (directory) => {
+    if (!aliasCache.has(directory)) {
+      const aliases = BUNDLER_CONFIG_FILENAMES
+        .map((filename) => path.join(directory, filename))
+        .filter((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile())
+        .flatMap((configPath) => parseBundlerConfig(configPath, root))
+        .sort((left, right) => right.find.length - left.find.length || left.find.localeCompare(right.find));
+      aliasCache.set(directory, aliases);
+    }
+    return aliasCache.get(directory);
+  };
+
+  const findAliases = (fromFile) => {
+    for (let directory = path.dirname(fromFile); ; directory = path.dirname(directory)) {
+      const aliases = aliasesAt(directory);
+      if (aliases.length) return aliases;
+      if (directory === root || path.dirname(directory) === directory) return [];
+    }
+  };
+
+  return (fromFile, specifier) => {
+    for (const alias of findAliases(fromFile)) {
+      if (specifier !== alias.find && !specifier.startsWith(`${alias.find}/`)) continue;
+      const suffix = specifier.slice(alias.find.length).replace(/^[\\/]+/, "");
+      const replacement = path.isAbsolute(alias.replacement) ? alias.replacement : path.resolve(alias.configDirectory, alias.replacement);
+      const resolved = resolveFile(root, path.join(replacement, suffix));
+      if (resolved) return resolved;
+    }
+    return null;
+  };
+}
+
+function getGitChangedPaths(root, base = null) {
+  const command = (args) => {
+    try {
+      return execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+    } catch {
+      return null;
+    }
+  };
+  const working = command(["diff", "--name-only", "--diff-filter=ACMR", ...(base ? [base] : [])]);
+  const staged = base ? [] : command(["diff", "--cached", "--name-only", "--diff-filter=ACMR"]);
+  const untracked = command(["ls-files", "--others", "--exclude-standard"]);
+  if (!working || !staged || !untracked) throw new Error("Unable to read changed files from Git. Supply --changed with repository-relative paths instead.");
+  return [...new Set([...working, ...staged, ...untracked].map(toPosix))].sort();
+}
+
+function stripYamlComment(value) {
+  let quote = null;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote) {
+      if (character === quote && value[index - 1] !== "\\") quote = null;
+      continue;
+    }
+    if (character === "'" || character === "\"") quote = character;
+    else if (character === "#") return value.slice(0, index);
+  }
+  return value;
+}
+
+function yamlWorkspacePattern(value) {
+  let pattern = stripYamlComment(value).trim();
+  if ((pattern.startsWith("\"") && pattern.endsWith("\"")) || (pattern.startsWith("'") && pattern.endsWith("'"))) pattern = pattern.slice(1, -1);
+  return pattern || null;
+}
+
+function yamlInlineWorkspacePatterns(value) {
+  const source = stripYamlComment(value).trim();
+  if (!source.startsWith("[") || !source.endsWith("]")) return null;
+  const patterns = [];
+  let current = "";
+  let quote = null;
+  for (const character of source.slice(1, -1)) {
+    if (quote) {
+      current += character;
+      if (character === quote) quote = null;
+      continue;
+    }
+    if (character === "'" || character === "\"") {
+      quote = character;
+      current += character;
+      continue;
+    }
+    if (character === ",") {
+      const pattern = yamlWorkspacePattern(current);
+      if (pattern) patterns.push(pattern);
+      current = "";
+      continue;
+    }
+    current += character;
+  }
+  const pattern = yamlWorkspacePattern(current);
+  if (pattern) patterns.push(pattern);
+  return patterns;
+}
+
+function pnpmWorkspacePatterns(root) {
+  let content;
+  try {
+    content = fs.readFileSync(path.join(root, "pnpm-workspace.yaml"), "utf8");
+  } catch {
+    return [];
+  }
+  const patterns = [];
+  let readingPackages = false;
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    if (!readingPackages) {
+      const match = trimmed.match(/^packages\s*:\s*(.*)$/);
+      if (!match) continue;
+      const inlinePatterns = yamlInlineWorkspacePatterns(match[1]);
+      if (inlinePatterns) patterns.push(...inlinePatterns);
+      else if (!stripYamlComment(match[1]).trim()) readingPackages = true;
+      continue;
+    }
+    if (!/^\s/.test(line) && /^[\w-]+\s*:/.test(trimmed)) break;
+    const item = trimmed.match(/^-\s+(.+?)\s*$/);
+    if (!item) continue;
+    const pattern = yamlWorkspacePattern(item[1]);
+    if (pattern) patterns.push(pattern);
+  }
+  return patterns;
+}
+
+function workspacePatterns(root, packageJson) {
+  const packageJsonPatterns = Array.isArray(packageJson.workspaces)
+    ? packageJson.workspaces
+    : Array.isArray(packageJson.workspaces?.packages)
+      ? packageJson.workspaces.packages
+      : [];
+  return [...new Set([...packageJsonPatterns, ...pnpmWorkspacePatterns(root)])];
+}
+
+function workspaceSegmentMatches(pattern, value) {
+  const parts = pattern.split("*");
+  let offset = 0;
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    if (!part) continue;
+    const found = value.indexOf(part, offset);
+    if (found < 0 || (index === 0 && !pattern.startsWith("*") && found !== 0)) return false;
+    offset = found + part.length;
+  }
+  const last = parts.at(-1);
+  return pattern.endsWith("*") || !last || value.endsWith(last);
+}
+
+function workspacePathMatches(pattern, relativePath) {
+  const patternSegments = toPosix(pattern).split("/").filter(Boolean);
+  const pathSegments = toPosix(relativePath).split("/").filter(Boolean);
+  const matches = (patternIndex, pathIndex) => {
+    if (patternIndex === patternSegments.length) return pathIndex === pathSegments.length;
+    const patternSegment = patternSegments[patternIndex];
+    if (patternSegment === "**") {
+      for (let index = pathIndex; index <= pathSegments.length; index += 1) if (matches(patternIndex + 1, index)) return true;
+      return false;
+    }
+    return pathIndex < pathSegments.length && workspaceSegmentMatches(patternSegment, pathSegments[pathIndex]) && matches(patternIndex + 1, pathIndex + 1);
+  };
+  return matches(0, 0);
+}
+
+function workspaceDirectories(root, patterns) {
+  const matches = new Set();
+  const visit = (directory, segments, index) => {
+    if (index === segments.length) {
+      if (fs.existsSync(path.join(directory, "package.json"))) matches.add(directory);
+      return;
+    }
+    const segment = segments[index];
+    if (!segment || segment === "." || segment === "..") return;
+    if (segment === "**") {
+      visit(directory, segments, index + 1);
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        if (entry.isDirectory() && !entry.name.startsWith(".") && !IGNORED_DIRECTORIES.has(entry.name)) visit(path.join(directory, entry.name), segments, index);
+      }
+      return;
+    }
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name.startsWith(".") || IGNORED_DIRECTORIES.has(entry.name) || !workspaceSegmentMatches(segment, entry.name)) continue;
+      visit(path.join(directory, entry.name), segments, index + 1);
+    }
+  };
+  const positivePatterns = patterns.filter((value) => typeof value === "string" && value && !value.startsWith("!"));
+  const exclusions = patterns.filter((value) => typeof value === "string" && value.startsWith("!")).map((value) => value.slice(1));
+  for (const pattern of positivePatterns) {
+    const segments = toPosix(pattern).split("/").filter(Boolean);
+    if (segments.length) visit(root, segments, 0);
+  }
+  return [...matches].filter((directory) => !exclusions.some((pattern) => workspacePathMatches(pattern, toPosix(path.relative(root, directory)))));
+}
+
+const STATIC_EXPORT_CONDITIONS = ["import", "node", "default", "require", "types"];
+
+function exportTargets(value) {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(exportTargets);
+  if (!value || typeof value !== "object") return [];
+  const condition = STATIC_EXPORT_CONDITIONS.find((key) => Object.hasOwn(value, key));
+  return condition ? exportTargets(value[condition]) : [];
+}
+
+function isRootExportConditionMap(value) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    && Object.keys(value).every((key) => !key.startsWith("."));
+}
+
+function workspaceTargets(packageJson, subpath) {
+  const exportsField = packageJson.exports;
+  if (exportsField) {
+    if (!subpath && (typeof exportsField === "string" || Array.isArray(exportsField))) return exportTargets(exportsField);
+    if (typeof exportsField === "object") {
+      const key = subpath ? `./${subpath}` : ".";
+      if (Object.hasOwn(exportsField, key)) return exportTargets(exportsField[key]);
+      if (!subpath && isRootExportConditionMap(exportsField)) return exportTargets(exportsField);
+      const wildcardKey = Object.keys(exportsField)
+        .filter((candidate) => candidate.includes("*"))
+        .sort((left, right) => right.replace("*", "").length - left.replace("*", "").length || left.localeCompare(right))
+        .find((candidate) => pathPatternMatch(candidate, key) !== null);
+      if (wildcardKey) {
+        const wildcardValue = pathPatternMatch(wildcardKey, key);
+        return exportTargets(exportsField[wildcardKey]).map((target) => target.replaceAll("*", wildcardValue));
+      }
+    }
+  }
+  if (subpath) return [`./${subpath}`, `./src/${subpath}`];
+  return [packageJson.module, packageJson.main, packageJson.source, packageJson.types, "./src/index", "./index"].filter(Boolean);
+}
+
+function resolveWorkspaceTarget(root, workspaceRoot, target) {
+  if (typeof target !== "string" || !target.startsWith(".")) return null;
+  const base = path.resolve(workspaceRoot, target);
+  for (const candidate of [base, removeExtension(base)]) {
+    const resolved = resolveFile(root, candidate);
+    if (resolved) return resolved;
+  }
+  return null;
+}
+
+function createWorkspaceResolver(root, packageJson) {
+  const packages = new Map();
+  for (const directory of workspaceDirectories(root, workspacePatterns(root, packageJson))) {
+    const manifest = safelyReadJson(path.join(directory, "package.json"), {});
+    if (typeof manifest.name === "string" && manifest.name) packages.set(manifest.name, { directory, manifest });
+  }
+  return (specifier) => {
+    const name = packageName(specifier);
+    const workspace = packages.get(name);
+    if (!workspace) return null;
+    const subpath = specifier.slice(name.length).replace(/^\/+/, "");
+    for (const target of workspaceTargets(workspace.manifest, subpath)) {
+      const resolved = resolveWorkspaceTarget(root, workspace.directory, target);
+      if (resolved) return resolved;
+    }
+    return null;
+  };
+}
+
+function createYarnPnpResolver(root) {
+  const data = safelyReadJson(path.join(root, ".pnp.data.json"), null);
+  const packages = new Map();
+  if (!Array.isArray(data?.packageRegistryData)) return () => null;
+  for (const entry of data.packageRegistryData) {
+    const [name, references] = Array.isArray(entry) ? entry : [];
+    if (typeof name !== "string" || !Array.isArray(references)) continue;
+    for (const reference of references) {
+      const [, info] = Array.isArray(reference) ? reference : [];
+      if (typeof info?.packageLocation !== "string") continue;
+      const directory = path.resolve(root, info.packageLocation);
+      const relative = path.relative(root, directory);
+      if (relative.startsWith("..") || path.isAbsolute(relative)) continue;
+      const manifest = safelyReadJson(path.join(directory, "package.json"), {});
+      if (manifest.name === name) {
+        packages.set(name, { directory, manifest });
+        break;
+      }
+    }
+  }
+  return (specifier) => {
+    const name = packageName(specifier);
+    const workspace = packages.get(name);
+    if (!workspace) return null;
+    const subpath = specifier.slice(name.length).replace(/^\/+/, "");
+    for (const target of workspaceTargets(workspace.manifest, subpath)) {
+      const resolved = resolveWorkspaceTarget(root, workspace.directory, target);
+      if (resolved) return resolved;
+    }
+    return null;
+  };
+}
+
+function packageImportTargets(packageJson, specifier) {
+  const importsField = packageJson.imports;
+  if (!specifier.startsWith("#") || !importsField || typeof importsField !== "object" || Array.isArray(importsField)) return [];
+  if (Object.hasOwn(importsField, specifier)) return exportTargets(importsField[specifier]);
+  const wildcardKey = Object.keys(importsField)
+    .filter((candidate) => candidate.startsWith("#") && candidate.includes("*"))
+    .sort((left, right) => right.replace("*", "").length - left.replace("*", "").length || left.localeCompare(right))
+    .find((candidate) => pathPatternMatch(candidate, specifier) !== null);
+  if (!wildcardKey) return [];
+  const wildcardValue = pathPatternMatch(wildcardKey, specifier);
+  return exportTargets(importsField[wildcardKey]).map((target) => target.replaceAll("*", wildcardValue));
+}
+
+function createPackageImportsResolver(root) {
+  const packageCache = new Map();
+  const importsAt = (directory) => {
+    if (!packageCache.has(directory)) {
+      const manifestPath = path.join(directory, "package.json");
+      const manifest = fs.existsSync(manifestPath) && fs.statSync(manifestPath).isFile() ? safelyReadJson(manifestPath, {}) : null;
+      packageCache.set(directory, manifest?.imports && typeof manifest.imports === "object" && !Array.isArray(manifest.imports) ? { directory, manifest } : null);
+    }
+    return packageCache.get(directory);
+  };
+
+  const findPackageImports = (fromFile) => {
+    for (let directory = path.dirname(fromFile); ; directory = path.dirname(directory)) {
+      const packageImports = importsAt(directory);
+      if (packageImports) return packageImports;
+      if (directory === root || path.dirname(directory) === directory) return null;
+    }
+  };
+
+  return (fromFile, specifier) => {
+    const packageImports = findPackageImports(fromFile);
+    if (!packageImports) return null;
+    for (const target of packageImportTargets(packageImports.manifest, specifier)) {
+      const resolved = resolveWorkspaceTarget(root, packageImports.directory, target);
+      if (resolved) return resolved;
+    }
+    return null;
+  };
+}
+
+function resolveInternalImport(root, fromFile, specifier, resolveConfiguredImport) {
+  if (specifier.startsWith(".")) return resolveFile(root, path.resolve(path.dirname(fromFile), specifier));
+  const configured = resolveConfiguredImport(fromFile, specifier);
+  if (configured) return configured;
+  if (specifier === "$lib" || specifier.startsWith("$lib/")) {
+    let libraryPath = specifier.slice(4);
+    while (libraryPath.startsWith("/") || libraryPath.startsWith("\\")) libraryPath = libraryPath.slice(1);
+    return resolveFile(root, path.join(root, "src", "lib", libraryPath));
+  }
+  if (specifier.startsWith("@/")) return resolveFile(root, path.join(root, "src", specifier.slice(2)));
+  return null;
+}
+
+function packageName(specifier) {
+  const parts = specifier.split(/[\\/:]/);
+  return specifier.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+}
+
+function includesAny(value, values) {
+  return values.some((item) => value.includes(item));
+}
+
+function packageKind(specifier) {
+  const name = packageName(specifier);
+  if (includesAny(name, ["prisma", "typeorm", "sequelize", "mongoose", "knex", "drizzle-orm", "postgres", "mysql", "sqlite", "redis", "mongo"])) return "database";
+  if (includesAny(name, ["bull", "kafka", "rabbit", "amqp", "nats", "sqs", "queue"])) return "queue";
+  return "external";
+}
+
+function dependencyKind(specifier, devPackages) {
+  const name = packageName(specifier);
+  if (specifier.startsWith("$app/") || specifier.startsWith("$env/") || specifier === "$service-worker" || name === "svelte" || name === "@sveltejs/kit" || name.startsWith("@sveltejs/") || ["fastapi", "flask", "django"].includes(name)) return "framework";
+  if (includesAny(name, ["prisma", "typeorm", "sequelize", "mongoose", "knex", "drizzle-orm", "postgres", "mysql", "sqlite", "redis", "mongo", "bull", "kafka", "rabbit", "amqp", "nats", "sqs", "queue", "stripe", "twilio", "resend"])) return "runtime";
+  if (DEV_TOOL_NAMES.has(name) || name.startsWith("@eslint/") || name.startsWith("@typescript-eslint/") || devPackages.has(name)) return "devtool";
+  return "package";
+}
+
+function createExternalNode(specifier, devPackages) {
+  const name = packageName(specifier);
+  const kind = dependencyKind(specifier, devPackages);
+  const type = kind === "runtime" ? packageKind(specifier) : "external";
+  const responsibility = {
+    runtime: type === "database" ? "External runtime data store or ORM." : type === "queue" ? "External runtime queue or messaging system." : "External runtime integration.",
+    framework: "Framework or platform virtual module.",
+    devtool: "Build, linting, testing, or development dependency.",
+    package: "Third-party library used by application code.",
+  }[kind];
+  return {
+    id: `external:${name}`,
+    kind: "external",
+    type,
+    label: titleCase(name),
+    path: null,
+    domain: "External",
+    layer: kind,
+    dependencyKind: kind,
+    detectedResponsibility: responsibility,
+    methods: [],
+    analysis: { parser: "typescript-ast", status: "resolved-import", confidence: "exact" },
+  };
+}
+
+function buildFlows(nodes, edges, flowEntries = {}) {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const outgoing = new Map();
+  for (const edge of edges) {
+    if (!outgoing.has(edge.source)) outgoing.set(edge.source, []);
+    outgoing.get(edge.source).push(edge);
+  }
+  const includesEntry = (node) => {
+    if (node.kind !== "endpoint") return false;
+    if (node.sourceScope === "test") return flowEntries.tests === true;
+    if (node.sourceScope === "fixture") return flowEntries.fixtures === true;
+    return node.sourceScope === "application" || !node.sourceScope;
+  };
+  const includesStep = (node) => !["test", "fixture", "generated"].includes(node.sourceScope);
+  const entries = nodes.filter(includesEntry);
+  // Structural file/symbol edges describe containment, not execution. Traversing
+  // them from an HTTP handler would pull sibling handlers from route.ts into the
+  // same Flow Lens. Start at the exact `handles` edge and only follow behavioral
+  // relationships after that.
+  const flowTargets = (current, edge) => {
+    if (current.depth === 0) return edge.type === "handles";
+    return !["contains", "declares"].includes(edge.type);
+  };
+  // A route/controller is not necessarily an HTTP/request entry. Do not create a
+  // Flow Lens from that fallback: callers may inspect its technical dependencies,
+  // but the HTTP/request-oriented contract requires an extracted endpoint fact.
+  return entries.map((entry) => {
+    const queue = [{ id: entry.id, depth: 0 }];
+    const visited = new Set();
+    const steps = [];
+    while (queue.length && steps.length < 24) {
+      const current = queue.shift();
+      if (visited.has(current.id) || current.depth > 6) continue;
+      visited.add(current.id);
+      const node = byId.get(current.id);
+      if (!node || !includesStep(node)) continue;
+      steps.push({ id: node.id, label: node.label, type: node.type, depth: current.depth });
+      for (const edge of outgoing.get(current.id) || []) {
+        if (flowTargets(current, edge)) queue.push({ id: edge.target, depth: current.depth + 1 });
+      }
+    }
+    return { id: `flow:${entry.id}`, title: entry.label, entryId: entry.id, steps };
+  });
+}
+
+function fileFingerprint(absolutePath) {
+  const stat = fs.statSync(absolutePath);
+  return { size: stat.size, mtimeMs: stat.mtimeMs };
+}
+
+function isScannableFile(absolutePath) {
+  try {
+    const stat = fs.statSync(absolutePath);
+    return stat.isFile() && CODE_EXTENSIONS.has(extensionOf(absolutePath)) && stat.size <= 1_000_000;
+  } catch {
+    return false;
+  }
+}
+
+function createFileRecord(root, absolutePath, sourceScope, goFact = null) {
+  const relativePath = toPosix(path.relative(root, absolutePath));
+  const content = fs.readFileSync(absolutePath, "utf8");
+  const extension = extensionOf(absolutePath);
+  return {
+    absolutePath,
+    relativePath,
+    extension,
+    sourceScope,
+    fingerprint: fileFingerprint(absolutePath),
+    sourceHash: createHash("sha256").update(content).digest("hex"),
+    result: analyzeFile(content, extension, relativePath, root, goFact),
+  };
+}
+
+function sourceFingerprint(sourceRecords) {
+  const payload = sourceRecords
+    .map((record) => `${record.relativePath}\u0000${record.sourceScope}\u0000${record.sourceHash}`)
+    .sort()
+    .join("\n");
+  return `sha256:${createHash("sha256").update(payload).digest("hex")}`;
+}
+
+function createFileNode(record, descriptions) {
+  const classification = classifyFile(record.relativePath);
+  const sourceScope = record.sourceScope || "application";
+  if (sourceScope === "test") {
+    classification.type = "test";
+    classification.detectedResponsibility = "Verifies application component behavior.";
+  } else if (sourceScope === "fixture") {
+    classification.detectedResponsibility = "Fixture source retained as static diagnostic evidence.";
+  } else if (sourceScope === "generated") {
+    classification.detectedResponsibility = "Generated source retained as static diagnostic evidence.";
+  }
+  classification.layer = sourceScope;
+  return {
+    id: `file:${record.relativePath}`,
+    kind: "file",
+    path: record.relativePath,
+    domain: deriveDomain(record.relativePath),
+    feature: deriveFeature(record.relativePath),
+    ...classification,
+    sourceScope,
+    methods: record.result.methods,
+    language: record.extension.slice(1) || "unknown",
+    analysis: record.result.analysis,
+    evidence: { file: record.relativePath },
+    manualDescription: descriptions[`file:${record.relativePath}`] || "",
+  };
+}
+
+function createGoPackageNode(packagePath, files, descriptions) {
+  return {
+    id: `go-package:${packagePath}`,
+    kind: "package",
+    type: "package",
+    label: packagePath === "." ? "Root Go package" : titleCase(path.basename(packagePath)),
+    path: packagePath,
+    domain: deriveDomain(packagePath),
+    feature: deriveFeature(packagePath),
+    layer: "application",
+    detectedResponsibility: "Internal Go package resolved statically from go.mod.",
+    methods: [],
+    language: "go",
+    analysis: { parser: "go-module-resolver", status: "resolved-import", confidence: "exact" },
+    evidence: { file: packagePath },
+    manualDescription: descriptions[`go-package:${packagePath}`] || "",
+    files,
+  };
+}
+
+function createGraphContext(root) {
+  const packageJson = safelyReadJson(path.join(root, "package.json"), {});
+  const resolveConfiguredImport = createConfiguredResolver(root);
+  const resolveBundlerAlias = createBundlerAliasResolver(root);
+  const resolveWorkspaceImport = createWorkspaceResolver(root, packageJson);
+  const resolveYarnPnpImport = createYarnPnpResolver(root);
+  const resolvePackageImport = createPackageImportsResolver(root);
+  const resolveGoModuleImport = createGoModuleResolver(root);
+  const resolvedImports = new Map();
+  const resolveImportedPath = (record, imported) => {
+    const key = `${record.extension}\u0000${record.relativePath}\u0000${imported.specifier}`;
+    if (resolvedImports.has(key)) return resolvedImports.get(key);
+    const resolved = record.extension === ".go"
+      ? resolveGoModuleImport(imported.specifier)
+      : record.extension === ".rs"
+        ? resolveRustImport(root, record.absolutePath, imported.specifier)
+      : imported.language === "python"
+        ? resolvePythonImport(root, record.absolutePath, imported.specifier)
+        : resolveInternalImport(root, record.absolutePath, imported.specifier, resolveConfiguredImport)
+          || resolveBundlerAlias(record.absolutePath, imported.specifier)
+          || resolvePackageImport(record.absolutePath, imported.specifier)
+          || resolveWorkspaceImport(imported.specifier)
+          || resolveYarnPnpImport(imported.specifier);
+    resolvedImports.set(key, resolved || null);
+    return resolved || null;
+  };
+  return {
+    packageJson,
+    devPackages: new Set(Object.keys(packageJson.devDependencies || {})),
+    resolveImportedPath,
+  };
+}
+
+function buildGraphFromRecords(root, sourceRecords, refresh = null, graphContext = null, scope = null, excludedPaths = [], projectIdentity = null) {
+  const context = graphContext || createGraphContext(root);
+  const { packageJson, devPackages, resolveImportedPath } = context;
+  const descriptions = readDescriptions(root);
+  const nodes = [];
+  const edges = [];
+  const byRelativePath = new Map();
+  const records = [];
+  const runtimeNodes = new Map();
+  for (const sourceRecord of sourceRecords) {
+    const { absolutePath, relativePath, result } = sourceRecord;
+    const node = createFileNode(sourceRecord, descriptions);
+    nodes.push(node);
+    byRelativePath.set(relativePath, node);
+    records.push({ ...sourceRecord, node });
+    for (const integration of result.integrations || []) {
+      const key = `${relativePath}\u0000${integration.instance}`;
+      const id = `runtime:${relativePath}:${integration.type}:${integration.instance}`;
+      const runtimeNode = {
+        id,
+        kind: "integration",
+        type: integration.type,
+        label: integration.label,
+        path: relativePath,
+        domain: node.domain,
+        feature: node.feature,
+        layer: "runtime",
+        sourceScope: node.sourceScope,
+        detectedResponsibility: integration.type === "database" ? "Database or ORM client initialized from a static import." : "Queue or worker initialized from a static import.",
+        methods: [],
+        language: node.language,
+        analysis: { parser: "typescript-ast", status: "parsed", confidence: "exact" },
+        evidence: integration.evidence,
+        manualDescription: descriptions[id] || "",
+        package: integration.package,
+      };
+      runtimeNodes.set(key, runtimeNode);
+      nodes.push(runtimeNode);
+      edges.push({ source: node.id, target: runtimeNode.id, type: "initializes", confidence: "exact", evidence: integration.evidence });
+    }
+    const symbolIds = new Set();
+    for (const symbol of result.symbols || []) {
+      const symbolId = `symbol:${relativePath}:${symbol.type}:${symbol.name}`;
+      if (symbolIds.has(symbolId)) continue;
+      symbolIds.add(symbolId);
+      const symbolNode = {
+        id: symbolId,
+        kind: "symbol",
+        type: symbol.type,
+        label: symbol.name,
+        path: relativePath,
+        domain: node.domain,
+        feature: node.feature,
+        layer: node.layer,
+        sourceScope: node.sourceScope,
+        detectedResponsibility: symbol.type === "class" ? "Class declaration extracted from the syntax tree." : "Function declaration extracted from the syntax tree.",
+        methods: symbol.methods,
+        language: node.language,
+        analysis: { parser: symbol.evidence.parser, status: "parsed", confidence: symbol.confidence || "exact" },
+        evidence: symbol.evidence,
+        manualDescription: descriptions[`symbol:${relativePath}:${symbol.type}:${symbol.name}`] || "",
+      };
+      nodes.push(symbolNode);
+      edges.push({ source: symbolNode.id, target: node.id, type: "declares", confidence: symbol.confidence || "exact", evidence: symbol.evidence });
+      edges.push({ source: node.id, target: symbolNode.id, type: "contains", confidence: symbol.confidence || "exact", evidence: symbol.evidence });
+    }
+  }
+
+  const symbolIndex = new Map(nodes
+    .filter((node) => node.kind === "symbol")
+    .map((node) => [`${node.path}\u0000${node.type}\u0000${node.label}`, node]));
+  const findSymbol = (relativePath, type, name) => symbolIndex.get(`${relativePath}\u0000${type}\u0000${name}`) || null;
+  const resolvedInternalImports = new Map();
+  const goPackageNodes = new Map();
+  const externalNodes = new Map();
+  for (const record of records) {
+    for (const imported of record.result.imports) {
+      if (imported.standard) continue;
+      const resolved = resolveImportedPath(record, imported);
+      if (resolved && byRelativePath.has(resolved)) {
+        if (!resolvedInternalImports.has(record)) resolvedInternalImports.set(record, new Map());
+        resolvedInternalImports.get(record).set(imported.specifier, resolved);
+        edges.push({ source: record.node.id, target: byRelativePath.get(resolved).id, type: "imports", confidence: "exact", evidence: imported.evidence });
+        continue;
+      }
+      if (resolved?.kind === "go-package") {
+        if (!resolvedInternalImports.has(record)) resolvedInternalImports.set(record, new Map());
+        resolvedInternalImports.get(record).set(imported.specifier, resolved);
+        if (!goPackageNodes.has(resolved.path)) {
+          const packageNode = createGoPackageNode(resolved.path, resolved.files, descriptions);
+          goPackageNodes.set(resolved.path, packageNode);
+          nodes.push(packageNode);
+          for (const filePath of resolved.files) {
+            const fileNode = byRelativePath.get(filePath);
+            if (fileNode) edges.push({ source: packageNode.id, target: fileNode.id, type: "contains", confidence: "exact", evidence: imported.evidence });
+          }
+        }
+        edges.push({ source: record.node.id, target: goPackageNodes.get(resolved.path).id, type: "imports", confidence: "exact", evidence: imported.evidence });
+        continue;
+      }
+      if (imported.internal || imported.specifier.startsWith(".") || NODE_BUILTINS.has(imported.specifier.replace("node:", ""))) continue;
+      const key = packageName(imported.specifier);
+      if (!externalNodes.has(key)) externalNodes.set(key, createExternalNode(imported.specifier, devPackages));
+      edges.push({ source: record.node.id, target: externalNodes.get(key).id, type: "uses", confidence: "exact", evidence: imported.evidence });
+    }
+    for (const endpoint of record.result.endpoints) {
+      const handler = endpoint.handlerName ? findSymbol(record.relativePath, endpoint.handlerType || "function", endpoint.handlerName) : null;
+      const handlerBinding = handler ? "exact-symbol" : "file-fallback";
+      const endpointNode = {
+        id: `endpoint:${record.relativePath}:${endpoint.method}:${endpoint.route}`,
+        kind: "endpoint",
+        type: "endpoint",
+        label: `${endpoint.method} ${endpoint.route}`,
+        path: record.relativePath,
+        domain: record.node.domain,
+        layer: record.node.layer,
+        sourceScope: record.node.sourceScope,
+        feature: record.node.feature,
+        detectedResponsibility: endpoint.detectedResponsibility || "HTTP endpoint detected by the AST parser.",
+        methods: [],
+        analysis: { parser: endpoint.evidence?.parser || "typescript-ast", status: "parsed", confidence: endpoint.confidence || "exact", handlerBinding },
+        handlerId: handler?.id || null,
+        handlerBinding,
+        contract: endpoint.contract || null,
+        evidence: endpoint.evidence,
+        manualDescription: descriptions[`endpoint:${record.relativePath}:${endpoint.method}:${endpoint.route}`] || "",
+      };
+      nodes.push(endpointNode);
+      edges.push({ source: endpointNode.id, target: handler?.id || record.node.id, type: "handles", confidence: endpoint.confidence || (handler ? "exact" : "likely"), evidence: endpoint.evidence });
+    }
+  }
+  nodes.push(...externalNodes.values());
+
+  for (const record of records) {
+    for (const call of record.result.calls || []) {
+      const source = call.source ? findSymbol(record.relativePath, call.source.type, call.source.name) || record.node : record.node;
+      const targetPath = call.imported ? resolvedInternalImports.get(record)?.get(call.imported.specifier) : record.relativePath;
+      const targetName = call.imported ? call.imported.exportedName : call.name;
+      const target = typeof targetPath === "string"
+        ? findSymbol(targetPath, "function", targetName)
+        : targetPath?.kind === "go-package"
+          ? (() => {
+            const matches = targetPath.files.map((filePath) => findSymbol(filePath, "function", targetName)).filter(Boolean);
+            return matches.length === 1 ? matches[0] : null;
+          })()
+          : null;
+      if (target) edges.push({ source: source.id, target: target.id, type: "calls", confidence: "exact", evidence: call.evidence });
+    }
+    for (const action of record.result.runtimeActions || []) {
+      const source = action.source ? findSymbol(record.relativePath, action.source.type, action.source.name) || record.node : record.node;
+      const target = runtimeNodes.get(`${record.relativePath}\u0000${action.instance}`);
+      if (target) edges.push({ source: source.id, target: target.id, type: action.type, confidence: "exact", evidence: action.evidence });
+    }
+  }
+
+  const endpointNodes = nodes.filter((node) => node.kind === "endpoint");
+  for (const record of records) {
+    for (const request of record.result.requests || []) {
+      const target = endpointNodes.find((node) => node.label === `${request.method} ${request.route}`);
+      if (target) edges.push({ source: record.node.id, target: target.id, type: "requests", confidence: "exact", evidence: request.evidence });
+    }
+  }
+
+  const uniqueEdges = [...new Map(edges.map((edge) => [`${edge.source}|${edge.target}|${edge.type}`, edge])).values()];
+  const sortedNodes = nodes.sort((left, right) => left.label.localeCompare(right.label));
+  const coverage = summarizeFileCoverage(records);
+  const git = readGitMetadata(root);
+  const generatedAt = new Date().toISOString();
+  const graph = {
+    schemaVersion: GRAPH_SCHEMA_VERSION,
+    generatedAt,
+    project: {
+      root,
+      name: packageJson.name || path.basename(root),
+      projectId: projectIdentity?.projectId || null,
+      identity: projectIdentity || null,
+      git,
+    },
+    state: {
+      graphVersion: 0,
+      materialFingerprint: null,
+      sourceFingerprint: sourceFingerprint(sourceRecords),
+      sourceRevision: git.revision,
+      updatedAt: generatedAt,
+      status: "unpersisted",
+    },
+    analysis: {
+      mode: "deterministic",
+      refresh: refresh || {
+        strategy: "full-content-analysis",
+        mode: "full",
+        analyzedFiles: records.length,
+        reusedFiles: 0,
+        removedFiles: 0,
+        changedPaths: [],
+      },
+      codeInterpretation: "AST-only for registered language adapters",
+      unparsedPolicy: "inventory-only; no dependency or flow is inferred",
+      coverage,
+      repositoryScope: scopeSummary(scope || readRepositoryScope(root), records, excludedPaths),
+      cache: {
+        graphSchemaVersion: GRAPH_SCHEMA_VERSION,
+        validation: "Graph cache payloads are validated on read and before atomic replacement.",
+        persistence: "Validated JSON is written to a synchronized temporary file and atomically replaced with bounded retry for transient Windows locks.",
+        limitation: "Cache state proves a persisted static graph version, not runtime behavior, a source diff, or business intent.",
+      },
+      resolution: {
+        internal: ["relative imports", "$lib", "@/", "tsconfig/jsconfig baseUrl and paths", "literal aliases from exported Vite/Webpack configs", "safe static Vite/Webpack alias expressions (__dirname, root process.cwd(), path.resolve/join/dirname, new URL/import.meta.url, fileURLToPath(import.meta.url), and constants)", "package.json imports aliases", "static import/node/default/require/types package condition trees", "declared npm and pnpm workspace package entries", "static Yarn PnP JSON workspace package entries", "Python relative and src-package imports", "static Go module packages", "static Rust crate/self/super modules in conventional Cargo src roots"],
+        limitations: ["Arbitrary computed Vite/Webpack aliases, custom package conditions, unsupported pnpm YAML constructs, PHP Composer autoloading, Java framework wiring and non-local-static method dispatch, Rust custom Cargo targets and #[path] modules, Go build tags and duplicate package function names, and runtime module loading are not resolved."],
+      },
+      calls: {
+        supported: ["direct identifier calls to top-level local functions", "direct identifier calls to named ES/CommonJS imports resolved inside the repository", "direct identifier calls to top-level local Python functions and named Python imports resolved inside the repository", "direct local Go function calls and aliased Go package selectors resolved inside the repository", "direct local PHP function calls", "direct local Rust functions and named crate/self/super imports", "direct unqualified unique local static Java method calls"],
+        limitations: "Java instance/qualified/overloaded method dispatch, Rust macros, qualified module calls, trait dispatch, custom Cargo targets, and #[path] modules, default and namespace imports, PHP Composer/autoloaded functions, Python attribute calls, Go function values, ambiguous package functions, and unaliased package-name mismatches, dependency injection, callbacks, reflection, dynamic loading, and non-literal CommonJS requires are not resolved as call edges.",
+      },
+      adapterCapabilities: getAdapterRegistry(),
+      capabilities: getAdapterRegistry().adapters,
+    },
+    stats: {
+      scannedFiles: coverage.summary.scannedFiles,
+      nodes: sortedNodes.length,
+      edges: uniqueEdges.length,
+      services: sortedNodes.filter((node) => node.type === "service").length,
+      classes: sortedNodes.filter((node) => node.kind === "symbol" && node.type === "class").length,
+      functions: sortedNodes.filter((node) => node.kind === "symbol" && node.type === "function").length,
+      calls: uniqueEdges.filter((edge) => edge.type === "calls").length,
+      endpoints: sortedNodes.filter((node) => node.kind === "endpoint").length,
+      tests: sortedNodes.filter((node) => node.type === "test").length,
+      runtimeDependencies: sortedNodes.filter((node) => node.layer === "runtime").length,
+      parsedFiles: coverage.summary.parsedFiles,
+      inventoryOnlyFiles: coverage.summary.inventoryOnlyFiles,
+      parseFailedFiles: coverage.summary.parseFailedFiles,
+    },
+    nodes: sortedNodes,
+    edges: uniqueEdges,
+  };
+  graph.flows = buildFlows(graph.nodes, graph.edges, scope?.flowEntries);
+  graph.diagnosticFlows = buildFlows(graph.nodes, graph.edges, { tests: true, fixtures: true });
+  return graph;
+}
+
+function sameFingerprint(left, right) {
+  return left && right && left.size === right.size && left.mtimeMs === right.mtimeMs;
+}
+
+function relativeChangedPath(root, changedPath) {
+  if (typeof changedPath !== "string" || !changedPath) return null;
+  const absolutePath = path.resolve(root, changedPath);
+  const relativePath = path.relative(root, absolutePath);
+  if (!relativePath || relativePath.startsWith("..") || path.isAbsolute(relativePath)) return null;
+  const normalized = toPosix(relativePath);
+  if (normalized === CONFIG_FILENAME) return normalized;
+  if (normalized.split("/").some((segment) => IGNORED_DIRECTORIES.has(segment) || segment.startsWith("."))) return null;
+  return normalized;
+}
+
+function graphContextMayHaveChanged(root, relativePath) {
+  if (relativePath === CONFIG_FILENAME) return true;
+  const filename = path.basename(relativePath).toLowerCase();
+  if (filename.endsWith(".json") || filename === "go.mod" || filename === "cargo.toml" || filename === ".pnp.data.json" || filename === "pnpm-workspace.yaml" || filename === "pnpm-workspace.yml" || BUNDLER_CONFIG_FILENAMES.includes(filename) || [".go", ".rs"].includes(extensionOf(relativePath))) return true;
+  try {
+    return fs.statSync(path.resolve(root, relativePath)).isDirectory();
+  } catch {
+    return !extensionOf(relativePath);
+  }
+}
+
+function createRepositoryScanner(inputRoot, options = {}) {
+  const root = fs.realpathSync(inputRoot);
+  const records = new Map();
+  let initialized = false;
+  let graphContext = null;
+  let repositoryScope = null;
+  let repositoryScopeSignature = null;
+  let excludedPaths = new Set();
+  let projectIdentity = null;
+
+  const timed = (phase, operation) => {
+    if (typeof options.onProfile !== "function") return operation();
+    const started = process.hrtime.bigint();
+    try { return operation(); }
+    finally {
+      options.onProfile({ phase, milliseconds: Number((Number(process.hrtime.bigint() - started) / 1_000_000).toFixed(3)) });
+    }
+  };
+
+  const removeRecordsIn = (relativePath, refresh) => {
+    let removed = false;
+    for (const candidate of [...records.keys()]) {
+      if (candidate === relativePath || candidate.startsWith(`${relativePath}/`)) {
+        records.delete(candidate);
+        refresh.removedFiles += 1;
+        removed = true;
+      }
+    }
+    return removed;
+  };
+
+  const needsUpsert = (absolutePath, sourceScope, refresh, force = false) => {
+    if (!isScannableFile(absolutePath)) return false;
+    const relativePath = toPosix(path.relative(root, absolutePath));
+    const current = records.get(relativePath);
+    return !((!force || refresh.analyzedPaths.has(relativePath)) && current && current.sourceScope === sourceScope && sameFingerprint(current.fingerprint, fileFingerprint(absolutePath)));
+  };
+
+  const upsertFile = (absolutePath, refresh, force = false, goFactByPath = null) => {
+    if (!isScannableFile(absolutePath)) return;
+    const relativePath = toPosix(path.relative(root, absolutePath));
+    const sourceScope = classifyRepositoryPath(relativePath, repositoryScope);
+    if (sourceScope === "excluded") {
+      excludedPaths.add(relativePath);
+      removeRecordsIn(relativePath, refresh);
+      return;
+    }
+    excludedPaths.delete(relativePath);
+    const fingerprint = fileFingerprint(absolutePath);
+    const current = records.get(relativePath);
+    if ((!force || refresh.analyzedPaths.has(relativePath)) && current && current.sourceScope === sourceScope && sameFingerprint(current.fingerprint, fingerprint)) {
+      refresh.reusedFiles += 1;
+      return;
+    }
+    records.set(relativePath, createFileRecord(root, absolutePath, sourceScope, goFactByPath?.get(path.resolve(absolutePath)) || null));
+    refresh.analyzedPaths.add(relativePath);
+    refresh.analyzedFiles += 1;
+  };
+
+  const upsertFiles = (absolutePaths, refresh, force = false) => {
+    const pending = absolutePaths.filter((absolutePath) => {
+      const relativePath = toPosix(path.relative(root, absolutePath));
+      return classifyRepositoryPath(relativePath, repositoryScope) !== "excluded" && needsUpsert(absolutePath, classifyRepositoryPath(relativePath, repositoryScope), refresh, force);
+    });
+    const goFactByPath = goFacts(pending.filter((absolutePath) => extensionOf(absolutePath) === ".go"));
+    const csharpFactByPath = csharpFacts(pending.filter((absolutePath) => extensionOf(absolutePath) === ".cs"));
+    const facts = new Map([...goFactByPath, ...csharpFactByPath]);
+    for (const absolutePath of absolutePaths) upsertFile(absolutePath, refresh, force, facts);
+  };
+
+  const reconcileDirectory = (absolutePath, relativePath, refresh) => {
+    const present = new Set();
+    const candidates = walk(root, absolutePath);
+    for (const candidate of candidates) {
+      const candidateRelativePath = toPosix(path.relative(root, candidate));
+      if (classifyRepositoryPath(candidateRelativePath, repositoryScope) === "excluded") excludedPaths.add(candidateRelativePath);
+      else present.add(candidateRelativePath);
+    }
+    upsertFiles(candidates, refresh);
+    for (const candidate of [...records.keys()]) {
+      if (candidate.startsWith(`${relativePath}/`) && !present.has(candidate)) {
+        records.delete(candidate);
+        refresh.removedFiles += 1;
+      }
+    }
+    for (const candidate of [...excludedPaths]) {
+      if (candidate.startsWith(`${relativePath}/`) && !fs.existsSync(path.resolve(root, candidate))) excludedPaths.delete(candidate);
+    }
+  };
+
+  const reconcileAll = (refresh) => {
+    excludedPaths = new Set();
+    const present = new Set();
+    const absolutePaths = walk(root);
+    for (const absolutePath of absolutePaths) {
+      const relativePath = toPosix(path.relative(root, absolutePath));
+      if (classifyRepositoryPath(relativePath, repositoryScope) === "excluded") excludedPaths.add(relativePath);
+      else present.add(relativePath);
+    }
+    upsertFiles(absolutePaths, refresh);
+    for (const relativePath of [...records.keys()]) {
+      if (!present.has(relativePath)) {
+        records.delete(relativePath);
+        refresh.removedFiles += 1;
+      }
+    }
+  };
+
+  const reconcileChangedPath = (relativePath, refresh) => {
+    const absolutePath = path.resolve(root, relativePath);
+    let stat;
+    try {
+      stat = fs.statSync(absolutePath);
+    } catch {
+      return removeRecordsIn(relativePath, refresh);
+    }
+    if (stat.isDirectory()) {
+      reconcileDirectory(absolutePath, relativePath, refresh);
+      return true;
+    }
+    if (!stat.isFile() || !isScannableFile(absolutePath)) {
+      excludedPaths.delete(relativePath);
+      return removeRecordsIn(relativePath, refresh);
+    }
+    const topologyChanged = !records.has(relativePath);
+    upsertFiles([absolutePath], refresh, true);
+    return topologyChanged;
+  };
+
+  const scan = (changedPaths = null) => {
+    let nextScope;
+    let nextScopeSignature;
+    timed("scope-and-identity", () => {
+      nextScope = readRepositoryScope(root);
+      nextScopeSignature = scopeSignature(nextScope);
+      projectIdentity = resolveProjectIdentity(root, nextScope.projectId, { persist: options.persistIdentity !== false });
+    });
+    const scopeChanged = repositoryScopeSignature !== null && repositoryScopeSignature !== nextScopeSignature;
+    repositoryScope = nextScope;
+    repositoryScopeSignature = nextScopeSignature;
+    const refresh = {
+      strategy: "incremental-content-analysis",
+      mode: initialized ? "incremental" : "initial",
+      analyzedFiles: 0,
+      reusedFiles: 0,
+      removedFiles: 0,
+      changedPaths: [],
+    };
+    if (scopeChanged) refresh.scopeChanged = true;
+    Object.defineProperty(refresh, "analyzedPaths", { value: new Set(), enumerable: false });
+    let contextChanged = !initialized || changedPaths === null || scopeChanged;
+    if (scopeChanged) {
+      records.clear();
+      graphContext = null;
+    }
+    timed("source-analysis", () => {
+      if (!initialized || changedPaths === null || scopeChanged) {
+        if (initialized) refresh.mode = "reconciled";
+        reconcileAll(refresh);
+        initialized = true;
+      } else {
+        const uniquePaths = new Set();
+        let ambiguousChange = false;
+        for (const changedPath of changedPaths) {
+          const relativePath = relativeChangedPath(root, String(changedPath || ""));
+          if (relativePath) {
+            uniquePaths.add(relativePath);
+            if (graphContextMayHaveChanged(root, relativePath)) contextChanged = true;
+          }
+          else ambiguousChange = true;
+        }
+        refresh.changedPaths = [...uniquePaths].sort();
+        if (ambiguousChange) {
+          refresh.mode = "reconciled";
+          contextChanged = true;
+          reconcileAll(refresh);
+        } else {
+          for (const relativePath of uniquePaths) {
+            if (reconcileChangedPath(relativePath, refresh)) contextChanged = true;
+          }
+        }
+      }
+    });
+    if (refresh.mode === "incremental") refresh.reusedFiles = Math.max(refresh.reusedFiles, records.size - refresh.analyzedFiles);
+    timed("resolver-context", () => {
+      if (contextChanged || !graphContext) graphContext = createGraphContext(root);
+    });
+    return timed("graph-assembly", () => buildGraphFromRecords(root, [...records.values()], refresh, graphContext, repositoryScope, [...excludedPaths].sort(), projectIdentity));
+  };
+
+  return { root, scan };
+}
+
+function scanRepository(inputRoot, options = {}) {
+  return createRepositoryScanner(inputRoot, options).scan();
+}
+
+function writeGraphCache(root, graph, options = {}) {
+  const result = persistGraphState(root, graph, options);
+  return { ...result.cacheResult, graphState: result.graphState, delta: result.delta, previousCache: result.previousCache, previousState: result.previousState };
+}
+
+function graphToMermaid(graph, limit = 100) {
+  const validId = (id) => id.split("").map((character) => {
+    const letter = character.toLowerCase() !== character.toUpperCase();
+    const digit = character >= "0" && character <= "9";
+    return letter || digit || character === "_" ? character : "_";
+  }).join("");
+  const label = (value) => value.split("").filter((character) => !["\"", "[", "]"].includes(character)).join("");
+  const visibleNodes = graph.nodes
+    .filter((node) => node.layer === "application" && (node.kind === "endpoint" || ["route", "controller", "service", "repository", "database", "queue"].includes(node.type)))
+    .slice(0, limit);
+  const visibleIds = new Set(visibleNodes.map((node) => node.id));
+  const nodeLines = visibleNodes.map((node) => `  ${validId(node.id)}["${label(node.label)}"]`);
+  const edgeLines = graph.edges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target)).slice(0, limit * 2).map((edge) => `  ${validId(edge.source)} --> ${validId(edge.target)}`);
+  return ["flowchart LR", ...nodeLines, ...edgeLines].join("\n");
+}
+
+function saveDescription(root, id, description) {
+  const directory = path.join(root, ".flowpeek");
+  const filePath = path.join(directory, "descriptions.json");
+  const descriptions = readDescriptions(root);
+  fs.mkdirSync(directory, { recursive: true });
+  if (description.trim()) descriptions[id] = description.trim();
+  else delete descriptions[id];
+  fs.writeFileSync(filePath, JSON.stringify(descriptions, null, 2));
+  return descriptions;
+}
+
+module.exports = { buildFlows, createRepositoryScanner, getGitChangedPaths, graphToMermaid, readGraphCache, scanRepository, saveDescription, writeGraphCache };

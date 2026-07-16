@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "flowpeek-semantic-suggestion-reviewed-dataset/v1",
+  "datasetKind": "consented-human-review",
+  "template": true,
+  "datasetId": "review-batch-2026-01",
+  "privacy": {
+    "consentConfirmed": true,
+    "containsSourceContent": false,
+    "containsPrompts": false,
+    "containsCredentials": false,
+    "containsRawLogs": false
+  },
+  "records": [
+    {
+      "id": "review-001",
+      "caseId": "case-001",
+      "repositoryAlias": "repo-a",
+      "reviewerId": "reviewer-01",
+      "reviewedAt": "2026-07-14T00:00:00.000Z",
+      "split": "held-out",
+      "suggestionStatus": "suggested",
+      "decision": "accepted",
+      "traceVerificationStatus": "passed"
+    },
+    {
+      "id": "review-002",
+      "caseId": "case-002",
+      "repositoryAlias": "repo-b",
+      "reviewerId": "reviewer-02",
+      "reviewedAt": "2026-07-14T00:00:00.000Z",
+      "split": "held-out",
+      "suggestionStatus": "abstained",
+      "decision": "abstained",
+      "abstentionVerdict": "appropriate"
+    }
+  ]
+}
