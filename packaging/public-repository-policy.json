@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "flowpeek-public-repository-policy/v1",
+  "schemaVersion": "flowpeek-public-repository-policy/v2",
   "sourceRepository": {
     "classification": "private-development",
     "cleanWorktreeRequiredForExport": true,
@@ -42,6 +42,13 @@
     "scripts",
     "src",
     "test"
+  ],
+  "excludedExactPaths": [
+    "docs/ai-provider-validation.md",
+    "docs/portable-agent-team.md",
+    "docs/public-private-repositories.md",
+    "test/contracts/agent-skills-contract.test.js",
+    "test/unit/public-snapshot-workflow.test.js"
   ],
   "requiredPaths": [
     ".flowpeek/config.json",

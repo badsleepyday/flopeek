@@ -30,11 +30,12 @@ function git(root, ...args) {
 
 function fixturePolicy() {
   return {
-    schemaVersion: "flowpeek-public-repository-policy/v1",
+    schemaVersion: "flowpeek-public-repository-policy/v2",
     sourceRepository: { classification: "private-development", cleanWorktreeRequiredForExport: true, copyGitHistory: false },
     overlays: [{ source: "packaging/public-overlay/ci.yml", destination: ".github/workflows/ci.yml" }],
     allowedExactPaths: [".flowpeek/config.json", ".github/workflows/ci.yml", "README.md", "package.json", "src/cli.js", "test/unit/example.test.js"],
     allowedDirectories: [],
+    excludedExactPaths: [],
     requiredPaths: [".flowpeek/config.json", ".github/workflows/ci.yml", "README.md", "package.json", "src/cli.js", "test/unit/example.test.js"],
     deniedPathSegments: [".agent-team", ".agents", ".git", "node_modules"],
     deniedBasenames: [".env", ".npmrc", "AGENTS.md", "credentials.json", "id_ed25519", "id_rsa"],
@@ -85,7 +86,14 @@ test("development repository projects a bounded public tree without agent govern
     "public/index.html",
     "src/cli.js",
     "src/mcp.js",
+    "benchmarks/private-dogfood-summary.json",
+    "docs/private-dogfooding.md",
+    "docs/ai-provider-validation.md",
+    "docs/portable-agent-team.md",
+    "docs/public-private-repositories.md",
+    "test/contracts/agent-skills-contract.test.js",
     "test/unit/package-policy.test.js",
+    "test/unit/public-snapshot-workflow.test.js",
   ], policy);
   const files = entries.map((entry) => entry.destination);
   assert.ok(files.includes(".flowpeek/config.json"));
@@ -93,12 +101,27 @@ test("development repository projects a bounded public tree without agent govern
   assert.equal(entries.find((entry) => entry.destination === ".github/workflows/ci.yml").source, "packaging/public-repository-overlay/.github/workflows/ci.yml");
   assert.equal(files.includes("AGENTS.md"), false);
   assert.equal(files.some((file) => file.startsWith(".agents/") || file.startsWith(".agent-team/")), false);
+  assert.equal(files.includes("test/unit/public-snapshot-workflow.test.js"), false);
+  assert.equal(files.includes("benchmarks/private-dogfood-summary.json"), true);
+  assert.equal(files.includes("docs/private-dogfooding.md"), true);
+  assert.equal(files.includes("docs/public-private-repositories.md"), false);
+  assert.equal(files.includes("test/contracts/agent-skills-contract.test.js"), false);
   const audit = auditPublicFiles(policy.requiredPaths, policy, { name: "flowpeek", version: "0.2.0", private: true }, { totalBytes: 1000, sourceClean: true, revision: "a".repeat(40) });
   assert.equal(audit.structureStatus, "passed");
   assert.ok(audit.releaseReadiness.blockers.includes("license-file-missing"));
   assert.ok(audit.releaseReadiness.blockers.includes("package-license-missing"));
   assert.ok(audit.releaseReadiness.blockers.includes("package-private-boundary-active"));
   assert.equal(policy.sourceRepository.copyGitHistory, false);
+});
+
+test("public-facing installation metadata points to the public repository", () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+  const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
+  const guide = fs.readFileSync(path.join(ROOT, "docs", "using-flowpeek.md"), "utf8");
+  for (const text of [readme, guide, packageJson.homepage, packageJson.bugs.url, packageJson.repository.url]) {
+    assert.match(text, /badsleepyday\/flowpeek/);
+    assert.doesNotMatch(text, /badaruddinl\/flowpeek/);
+  }
 });
 
 test("public tree audit rejects governance, credentials, and release-boundary drift", () => {
@@ -140,4 +163,12 @@ test("export refuses dirty source and destinations that could overlap it", () =>
   } finally {
     fs.rmSync(fixture.parent, { recursive: true, force: true });
   }
+});
+
+test("export accepts an output path on a different Windows volume", { skip: process.platform !== "win32" }, (t) => {
+  const externalRoot = path.parse(os.tmpdir()).root;
+  const sourceRoot = path.parse(ROOT).root;
+  if (externalRoot.toLowerCase() === sourceRoot.toLowerCase()) return t.skip("Temporary directory shares the source volume.");
+  const candidate = path.join(os.tmpdir(), `flowpeek-public-cross-volume-${process.pid}`);
+  assert.doesNotThrow(() => outputPath(ROOT, candidate));
 });

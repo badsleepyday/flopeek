@@ -31,10 +31,6 @@ Choose the shortest path for what you need now.
 | Supported adapters and known gaps | [Support matrix](../SUPPORT.md) |
 | Prioritized delivery | [Roadmap](../ROADMAP.md) |
 | Automated verification lanes | [Testing](testing.md) |
-| Private development vs public release | [Repository boundaries](public-private-repositories.md) |
-| Anonymous private-repository evidence | [Private dogfooding](private-dogfooding.md) |
 | Runner observations | [Runner adapter contract](runner-adapter-contract.md) |
-| Portable reviewer ecosystem | [Portable agent team](portable-agent-team.md) |
-| Provider-diverse validation | [AI-provider validation](ai-provider-validation.md) |
 
 Architecture decisions live under [`docs/adr/`](adr/). They explain why a contract exists; they are not required reading for normal use.

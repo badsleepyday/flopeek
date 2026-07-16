@@ -1,6 +1,6 @@
 {
   "name": "flowpeek",
-  "version": "0.2.1-alpha.0",
+  "version": "0.2.1-alpha.1",
   "private": true,
   "description": "Local-first technical flow explorer for existing repositories.",
   "keywords": [
@@ -10,13 +10,13 @@
     "mcp",
     "static-analysis"
   ],
-  "homepage": "https://github.com/badaruddinl/flowpeek#readme",
+  "homepage": "https://github.com/badsleepyday/flowpeek#readme",
   "bugs": {
-    "url": "https://github.com/badaruddinl/flowpeek/issues"
+    "url": "https://github.com/badsleepyday/flowpeek/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/badaruddinl/flowpeek.git"
+    "url": "git+https://github.com/badsleepyday/flowpeek.git"
   },
   "type": "commonjs",
   "bin": {

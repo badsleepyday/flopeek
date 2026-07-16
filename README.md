@@ -16,7 +16,7 @@ Flowpeek turns an existing repository into a focused, versioned technical map. O
 Flowpeek is not published to npm yet. Run the current source checkout:
 
 ```powershell
-git clone https://github.com/badaruddinl/flowpeek.git
+git clone https://github.com/badsleepyday/flowpeek.git
 cd flowpeek
 npm install
 npm run showcase
@@ -155,7 +155,6 @@ Start at the [documentation index](docs/README.md).
 | Understand product boundaries | [Product contract](PRODUCT.md) |
 | Understand internals | [Architecture](ARCHITECTURE.md) |
 | See what comes next | [Roadmap](ROADMAP.md) |
-| Prepare a separated public source tree | [Private/public repository boundary](docs/public-private-repositories.md) |
 
 ## Verification
 

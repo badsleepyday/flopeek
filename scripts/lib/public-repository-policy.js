@@ -5,7 +5,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { readRepositoryScope } = require("../../src/scope");
 
-const POLICY_SCHEMA = "flowpeek-public-repository-policy/v1";
+const POLICY_SCHEMA = "flowpeek-public-repository-policy/v2";
 const AUDIT_SCHEMA = "flowpeek-public-repository-audit/v1";
 
 class PublicRepositoryError extends Error {
@@ -44,7 +44,7 @@ function simpleSegment(value, field) {
 }
 
 function validatePolicy(input) {
-  exactKeys(input, ["schemaVersion", "sourceRepository", "overlays", "allowedExactPaths", "allowedDirectories", "requiredPaths", "deniedPathSegments", "deniedBasenames", "deniedBasenamePrefixes", "deniedSuffixes", "maximumEntries", "maximumBytes", "releaseReadiness"], "policy");
+  exactKeys(input, ["schemaVersion", "sourceRepository", "overlays", "allowedExactPaths", "allowedDirectories", "excludedExactPaths", "requiredPaths", "deniedPathSegments", "deniedBasenames", "deniedBasenamePrefixes", "deniedSuffixes", "maximumEntries", "maximumBytes", "releaseReadiness"], "policy");
   if (input.schemaVersion !== POLICY_SCHEMA) throw new PublicRepositoryError("invalid-schema", `policy.schemaVersion must be ${POLICY_SCHEMA}.`);
   exactKeys(input.sourceRepository, ["classification", "cleanWorktreeRequiredForExport", "copyGitHistory"], "policy.sourceRepository");
   if (input.sourceRepository.classification !== "private-development" || input.sourceRepository.cleanWorktreeRequiredForExport !== true || input.sourceRepository.copyGitHistory !== false) throw new PublicRepositoryError("unsafe-source-boundary", "The source must remain private-development, require a clean export, and never copy Git history.");
@@ -63,14 +63,19 @@ function validatePolicy(input) {
   if (new Set(overlays.map((item) => item.destination)).size !== overlays.length) throw new PublicRepositoryError("duplicate-overlay-destination", "Overlay destinations must be unique.");
   const allowedExactPaths = uniqueList(input.allowedExactPaths, "policy.allowedExactPaths");
   const allowedDirectories = uniqueList(input.allowedDirectories, "policy.allowedDirectories");
+  const excludedExactPaths = uniqueList(input.excludedExactPaths, "policy.excludedExactPaths");
+  const requiredPaths = uniqueList(input.requiredPaths, "policy.requiredPaths");
+  if (excludedExactPaths.some((file) => allowedExactPaths.includes(file))) throw new PublicRepositoryError("conflicting-path-policy", "policy.excludedExactPaths must not overlap policy.allowedExactPaths.");
+  if (excludedExactPaths.some((file) => requiredPaths.includes(file))) throw new PublicRepositoryError("conflicting-path-policy", "policy.excludedExactPaths must not overlap policy.requiredPaths.");
   const destinationAllowed = (destination) => allowedExactPaths.includes(destination) || allowedDirectories.some((directory) => destination.startsWith(`${directory}/`));
-  if (overlays.some((overlay) => !destinationAllowed(overlay.destination))) throw new PublicRepositoryError("overlay-outside-allowlist", "Every overlay destination must be explicitly allowed.");
+  if (overlays.some((overlay) => !destinationAllowed(overlay.destination) || excludedExactPaths.includes(overlay.destination))) throw new PublicRepositoryError("overlay-outside-allowlist", "Every overlay destination must be explicitly allowed and not excluded.");
   return {
     ...input,
     overlays,
     allowedExactPaths,
     allowedDirectories,
-    requiredPaths: uniqueList(input.requiredPaths, "policy.requiredPaths"),
+    excludedExactPaths,
+    requiredPaths,
     deniedPathSegments: uniqueList(input.deniedPathSegments, "policy.deniedPathSegments", simpleSegment),
     deniedBasenames: uniqueList(input.deniedBasenames, "policy.deniedBasenames", simpleSegment),
     deniedBasenamePrefixes: uniqueList(input.deniedBasenamePrefixes, "policy.deniedBasenamePrefixes", simpleSegment).map((item) => item.toLowerCase()),
@@ -87,7 +92,7 @@ function loadPolicy(file) {
 }
 
 function pathAllowed(file, policy) {
-  return policy.allowedExactPaths.includes(file) || policy.allowedDirectories.some((directory) => file.startsWith(`${directory}/`));
+  return !policy.excludedExactPaths.includes(file) && (policy.allowedExactPaths.includes(file) || policy.allowedDirectories.some((directory) => file.startsWith(`${directory}/`)));
 }
 
 function git(root, args, encoding = "utf8") {
@@ -220,9 +225,11 @@ function outputPath(root, value) {
   if (!value) throw new PublicRepositoryError("missing-output", "--output is required.");
   const source = fs.realpathSync(root);
   const output = path.resolve(value);
-  const insideSource = path.relative(source, output);
-  const containsSource = path.relative(output, source);
-  if (!insideSource.startsWith("..") || !containsSource.startsWith("..")) throw new PublicRepositoryError("unsafe-output", "The public candidate must be outside the private source repository.");
+  const within = (parent, candidate) => {
+    const relative = path.relative(parent, candidate);
+    return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+  };
+  if (within(source, output) || within(output, source)) throw new PublicRepositoryError("unsafe-output", "The public candidate must be outside the private source repository.");
   if (fs.existsSync(output)) throw new PublicRepositoryError("output-exists", "The public candidate output must not already exist.");
   return output;
 }

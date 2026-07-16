@@ -12,7 +12,7 @@ Flowpeek helps you answer four questions before changing an unfamiliar repositor
 Flowpeek is currently used from its source checkout:
 
 ```powershell
-git clone https://github.com/badaruddinl/flowpeek.git
+git clone https://github.com/badsleepyday/flowpeek.git
 cd flowpeek
 npm install
 npm exec -- flowpeek serve D:\work\my-project

@@ -30,7 +30,7 @@ for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/agen
 for (const name of ["full", "unit"]) lanes[name].unshift("test/unit/orientation-benchmark.test.js");
 for (const name of ["full", "fast", "contracts"]) lanes[name].unshift("test/contracts/agent-skills-contract.test.js");
 for (const name of ["full", "fast", "contracts"]) lanes[name].unshift("test/contracts/flowpeek-skill-contract.test.js");
-lanes["public-source"] = lanes.full.filter((file) => !["test/contracts/agent-skills-contract.test.js", "test/unit/public-repository-policy.test.js"].includes(file));
+lanes["public-source"] = lanes.full.filter((file) => !["test/contracts/agent-skills-contract.test.js", "test/unit/public-repository-policy.test.js", "test/unit/public-snapshot-workflow.test.js"].includes(file));
 if (!lanes[lane]) throw new Error(`Unknown test lane: ${lane}`);
 if (lane === "fast") {
   const support = spawnSync(process.execPath, ["scripts/generate-support.js", "--check"], { cwd: root, stdio: "inherit" });
