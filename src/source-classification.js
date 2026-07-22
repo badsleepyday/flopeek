@@ -92,7 +92,12 @@ function deriveDomain(relativePath) {
   const parts = pathParts(relativePath);
   const rootIndex = parts.findIndex((part) => ["src", "apps", "packages", "modules", "services"].includes(part));
   const candidate = rootIndex >= 0 ? parts[rootIndex + 1] : parts[0];
-  return candidate && !["index", "main", "app", "routes"].includes(removeExtension(candidate).toLowerCase()) ? titleCase(candidate) : "Project";
+  // A source root can contain modules directly (for example `src/cli.js`).
+  // The previous implementation promoted each filename into a separate
+  // "domain", which made a root-level application look like dozens of
+  // unrelated domains. A filename is not a source-containment domain.
+  if (!candidate || path.extname(candidate)) return "Project";
+  return !["index", "main", "app", "routes"].includes(removeExtension(candidate).toLowerCase()) ? titleCase(candidate) : "Project";
 }
 
 function deriveFeature(relativePath) {
@@ -101,6 +106,10 @@ function deriveFeature(relativePath) {
   const segments = rootIndex >= 0 ? parts.slice(rootIndex + 1) : parts;
   const first = segments[0] || "project";
   const second = segments[1];
+  // Files directly under a source root belong to the project/core feature.
+  // This keeps a repository such as Flowpeek navigable without fabricating a
+  // feature per filename.
+  if (path.extname(first)) return "project";
   if (first === "app") {
     if (second === "api") return `api/${segments[2] && !segments[2].startsWith("[") ? segments[2] : "root"}`;
     return `pages/${second && !second.startsWith("[") ? second : "root"}`;

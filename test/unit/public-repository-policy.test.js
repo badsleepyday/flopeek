@@ -12,6 +12,7 @@ const {
   exportPublicRepository,
   loadPolicy,
   outputPath,
+  renameDirectoryWithRetry,
   selectPublicEntries,
 } = require("../../scripts/lib/public-repository-policy");
 
@@ -151,6 +152,29 @@ test("clean export copies only the public snapshot and creates no Git history", 
   } finally {
     fs.rmSync(fixture.parent, { recursive: true, force: true });
   }
+});
+
+test("directory rename retry handles a transient Windows-style replacement lock", () => {
+  const waits = [];
+  let renameAttempts = 0;
+  const result = renameDirectoryWithRetry("staging", "output", {
+    attempts: 3,
+    retryDelayMs: 7,
+    wait: (milliseconds) => waits.push(milliseconds),
+    rename: (source, destination) => {
+      renameAttempts += 1;
+      assert.equal(source, "staging");
+      assert.equal(destination, "output");
+      if (renameAttempts < 3) {
+        const error = new Error("directory is temporarily locked");
+        error.code = "EPERM";
+        throw error;
+      }
+    },
+  });
+  assert.deepEqual(result, { attempts: 3 });
+  assert.equal(renameAttempts, 3);
+  assert.deepEqual(waits, [7, 14]);
 });
 
 test("export refuses dirty source and destinations that could overlap it", () => {

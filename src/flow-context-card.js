@@ -62,7 +62,7 @@ function createFlowContextCard(graph, lens) {
     confidence: lens.confidence,
     flow: { ...lens.flow },
     technicalSummary: {
-      text: `${lens.flow.title} is a bounded static HTTP/request projection with ${lens.steps.length} displayed technical step${lens.steps.length === 1 ? "" : "s"}.`,
+      text: `${lens.flow.title} is a bounded static ${lens.flow.entry?.kind === "package-script" ? "package-script" : lens.flow.entry?.kind === "framework-command" ? "framework-command" : lens.flow.entry?.kind === "scheduled-task" ? "scheduled-task" : lens.flow.entry?.kind === "http-request" ? "HTTP/request" : "entry"} projection with ${lens.steps.length} displayed technical step${lens.steps.length === 1 ? "" : "s"}.`,
       knowledgeClass: "derived",
       confidence: lens.confidence,
     },

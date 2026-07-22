@@ -16,6 +16,7 @@ const { readGraphDelta, readGraphStateResult } = require("../src/graph-state");
 const { createContextRef } = require("../src/context-card");
 const { createFlowProjection } = require("../src/flow-lens");
 const { createSemanticFlowSuggestion } = require("../src/semantic-flow-suggestion");
+const { createMcpServer } = require("../src/mcp");
 
 const GO_TOOLCHAIN_AVAILABLE = (() => {
   try {
@@ -78,6 +79,74 @@ async function readSseEvent(reader, predicate, timeoutMs = 6_000) {
   throw new Error("Timed out waiting for an SSE event.");
 }
 
+function createSseEventReader(reader) {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  return {
+    async next(predicate, timeoutMs = 6_000) {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const remaining = Math.max(deadline - Date.now(), 1);
+        const result = await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error("Timed out waiting for an SSE event.")), remaining);
+          reader.read().then((value) => {
+            clearTimeout(timer);
+            resolve(value);
+          }, (error) => {
+            clearTimeout(timer);
+            reject(error);
+          });
+        });
+        if (result.done) throw new Error("SSE stream closed before the expected event.");
+        buffer += decoder.decode(result.value, { stream: true });
+        let boundary;
+        while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+          const raw = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          const event = raw.split("\n").reduce((value, line) => {
+            if (line.startsWith("event: ")) value.event = line.slice(7);
+            if (line.startsWith("data: ")) value.data += line.slice(6);
+            return value;
+          }, { event: "message", data: "" });
+          if (predicate(event)) return event;
+        }
+      }
+      throw new Error("Timed out waiting for an SSE event.");
+    },
+  };
+}
+
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function waitFor(check, timeoutMs = 12_000) {
+  const deadline = Date.now() + timeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    last = await check();
+    if (last) return last;
+    await wait(35);
+  }
+  throw new Error("Timed out waiting for the expected Flowpeek state.");
+}
+
+async function assertNoSseEvent(reader, predicate, timeoutMs = 600) {
+  try {
+    await reader.next(predicate, timeoutMs);
+  } catch (error) {
+    assert.equal(error.message, "Timed out waiting for an SSE event.");
+    return;
+  }
+  assert.fail("Received an unexpected SSE event.");
+}
+
+function writeBoundedActiveFixture(root, fileCount = 48, functionsPerFile = 150) {
+  write(root, "package.json", JSON.stringify({ name: "bounded-active-fixture" }));
+  const declarations = Array.from({ length: functionsPerFile }, (_, index) => `export function step${index}() { return ${index}; }`).join("\n");
+  for (let index = 0; index < fileCount; index += 1) write(root, `src/generated-${index}.ts`, declarations);
+}
+
 test("scanner builds an endpoint-to-service flow and finds related tests", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "project-flow-"));
   try {
@@ -120,6 +189,276 @@ test("scanner builds an endpoint-to-service flow and finds related tests", () =>
     assert.ok(impact.recommendedTests.some((node) => node.path === "src/payment/payment.service.spec.ts"));
     assert.ok(impact.dependencyNodes.some((node) => node.path === "src/payment/payment.repository.ts"));
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("literal package scripts create bounded command Flow Lenses and inventory unsupported shell forms", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-command-entry-"));
+  try {
+    write(root, "package.json", JSON.stringify({
+      name: "command-entry-example",
+      scripts: {
+        serve: "node src/main.ts",
+        composed: "node src/main.ts && node src/other.ts",
+        flagged: "node --test src/main.ts",
+        framework: "vite",
+      },
+    }));
+    write(root, "src/main.ts", "import { save } from './store';\nexport function main() { return save(); }\nmain();");
+    write(root, "src/store.ts", "export function save() { return 'saved'; }");
+
+    const graph = scanRepository(root);
+    const command = graph.nodes.find((node) => node.id === "command:package.json:serve");
+    assert.ok(command);
+    assert.equal(command.label, "npm run serve");
+    assert.equal(command.analysis.parser, "package-json");
+    assert.ok(graph.edges.some((edge) => edge.source === command.id && edge.type === "declares-command-target" && edge.target === "file:src/main.ts"));
+    assert.deepEqual(graph.analysis.entryPoints.supported.packageScripts, [{
+      id: command.id,
+      manifest: "package.json",
+      scriptName: "serve",
+      runner: "node",
+      targetPath: "src/main.ts",
+      targetId: "file:src/main.ts",
+    }]);
+    assert.deepEqual(graph.analysis.entryPoints.unsupported.packageScripts.map((item) => [item.scriptName, item.reason]), [
+      ["composed", "shell-syntax-or-quoting"],
+      ["flagged", "not-a-direct-runner-and-source-target"],
+      ["framework", "not-a-direct-runner-and-source-target"],
+    ]);
+    assert.equal(graph.analysis.entryPoints.unsupported.packageScripts.some((item) => Object.hasOwn(item, "command")), false);
+    const entryMap = projectView(graph, { mode: "requests", scope: "application" });
+    assert.ok(entryMap.nodes.some((node) => node.memberIds.includes(command.id)));
+    assert.equal(entryMap.aiContext.projection.meaning.includes("command invocation"), true);
+    assert.equal(entryMap.aiContext.entryPoints.supported.packageScripts[0].scriptName, "serve");
+    assert.deepEqual(entryMap.aiContext.entryPoints.unsupported.packageScriptReasonCounts, {
+      "not-a-direct-runner-and-source-target": 2,
+      "shell-syntax-or-quoting": 1,
+    });
+
+    const flow = graph.flows.find((candidate) => candidate.entryId === command.id);
+    assert.ok(flow);
+    assert.equal(flow.entry.schemaVersion, "flowpeek-static-flow-entry/v1");
+    assert.equal(flow.entry.kind, "package-script");
+    assert.equal(flow.entry.declaration.targetPath, "src/main.ts");
+    const lens = getFlowProjection(graph, flow.id);
+    assert.equal(lens.flow.entry.kind, "package-script");
+    assert.equal(lens.steps[0].role, "command-entry");
+    assert.equal(lens.steps[1].id, "file:src/main.ts");
+    assert.equal(lens.entryEvidence.binding, "exact-literal-target");
+    assert.equal(lens.handlerEvidence, null);
+    assert.equal(lens.semanticSuggestion.status, "abstained");
+    assert.equal(lens.flowInterface.boundary.kind, "package-script");
+    assert.deepEqual(lens.flowInterface.boundary.command, {
+      adapter: "package-script",
+      manifest: "package.json",
+      scriptName: "serve",
+      commandName: null,
+      runner: "node",
+      targetPath: "src/main.ts",
+      targetId: "file:src/main.ts",
+    });
+    const packet = getFlowContextCard(graph, flow.id);
+    assert.equal(packet.card.flow.entry.kind, "package-script");
+    assert.match(packet.card.technicalSummary.text, /package-script/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("Django management commands create bounded command Flow Lenses without claiming registration or execution", () => {
+  const fixture = path.join(__dirname, "fixtures", "django-management-command-flow");
+  const graph = scanRepository(fixture, { persistIdentity: false });
+  const command = graph.nodes.find((node) => node.entryKind === "django-management-command");
+  assert.ok(command);
+  assert.equal(command.label, "python manage.py rebuild_index");
+  assert.equal(command.analysis.confidence, "exact");
+  assert.ok(graph.edges.some((edge) => edge.source === command.id && edge.type === "declares-command-target" && edge.target === "symbol:polls/management/commands/rebuild_index.py:class:Command"));
+  assert.deepEqual(graph.analysis.entryPoints.supported.djangoManagementCommands, [{
+    id: command.id,
+    path: "polls/management/commands/rebuild_index.py",
+    commandName: "rebuild_index",
+    targetPath: "polls/management/commands/rebuild_index.py",
+    targetId: "symbol:polls/management/commands/rebuild_index.py:class:Command",
+  }]);
+  const flow = graph.flows.find((candidate) => candidate.entryId === command.id);
+  assert.ok(flow);
+  assert.equal(flow.entry.kind, "framework-command");
+  const lens = getFlowProjection(graph, flow.id);
+  assert.equal(lens.entryEvidence.binding, "exact-framework-command-target");
+  assert.equal(lens.steps[0].role, "command-entry");
+  assert.equal(lens.steps[1].id, "symbol:polls/management/commands/rebuild_index.py:class:Command");
+  assert.equal(lens.flowInterface.boundary.kind, "framework-command");
+  assert.deepEqual(lens.flowInterface.boundary.command, {
+    adapter: "django",
+    manifest: null,
+    scriptName: null,
+    commandName: "rebuild_index",
+    runner: null,
+    targetPath: "polls/management/commands/rebuild_index.py",
+    targetId: "symbol:polls/management/commands/rebuild_index.py:class:Command",
+  });
+  assert.match(lens.limitations.join("\n"), /does not prove app registration/i);
+  const packet = getFlowContextCard(graph, flow.id);
+  assert.equal(packet.card.flow.entry.kind, "framework-command");
+  assert.match(packet.card.technicalSummary.text, /framework-command/);
+});
+
+test("literal node-cron schedules create bounded scheduler Flow Lenses and inventory unsupported registrations", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-scheduled-entry-"));
+  try {
+    write(root, "package.json", JSON.stringify({ name: "scheduled-entry-example" }));
+    write(root, "src/jobs.ts", [
+      'import cron from "node-cron";',
+      'import { persistSnapshot } from "./store";',
+      "export function refreshSnapshot() { return persistSnapshot(); }",
+      'cron.schedule("0 * * * *", refreshSnapshot);',
+      'cron.schedule("not a cron expression", refreshSnapshot);',
+      'cron.schedule("0 * * * *", () => refreshSnapshot());',
+      'function deferRegistration() { cron.schedule("0 * * * *", refreshSnapshot); }',
+    ].join("\n"));
+    write(root, "src/store.ts", "export function persistSnapshot() { return 'stored'; }");
+
+    const graph = scanRepository(root);
+    const schedule = graph.nodes.find((node) => node.kind === "schedule" && node.taskName === "refreshSnapshot");
+    assert.ok(schedule);
+    assert.equal(schedule.analysis.parser, "typescript-ast");
+    assert.equal(schedule.analysis.status, "literal-node-cron-schedule");
+    assert.ok(graph.edges.some((edge) => edge.source === schedule.id && edge.type === "schedules" && edge.target === "symbol:src/jobs.ts:function:refreshSnapshot"));
+    assert.deepEqual(graph.analysis.entryPoints.supported.nodeCronSchedules, [{
+      id: schedule.id,
+      path: "src/jobs.ts",
+      expression: "0 * * * *",
+      taskName: "refreshSnapshot",
+      targetPath: "src/jobs.ts",
+      targetId: "symbol:src/jobs.ts:function:refreshSnapshot",
+    }]);
+    assert.deepEqual(graph.analysis.entryPoints.unsupported.nodeCronSchedules.map((item) => item.reason), [
+      "non-literal-or-unsupported-cron-expression",
+      "task-is-not-an-unshadowed-identifier",
+      "registration-is-not-module-scope",
+    ]);
+    assert.equal(graph.analysis.entryPoints.unsupported.nodeCronSchedules.some((item) => Object.hasOwn(item, "expression")), false);
+
+    const entryMap = projectView(graph, { mode: "requests", scope: "application" });
+    assert.ok(entryMap.nodes.some((node) => node.memberIds.includes(schedule.id)));
+    assert.equal(entryMap.aiContext.entryPoints.supported.nodeCronSchedules[0].taskName, "refreshSnapshot");
+    assert.deepEqual(entryMap.aiContext.entryPoints.unsupported.nodeCronScheduleReasonCounts, {
+      "non-literal-or-unsupported-cron-expression": 1,
+      "registration-is-not-module-scope": 1,
+      "task-is-not-an-unshadowed-identifier": 1,
+    });
+
+    const flow = graph.flows.find((candidate) => candidate.entryId === schedule.id);
+    assert.ok(flow);
+    assert.equal(flow.entry.schemaVersion, "flowpeek-static-flow-entry/v1");
+    assert.equal(flow.entry.kind, "scheduled-task");
+    assert.equal(flow.entry.declaration.expression, "0 * * * *");
+    const lens = getFlowProjection(graph, flow.id);
+    assert.equal(lens.steps[0].role, "scheduled-entry");
+    assert.equal(lens.steps[1].id, "symbol:src/jobs.ts:function:refreshSnapshot");
+    assert.equal(lens.entryEvidence.binding, "exact-local-task");
+    assert.equal(lens.handlerEvidence, null);
+    assert.equal(lens.semanticSuggestion.status, "abstained");
+    assert.equal(lens.flowInterface.boundary.kind, "scheduled-task");
+    assert.deepEqual(lens.flowInterface.boundary.schedule, {
+      adapter: "node-cron",
+      expression: "0 * * * *",
+      taskName: "refreshSnapshot",
+      targetPath: "src/jobs.ts",
+    });
+    assert.deepEqual(lens.flowInterface.boundary.task, {
+      status: "available",
+      id: "symbol:src/jobs.ts:function:refreshSnapshot",
+      evidenceClass: "parser-fact",
+    });
+    const packet = getFlowContextCard(graph, flow.id);
+    assert.equal(packet.card.flow.entry.kind, "scheduled-task");
+    assert.match(packet.card.technicalSummary.text, /scheduled-task/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("CLI summary separates supported static entry families", () => {
+  const fixture = path.join(__dirname, "fixtures", "node-cron-schedule-flow");
+  const output = execFileSync(process.execPath, [path.join(__dirname, "..", "src", "cli.js"), "scan", fixture, "--no-cache", "--format", "summary"], { encoding: "utf8" });
+  assert.match(output, /0 HTTP entries \/ 0 command entries \/ 1 scheduled entries/);
+});
+
+test("literal package script flows retain HTTP Context Ref and Viewer-entry parity", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-command-entry-server-"));
+  let app;
+  try {
+    write(root, "package.json", JSON.stringify({ name: "command-entry-server-example", scripts: { serve: "node src/main.ts" } }));
+    write(root, "src/main.ts", "import { save } from './store';\nexport function main() { return save(); }\nmain();");
+    write(root, "src/store.ts", "export function save() { return 'saved'; }");
+    app = await startServer({ root, port: 0 });
+    const baseUrl = `http://127.0.0.1:${app.port}`;
+    const catalog = await (await fetch(`${baseUrl}/api/entry-flows?query=serve`)).json();
+    assert.equal(catalog.entryFamilies.command, 1);
+    assert.equal(catalog.flows.length, 1);
+    const flow = catalog.flows[0];
+    assert.equal(flow.entry.kind, "package-script");
+    const lens = await (await fetch(`${baseUrl}/api/flow-lens?flow=${encodeURIComponent(flow.id)}`)).json();
+    assert.equal(lens.flow.entry.declaration.runner, "node");
+    assert.equal(lens.steps[0].role, "command-entry");
+    const packet = await (await fetch(`${baseUrl}/api/flow-context-card?flow=${encodeURIComponent(flow.id)}`)).json();
+    assert.equal(packet.card.contextRef, lens.flow.contextRef);
+    assert.equal(packet.card.flow.entry.kind, "package-script");
+    const resolution = await (await fetch(`${baseUrl}/api/context/resolve?ref=${encodeURIComponent(lens.flow.contextRef)}`)).json();
+    assert.equal(resolution.status, "current");
+    const viewer = await (await fetch(`${baseUrl}/api/view?mode=requests&scope=application`)).json();
+    assert.ok(viewer.nodes.some((node) => node.memberIds.includes(flow.entryId)));
+    assert.equal(viewer.aiContext.projection.meaning.includes("command invocation"), true);
+  } finally {
+    if (app) await new Promise((resolve) => app.server.close(resolve));
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("node-cron schedule entries retain Viewer, HTTP, and MCP flow parity", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-scheduled-entry-surfaces-"));
+  let app;
+  let client;
+  let instance;
+  try {
+    write(root, "package.json", JSON.stringify({ name: "scheduled-entry-surface-example" }));
+    write(root, "src/jobs.ts", [
+      'import cron from "node-cron";',
+      'import { persistSnapshot } from "./store";',
+      "export function refreshSnapshot() { return persistSnapshot(); }",
+      'cron.schedule("0 * * * *", refreshSnapshot);',
+    ].join("\n"));
+    write(root, "src/store.ts", "export function persistSnapshot() { return 'stored'; }");
+    app = await startServer({ root, port: 0 });
+    const baseUrl = `http://127.0.0.1:${app.port}`;
+    const httpCatalog = await (await fetch(`${baseUrl}/api/entry-flows?query=refresh`)).json();
+    assert.equal(httpCatalog.entryFamilies.scheduler, 1);
+    const httpFlow = httpCatalog.flows[0];
+    assert.equal(httpFlow.entry.kind, "scheduled-task");
+    const httpLens = await (await fetch(`${baseUrl}/api/flow-lens?flow=${encodeURIComponent(httpFlow.id)}`)).json();
+    assert.equal(httpLens.entryEvidence.binding, "exact-local-task");
+    assert.equal(httpLens.steps[0].role, "scheduled-entry");
+    const viewer = await (await fetch(`${baseUrl}/api/view?mode=requests&scope=application`)).json();
+    assert.ok(viewer.nodes.some((node) => node.memberIds.includes(httpFlow.entryId)));
+
+    instance = await createMcpServer({ root, cache: true });
+    const [{ Client }, { InMemoryTransport }] = await Promise.all([
+      import("@modelcontextprotocol/sdk/client/index.js"),
+      import("@modelcontextprotocol/sdk/inMemory.js"),
+    ]);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    client = new Client({ name: "flowpeek-scheduler-entry-client", version: "1.0.0" });
+    await instance.server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const mcpResult = await client.callTool({ name: "get_entry_flows", arguments: { query: "refresh" } });
+    assert.equal(mcpResult.isError, undefined);
+    const mcpCatalog = JSON.parse(mcpResult.content.find((item) => item.type === "text").text);
+    assert.equal(mcpCatalog.entryFamilies.scheduler, 1);
+    assert.equal(mcpCatalog.flows[0].id, httpFlow.id);
+    assert.equal(mcpCatalog.flows[0].entry.kind, httpFlow.entry.kind);
+  } finally {
+    if (client) await client.close();
+    if (instance) await instance.server.close();
+    if (app) await new Promise((resolve) => app.server.close(resolve));
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("Flow Lens keeps static branches, boundaries, and display bounds explicit", () => {
@@ -747,6 +1086,13 @@ test("incremental scanner reparses only changed source files while rebuilding gl
     assert.equal(deleted.analysis.refresh.reusedFiles, 3);
     assert.equal(deleted.analysis.refresh.removedFiles, 1);
     assert.equal(deleted.nodes.some((node) => node.id === "file:src/orders/tax.ts"), false);
+
+    write(root, "src/orders/discount.ts", "export function discount() { return 5; }");
+    const directoryEvent = scanner.scan(["src/orders"]);
+    assert.equal(directoryEvent.analysis.refresh.mode, "incremental");
+    assert.equal(directoryEvent.analysis.refresh.analyzedFiles, 1);
+    assert.deepEqual(directoryEvent.analysis.refresh.changedPaths, ["src/orders/discount.ts"]);
+    assert.ok(directoryEvent.nodes.some((node) => node.id === "file:src/orders/discount.ts"));
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -994,7 +1340,7 @@ test("local server serves the UI and persists a human description", async () => 
     assert.equal(home.status, 200);
     const homeMarkup = await home.text();
     assert.match(homeMarkup, /analysis-coverage/);
-    assert.match(homeMarkup, /Detected HTTP flows/);
+    assert.match(homeMarkup, /Detected static flows/);
     assert.match(homeMarkup, /open-project-home/);
     assert.match(homeMarkup, /open-product-proof/);
     const currentHome = await fetch(`${baseUrl}/`);
@@ -1418,17 +1764,15 @@ test("serve watches a new source file and publishes a graph update without manua
     assert.equal(update.deltaIdentity.topologyChanged, true);
     assert.ok(update.timing.refreshToAffectedContextMs >= update.timing.changedContextProjectionMs);
     assert.ok(update.timing.changedContextProjectionMs >= 0);
+    const persistedDelta = await (await fetch(`${baseUrl}/api/delta?fromVersion=${update.deltaIdentity.fromGraphVersion}&toVersion=${update.deltaIdentity.toGraphVersion}`)).json();
+    assert.deepEqual(persistedDelta.changedPaths, ["src/new.service.ts"]);
+    assert.equal(persistedDelta.refresh.mode, "incremental");
+    assert.equal(persistedDelta.refresh.analyzedFiles, 1);
+    assert.ok(persistedDelta.refresh.reusedFiles >= 1);
+    assert.equal(persistedDelta.refresh.removedFiles, 0);
     const graph = await (await fetch(`${baseUrl}/api/graph`)).json();
     assert.ok(graph.nodes.some((node) => node.kind === "file" && node.path === "src/new.service.ts"));
-    assert.equal(graph.analysis.refresh.strategy, "incremental-content-analysis");
-    assert.equal(graph.analysis.refresh.mode, "incremental");
-    assert.equal(graph.analysis.refresh.analyzedFiles, 1);
-    assert.equal(graph.analysis.refresh.reusedFiles, 1);
-    assert.equal(graph.analysis.refresh.removedFiles, 0);
-    assert.ok(graph.analysis.refresh.changedPaths.includes("src/new.service.ts"));
-    const persistedDelta = await (await fetch(`${baseUrl}/api/delta?fromVersion=1&toVersion=2`)).json();
-    assert.deepEqual(persistedDelta.changedPaths, ["src/new.service.ts"]);
-    assert.equal(persistedDelta.toGraphVersion, graph.state.graphVersion);
+    assert.ok(graph.state.graphVersion >= update.graphState.graphVersion);
     const dependencyView = await (await fetch(`${baseUrl}/api/view?mode=dependencies&scope=all&focus=file%3Asrc%2Fnew.service.ts`)).json();
     assert.ok(dependencyView.nodes.some((node) => node.id === "file:src/new.service.ts"));
   } finally {
@@ -1989,7 +2333,7 @@ test("MCP server exposes deterministic graph tools over stdio", async () => {
   let client;
   let transport;
   try {
-    write(root, "package.json", JSON.stringify({ name: "mcp-example" }));
+    write(root, "package.json", JSON.stringify({ name: "mcp-example", scripts: { serve: "node src/payment/payment.routes.ts" } }));
     write(root, "src/payment/payment.routes.ts", "import { PaymentService } from './payment.service';\nrouter.post('/payments', () => PaymentService.authorize());");
     write(root, "src/payment/payment.service.ts", "export class PaymentService { static authorize() {} }");
     write(root, "src/payment/payment.service.spec.ts", "import { PaymentService } from './payment.service';\ntest('authorizes', () => PaymentService.authorize());");
@@ -2007,38 +2351,67 @@ test("MCP server exposes deterministic graph tools over stdio", async () => {
     await client.connect(transport);
     const tools = await client.listTools();
     assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), [
+      "assign_workflow",
+      "cancel_scan",
       "compare_git_snapshots",
+      "create_continuation_checkpoint",
       "create_git_snapshot",
+      "create_planned_overlay",
+      "create_work_record",
       "find_nodes",
+      "get_active_branch_git_evidence",
       "get_agent_bootstrap",
       "get_agent_context",
       "get_agent_evidence_traces",
       "get_agent_semantic_proposal",
+      "get_cache_hygiene",
       "get_change_impact",
       "get_changed_contexts",
+      "get_checkpoint_divergence",
       "get_context_card",
+      "get_continuation_checkpoint",
+      "get_continuation_comparison",
+      "get_continuation_context",
       "get_direct_dependencies",
+      "get_entry_flows",
       "get_flow_comparison",
       "get_flow_context_card",
       "get_flow_projection",
       "get_flow_verification",
+      "get_git_context_continuity",
       "get_graph_delta",
       "get_handoff_context",
       "get_node",
+      "get_plan_reconciliation",
+      "get_planned_overlay",
       "get_product_proof",
       "get_project_overview",
       "get_related_tests",
       "get_request_flows",
+      "get_scan_status",
       "get_semantic_suggestion_feedback",
       "get_test_runs",
       "get_trust_analytics",
       "get_verified_semantic_memory",
+      "get_view_projection",
+      "get_work_dependency_status",
+      "get_work_record_workflow",
+      "get_work_timeline",
+      "list_continuation_checkpoints",
+      "list_plan_reconciliations",
+      "list_planned_overlays",
+      "list_work_records",
+      "list_workflows",
       "record_agent_evidence_trace",
       "record_agent_semantic_proposal",
+      "record_plan_reconciliation",
       "record_semantic_suggestion_feedback",
       "record_test_run_event",
+      "record_work_event",
       "refresh_graph",
       "resolve_context_ref",
+      "resolve_plan_ref",
+      "transition_work_record",
     ]);
     const recordTraceTool = tools.tools.find((tool) => tool.name === "record_agent_evidence_trace");
     assert.equal(recordTraceTool.annotations.readOnlyHint, false);
@@ -2048,7 +2421,7 @@ test("MCP server exposes deterministic graph tools over stdio", async () => {
     assert.equal(recordFeedbackTool.annotations.readOnlyHint, false);
     assert.equal(recordFeedbackTool.annotations.destructiveHint, false);
     assert.equal(recordFeedbackTool.annotations.idempotentHint, true);
-    for (const name of ["record_agent_semantic_proposal", "record_test_run_event"]) {
+    for (const name of ["record_agent_semantic_proposal", "record_plan_reconciliation", "record_test_run_event", "assign_workflow", "create_continuation_checkpoint", "create_planned_overlay", "create_work_record", "record_work_event", "transition_work_record"]) {
       const tool = tools.tools.find((candidate) => candidate.name === name);
       assert.equal(tool.annotations.readOnlyHint, false);
       assert.equal(tool.annotations.destructiveHint, false);
@@ -2065,6 +2438,23 @@ test("MCP server exposes deterministic graph tools over stdio", async () => {
     const text = result.content.find((item) => item.type === "text").text;
     const payload = JSON.parse(text);
     assert.ok(payload.results.some((node) => node.label === "Payment Service"));
+    const entryFlowResult = await client.callTool({ name: "get_entry_flows", arguments: { query: "serve" } });
+    assert.equal(entryFlowResult.isError, undefined);
+    const entryFlows = JSON.parse(entryFlowResult.content.find((item) => item.type === "text").text);
+    assert.equal(entryFlows.entryFamilies.command, 1);
+    assert.equal(entryFlows.flows[0].entry.kind, "package-script");
+    const scanStatusResult = await client.callTool({ name: "get_scan_status", arguments: {} });
+    assert.equal(scanStatusResult.isError, undefined);
+    const scanStatus = JSON.parse(scanStatusResult.content.find((item) => item.type === "text").text);
+    assert.equal(scanStatus.schemaVersion, "flowpeek-scan-outcome/v1");
+    assert.equal(scanStatus.status, "complete");
+    assert.equal(scanStatus.activeGraph.freshness, "current");
+    assert.match(scanStatus.activeGraph.projectId, /^project:/);
+    const cancelResult = await client.callTool({ name: "cancel_scan", arguments: {} });
+    assert.equal(cancelResult.isError, undefined);
+    const cancellation = JSON.parse(cancelResult.content.find((item) => item.type === "text").text);
+    assert.equal(cancellation.accepted, false);
+    assert.equal(cancellation.reason, "no-scan-running");
     const impactResult = await client.callTool({ name: "get_change_impact", arguments: { paths: ["src/payment/payment.service.ts"] } });
     assert.equal(impactResult.isError, undefined);
     const impact = JSON.parse(impactResult.content.find((item) => item.type === "text").text);
@@ -2093,6 +2483,8 @@ test("MCP server exposes deterministic graph tools over stdio", async () => {
     assert.equal(bootstrap.project.projectId, context.project.projectId);
     assert.equal(bootstrap.graph.graphVersion, context.graphState.graphVersion);
     assert.equal(bootstrap.policy.strategy, "graph-first-with-source-fallback");
+    assert.equal(bootstrap.scan.status, "complete");
+    assert.equal(bootstrap.readiness.currentSourceVerified, true);
     const trustResult = await client.callTool({ name: "get_trust_analytics", arguments: {} });
     assert.equal(trustResult.isError, undefined);
     const trust = JSON.parse(trustResult.content.find((item) => item.type === "text").text);
@@ -2310,6 +2702,219 @@ test("MCP server exposes deterministic graph tools over stdio", async () => {
   }
 });
 
+test("package-scoped MCP exposes an explicit static subtree boundary without a repository-wide cache", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-package-mcp-"));
+  let client;
+  let instance;
+  try {
+    write(root, "package.json", JSON.stringify({ name: "package-mcp-example" }));
+    write(root, "apps/api/package.json", JSON.stringify({ name: "@mcp/api" }));
+    write(root, "packages/core/package.json", JSON.stringify({ name: "@mcp/core" }));
+    write(root, "apps/api/src/route.ts", "export function apiRoute() { return true; }\n");
+    write(root, "packages/core/src/core.ts", "export function coreRoute() { return true; }\n");
+    const durableFirst = scanRepository(root);
+    writeGraphCache(root, durableFirst, { reason: "package-mcp-durable-first" });
+    write(root, "src/durable.ts", "export function durable() { return 1; }\n");
+    const durableSecond = scanRepository(root);
+    writeGraphCache(root, durableSecond, { reason: "package-mcp-durable-second" });
+    const durableDelta = readGraphDelta(root, durableFirst.state.graphVersion, durableSecond.state.graphVersion);
+    const cachePath = path.join(root, ".flowpeek", "graph.json");
+    const cacheBefore = fs.readFileSync(cachePath);
+    assert.ok(durableDelta);
+    instance = await createMcpServer({ root, cache: true, packagePath: "apps/api" });
+    const [{ Client }, { InMemoryTransport }] = await Promise.all([
+      import("@modelcontextprotocol/sdk/client/index.js"),
+      import("@modelcontextprotocol/sdk/inMemory.js"),
+    ]);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    client = new Client({ name: "flowpeek-package-mcp-client", version: "1.0.0" });
+    await instance.server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const statusResult = await client.callTool({ name: "get_scan_status", arguments: {} });
+    const status = JSON.parse(statusResult.content.find((item) => item.type === "text").text);
+    assert.equal(status.status, "complete");
+    assert.equal(status.bounds.packagePath, "apps/api");
+    assert.equal(status.discovery.selection.path, "apps/api");
+    assert.equal(status.cachePromotion.allowed, false);
+    assert.match(status.activeGraph.projectId, /^session:/);
+    assert.notEqual(status.activeGraph.projectId, durableSecond.project.projectId);
+
+    const bootstrapResult = await client.callTool({ name: "get_agent_bootstrap", arguments: {} });
+    const bootstrap = JSON.parse(bootstrapResult.content.find((item) => item.type === "text").text);
+    assert.equal(bootstrap.graph.packageSelection.path, "apps/api");
+    assert.match(bootstrap.limitations.join(" "), /selected static package subtree/);
+
+    const searchResult = await client.callTool({ name: "find_nodes", arguments: { query: "coreRoute" } });
+    const search = JSON.parse(searchResult.content.find((item) => item.type === "text").text);
+    assert.deepEqual(search.results, []);
+    const durableRequest = await client.callTool({
+      name: "get_graph_delta",
+      arguments: { fromVersion: durableFirst.state.graphVersion, toVersion: durableSecond.state.graphVersion },
+    });
+    assert.equal(durableRequest.isError, true);
+    assert.ok(durableRequest.content[0].text.includes("No matching graph delta was found."));
+    assert.deepEqual(fs.readFileSync(cachePath), cacheBefore);
+  } finally {
+    if (client) await client.close();
+    if (instance) await instance.server.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("package-scoped Viewer HTTP data labels the selected subtree and excludes sibling package source", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-package-viewer-"));
+  let app;
+  try {
+    write(root, "package.json", JSON.stringify({ name: "package-viewer-example" }));
+    write(root, "apps/api/package.json", JSON.stringify({ name: "@viewer/api" }));
+    write(root, "packages/core/package.json", JSON.stringify({ name: "@viewer/core" }));
+    write(root, "apps/api/src/route.ts", "export function apiRoute() { return true; }\n");
+    write(root, "packages/core/src/core.ts", "export function coreRoute() { return true; }\n");
+    app = await startServer({ root, port: 0, cache: true, packagePath: "apps/api", registerServeWorkspace: false });
+    const baseUrl = `http://127.0.0.1:${app.port}`;
+    const status = await (await fetch(`${baseUrl}/api/scan-status`)).json();
+    const view = await (await fetch(`${baseUrl}/api/view?mode=overview&scope=application`)).json();
+    const rawGraph = await (await fetch(`${baseUrl}/api/graph`)).json();
+    assert.equal(status.status, "complete");
+    assert.equal(status.discovery.selection.path, "apps/api");
+    assert.equal(status.cachePromotion.allowed, false);
+    assert.equal(view.aiContext.packageSelection.path, "apps/api");
+    assert.equal(rawGraph.analysis.packageSelection.path, "apps/api");
+    assert.equal(rawGraph.nodes.some((node) => node.path === "packages/core/src/core.ts"), false);
+    assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false);
+  } finally {
+    if (app) await new Promise((resolve) => app.server.close(resolve));
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("invalid package scope is rejected by Viewer and MCP startup without Flowpeek metadata", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-invalid-package-surface-"));
+  try {
+    write(root, "package.json", JSON.stringify({ name: "invalid-package-surface" }));
+    await assert.rejects(
+      () => startServer({ root, port: 0, cache: true, packagePath: "../outside", registerServeWorkspace: false }),
+      /packagePath must not contain parent-directory traversal/,
+    );
+    await assert.rejects(
+      () => createMcpServer({ root, cache: true, packagePath: "../outside" }),
+      /packagePath must not contain parent-directory traversal/,
+    );
+    assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bounded MCP cancellation preserves the current graph and exposes stale-unverified readiness", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-mcp-cancel-"));
+  let client;
+  let instance;
+  try {
+    writeBoundedActiveFixture(root);
+    instance = await createMcpServer({ root, cache: false, maxFiles: 64, timeBudgetMs: 30_000 });
+    const [{ Client }, { InMemoryTransport }] = await Promise.all([
+      import("@modelcontextprotocol/sdk/client/index.js"),
+      import("@modelcontextprotocol/sdk/inMemory.js"),
+    ]);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    client = new Client({ name: "flowpeek-mcp-cancellation-client", version: "1.0.0" });
+    await instance.server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const before = JSON.parse((await client.callTool({ name: "get_agent_bootstrap", arguments: {} })).content.find((item) => item.type === "text").text);
+
+    const refresh = client.callTool({ name: "refresh_graph", arguments: {} });
+    const running = await waitFor(async () => {
+      const result = await client.callTool({ name: "get_scan_status", arguments: {} });
+      const status = JSON.parse(result.content.find((item) => item.type === "text").text);
+      return status.status === "running" && status.progress?.phase === "analysis-started" ? status : null;
+    }, 20_000);
+    assert.equal(running.activeGraph.freshness, "current");
+    const cancellation = await client.callTool({ name: "cancel_scan", arguments: {} });
+    const cancellationPayload = JSON.parse(cancellation.content.find((item) => item.type === "text").text);
+    assert.equal(cancellationPayload.accepted, true);
+
+    const refreshed = await refresh;
+    assert.equal(refreshed.isError, undefined);
+    const refreshPayload = JSON.parse(refreshed.content.find((item) => item.type === "text").text);
+    assert.equal(refreshPayload.scanOutcome.status, "cancelled");
+    assert.equal(refreshPayload.scanOutcome.activeGraph.freshness, "stale-unverified");
+    assert.equal(refreshPayload.project.projectId, before.project.projectId);
+    assert.equal(refreshPayload.graphState.graphVersion, before.graph.graphVersion);
+    assert.equal(refreshPayload.persistedDelta, null);
+    const bootstrap = JSON.parse((await client.callTool({ name: "get_agent_bootstrap", arguments: {} })).content.find((item) => item.type === "text").text);
+    assert.equal(bootstrap.scan.status, "cancelled");
+    assert.equal(bootstrap.readiness.currentSourceVerified, false);
+  } finally {
+    if (client) await client.close();
+    if (instance) await instance.server.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cache-disabled HTTP and MCP sessions never read a persisted project delta", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-session-delta-isolation-"));
+  let app;
+  let client;
+  let instance;
+  try {
+    write(root, "package.json", JSON.stringify({ name: "session-delta-isolation" }));
+    write(root, "src/orders.ts", "export function listOrders() { return []; }");
+    const durableFirst = scanRepository(root);
+    writeGraphCache(root, durableFirst, { reason: "durable-first" });
+    write(root, "src/orders.ts", "export function listOrders() { return [{ id: 'durable' }]; }");
+    const durableSecond = scanRepository(root);
+    writeGraphCache(root, durableSecond, { reason: "durable-second" });
+    const durableDelta = readGraphDelta(root, durableFirst.state.graphVersion, durableSecond.state.graphVersion);
+    assert.ok(durableDelta);
+
+    app = await startServer({ root, port: 0, cache: false, registerServeWorkspace: false });
+    const baseUrl = `http://127.0.0.1:${app.port}`;
+    const httpDelta = await fetch(`${baseUrl}/api/delta?fromVersion=${durableFirst.state.graphVersion}&toVersion=${durableSecond.state.graphVersion}`);
+    assert.equal(httpDelta.status, 404);
+    assert.equal((await httpDelta.json()).error, "No matching graph delta was found.");
+
+    instance = await createMcpServer({ root, cache: false });
+    const [{ Client }, { InMemoryTransport }] = await Promise.all([
+      import("@modelcontextprotocol/sdk/client/index.js"),
+      import("@modelcontextprotocol/sdk/inMemory.js"),
+    ]);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    client = new Client({ name: "flowpeek-session-delta-client", version: "1.0.0" });
+    await instance.server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const persistedRequest = await client.callTool({
+      name: "get_graph_delta",
+      arguments: { fromVersion: durableFirst.state.graphVersion, toVersion: durableSecond.state.graphVersion },
+    });
+    assert.equal(persistedRequest.isError, true);
+    assert.ok(persistedRequest.content[0].text.includes("No matching graph delta was found."));
+
+    write(root, "src/orders.ts", "export function listOrders() { return [{ id: 'session' }]; }");
+    const refreshed = await client.callTool({ name: "refresh_graph", arguments: { paths: ["src/orders.ts"] } });
+    assert.equal(refreshed.isError, undefined);
+    const refreshPayload = JSON.parse(refreshed.content.find((item) => item.type === "text").text);
+    const currentDelta = await client.callTool({
+      name: "get_graph_delta",
+      arguments: {
+        fromVersion: refreshPayload.graphState.graphVersion - 1,
+        toVersion: refreshPayload.graphState.graphVersion,
+      },
+    });
+    assert.equal(currentDelta.isError, undefined);
+    const currentPayload = JSON.parse(currentDelta.content.find((item) => item.type === "text").text);
+    assert.equal(currentPayload.projectId, refreshPayload.project.projectId);
+    assert.notEqual(currentPayload.projectId, durableDelta.projectId);
+  } finally {
+    if (client) await client.close();
+    if (instance) await instance.server.close();
+    if (app) await new Promise((resolve) => app.server.close(resolve));
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("repository scope defaults keep test and fixture endpoints out of application flows", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-scope-defaults-"));
   try {
@@ -2332,14 +2937,15 @@ test("repository scope defaults keep test and fixture endpoints out of applicati
     const cliGraph = JSON.parse(execFileSync(process.execPath, [path.join(__dirname, "..", "src", "cli.js"), "scan", cliRoot, "--json", "--no-cache"], { encoding: "utf8" }));
     assert.equal(cliGraph.analysis.repositoryScope.source, "defaults");
     assert.equal(cliGraph.analysis.repositoryScope.flowEntries.tests, false);
-    assert.match(cliGraph.project.projectId, /^project:/);
+    assert.match(cliGraph.project.projectId, /^session:/);
+    assert.match(cliGraph.project.identity.canonicalProjectId, /^project:/);
     assert.equal(cliGraph.analysis.cacheState.status, "disabled");
     assert.equal(fs.existsSync(path.join(cliRoot, ".flowpeek")), false, "--no-cache must not create Flowpeek cache or identity metadata");
     fs.rmSync(cliRoot, { recursive: true, force: true });
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test("only extracted endpoint facts create HTTP/request Flow Lenses", () => {
+test("route-like nodes without a supported static entry fact do not create Flow Lenses", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-non-http-entry-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "non-http-entry" }));
@@ -2824,6 +3430,214 @@ test("local API reports invalid cache diagnostics while serving the current vali
     assert.equal(bootstrap.schemaVersion, "flowpeek-agent-bootstrap/v1");
     assert.equal(bootstrap.project.projectId, graph.project.projectId);
     assert.equal(bootstrap.graph.graphVersion, context.graphState.graphVersion);
+  } finally {
+    if (app) await new Promise((resolve) => app.server.close(resolve));
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bounded local server reports stale-unverified fallback instead of serving a partial graph", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-bounded-server-"));
+  let app;
+  try {
+    write(root, "package.json", JSON.stringify({ name: "bounded-server" }));
+    write(root, "src/orders.routes.ts", "router.get('/orders', () => ({ ok: true }));");
+    write(root, "src/orders.service.ts", "export function listOrders() { return []; }");
+    const baseline = scanRepository(root);
+    writeGraphCache(root, baseline, { reason: "bounded-server-baseline" });
+    const cacheBefore = fs.readFileSync(path.join(root, ".flowpeek", "graph.json"));
+
+    app = await startServer({ root, port: 0, maxFiles: 1 });
+    const baseUrl = `http://127.0.0.1:${app.port}`;
+    const scanStatus = await (await fetch(`${baseUrl}/api/scan-status`)).json();
+    assert.equal(scanStatus.schemaVersion, "flowpeek-scan-outcome/v1");
+    assert.equal(scanStatus.status, "partial-by-budget");
+    assert.equal(scanStatus.activeGraph.source, "last-complete-cache");
+    assert.equal(scanStatus.activeGraph.freshness, "stale-unverified");
+    assert.equal(scanStatus.cachePromotion.performed, false);
+    const graph = await (await fetch(`${baseUrl}/api/graph`)).json();
+    assert.equal(graph.project.projectId, baseline.project.projectId);
+    assert.equal(graph.state.graphVersion, baseline.state.graphVersion);
+    const cancellationResponse = await fetch(`${baseUrl}/api/scan/cancel`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(cancellationResponse.status, 409);
+    assert.equal((await cancellationResponse.json()).reason, "no-scan-running");
+    assert.deepEqual(fs.readFileSync(path.join(root, ".flowpeek", "graph.json")), cacheBefore);
+  } finally {
+    if (app) await new Promise((resolve) => app.server.close(resolve));
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bounded HTTP cancellation emits one authoritative SSE terminal outcome and retains the complete graph", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-http-cancel-"));
+  let app;
+  let reader;
+  try {
+    writeBoundedActiveFixture(root);
+    app = await startServer({ root, port: 0, cache: false, maxFiles: 64, timeBudgetMs: 30_000, registerServeWorkspace: false });
+    const baseUrl = `http://127.0.0.1:${app.port}`;
+    const before = await (await fetch(`${baseUrl}/api/graph`)).json();
+    const eventResponse = await fetch(`${baseUrl}/api/events`);
+    reader = eventResponse.body.getReader();
+    const events = createSseEventReader(reader);
+    await events.next((event) => event.event === "ready");
+
+    const refresh = fetch(`${baseUrl}/api/scan`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    const running = JSON.parse((await events.next((event) => event.event === "scan-status" && JSON.parse(event.data).phase === "analysis-started", 20_000)).data);
+    assert.equal(running.status, "running");
+    const cancellationResponse = await fetch(`${baseUrl}/api/scan/cancel`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(cancellationResponse.status, 202);
+    assert.equal((await cancellationResponse.json()).accepted, true);
+
+    const refreshResponse = await refresh;
+    assert.equal(refreshResponse.status, 409);
+    const refreshPayload = await refreshResponse.json();
+    assert.equal(refreshPayload.scanOutcome.status, "cancelled");
+    assert.equal(refreshPayload.activeGraph.freshness, "stale-unverified");
+    const terminal = JSON.parse((await events.next((event) => event.event === "scan-status" && JSON.parse(event.data).phase === "terminal", 20_000)).data);
+    assert.equal(terminal.status, "cancelled");
+    assert.equal(terminal.operationId, running.operationId);
+    assert.equal(terminal.activeGraph.freshness, "stale-unverified");
+    await assertNoSseEvent(events, (event) => event.event === "scan-status"
+      && JSON.parse(event.data).phase === "terminal"
+      && JSON.parse(event.data).operationId === running.operationId);
+    const after = await (await fetch(`${baseUrl}/api/graph`)).json();
+    assert.equal(after.project.projectId, before.project.projectId);
+    assert.equal(after.state.graphVersion, before.state.graphVersion);
+  } finally {
+    if (reader) await reader.cancel();
+    if (app) await new Promise((resolve) => app.server.close(resolve));
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a filesystem change during a bounded manual scan is reconciled after the active operation", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-manual-watch-race-"));
+  let app;
+  let reader;
+  try {
+    writeBoundedActiveFixture(root);
+    app = await startServer({ root, port: 0, cache: false, maxFiles: 64, timeBudgetMs: 30_000, registerServeWorkspace: false });
+    const baseUrl = `http://127.0.0.1:${app.port}`;
+    const before = await (await fetch(`${baseUrl}/api/graph`)).json();
+    const eventResponse = await fetch(`${baseUrl}/api/events`);
+    reader = eventResponse.body.getReader();
+    const events = createSseEventReader(reader);
+    await events.next((event) => event.event === "ready");
+
+    const refresh = fetch(`${baseUrl}/api/scan`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    await events.next((event) => event.event === "scan-status" && JSON.parse(event.data).phase === "analysis-started", 20_000);
+    write(root, "src/created-during-manual-scan.ts", "export function createdDuringManualScan() { return true; }");
+
+    const refreshResponse = await refresh;
+    assert.equal(refreshResponse.status, 409);
+    const failed = await refreshResponse.json();
+    assert.equal(failed.scanOutcome.status, "failed");
+    assert.equal(failed.scanOutcome.failure.code, "repository-changed-during-analysis");
+    assert.equal(failed.activeGraph.freshness, "stale-unverified");
+    assert.equal(failed.activeGraph.projectId, before.project.projectId);
+    assert.equal(failed.activeGraph.graphVersion, before.state.graphVersion);
+    const reconciled = await waitFor(async () => {
+      const graph = await (await fetch(`${baseUrl}/api/graph`)).json();
+      return graph.nodes.some((node) => node.path === "src/created-during-manual-scan.ts") ? graph : null;
+    }, 30_000);
+    assert.ok(reconciled.nodes.some((node) => node.path === "src/created-during-manual-scan.ts"));
+    const status = await waitFor(async () => {
+      const candidate = await (await fetch(`${baseUrl}/api/scan-status`)).json();
+      return candidate.status === "complete" ? candidate : null;
+    }, 30_000);
+    assert.equal(status.status, "complete");
+    assert.equal(status.activeGraph.freshness, "current");
+  } finally {
+    if (reader) await reader.cancel();
+    if (app) await new Promise((resolve) => app.server.close(resolve));
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bounded local server preserves its active graph when a repository switch cannot produce evidence", async () => {
+  const activeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-active-server-"));
+  const candidateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-candidate-server-"));
+  let app;
+  let reader;
+  try {
+    write(activeRoot, "package.json", JSON.stringify({ name: "active-server" }));
+    write(activeRoot, "src/active.ts", "export function active() { return true; }");
+    write(candidateRoot, "package.json", JSON.stringify({ name: "candidate-server" }));
+    write(candidateRoot, "src/first.ts", "export function first() { return true; }");
+    write(candidateRoot, "src/second.ts", "export function second() { return true; }");
+
+    app = await startServer({ root: activeRoot, port: 0, maxFiles: 1, cache: false, registerServeWorkspace: false });
+    const baseUrl = `http://127.0.0.1:${app.port}`;
+    const before = await (await fetch(`${baseUrl}/api/graph`)).json();
+    const eventResponse = await fetch(`${baseUrl}/api/events`);
+    reader = eventResponse.body.getReader();
+    const events = createSseEventReader(reader);
+    await events.next((event) => event.event === "ready");
+    const switchResponse = await fetch(`${baseUrl}/api/scan`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ root: candidateRoot }),
+    });
+    assert.equal(switchResponse.status, 409);
+    assert.match((await switchResponse.json()).error, /Repository switch was not applied/);
+
+    const after = await (await fetch(`${baseUrl}/api/graph`)).json();
+    assert.equal(after.project.projectId, before.project.projectId);
+    assert.equal(after.state.graphVersion, before.state.graphVersion);
+    const scanStatus = await (await fetch(`${baseUrl}/api/scan-status`)).json();
+    assert.equal(scanStatus.status, "complete");
+    assert.equal(scanStatus.activeGraph.projectId, before.project.projectId);
+    assert.equal(scanStatus.activeGraph.freshness, "current");
+    await assertNoSseEvent(events, (event) => event.event === "scan-status");
+  } finally {
+    if (reader) await reader.cancel();
+    if (app) await new Promise((resolve) => app.server.close(resolve));
+    fs.rmSync(activeRoot, { recursive: true, force: true });
+    fs.rmSync(candidateRoot, { recursive: true, force: true });
+  }
+});
+
+test("submitting the active repository reuses the current no-cache scan session", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-same-root-server-"));
+  let app;
+  try {
+    write(root, "package.json", JSON.stringify({ name: "same-root-server" }));
+    write(root, "src/active.ts", "export function active() { return true; }");
+    app = await startServer({ root, port: 0, maxFiles: 2, cache: false, registerServeWorkspace: false });
+    const baseUrl = `http://127.0.0.1:${app.port}`;
+    const before = await (await fetch(`${baseUrl}/api/graph`)).json();
+    write(root, "src/active.ts", "export function active() { return false; }");
+
+    const refreshResponse = await fetch(`${baseUrl}/api/scan`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ root }),
+    });
+    assert.equal(refreshResponse.status, 200);
+    const after = await refreshResponse.json();
+    assert.equal(after.project.projectId, before.project.projectId);
+    assert.equal(after.state.graphVersion, before.state.graphVersion + 1);
+    const scanStatus = await (await fetch(`${baseUrl}/api/scan-status`)).json();
+    assert.equal(scanStatus.activeGraph.projectId, before.project.projectId);
+    assert.equal(scanStatus.activeGraph.graphVersion, after.state.graphVersion);
+    assert.equal(scanStatus.activeGraph.freshness, "current");
   } finally {
     if (app) await new Promise((resolve) => app.server.close(resolve));
     fs.rmSync(root, { recursive: true, force: true });

@@ -1,6 +1,6 @@
 {
   "schemaVersion": "flowpeek-clean-room-package-report/v1",
-  "generatedAt": "2026-07-15T11:02:31.723Z",
+  "generatedAt": "2026-07-22T10:03:51.626Z",
   "status": "passed",
   "evidenceClass": "clean-room-package-observation",
   "environment": {
@@ -19,13 +19,13 @@
       "version": "0.2.0",
       "private": true,
       "filename": "flowpeek-0.2.0.tgz",
-      "packedBytes": 789436,
-      "unpackedBytes": 1929977,
-      "entries": 145
+      "packedBytes": 922844,
+      "unpackedBytes": 2477305,
+      "entries": 174
     },
     "policy": {
       "schemaVersion": "flowpeek-package-policy/v1",
-      "maximumEntries": 160,
+      "maximumEntries": 180,
       "maximumUnpackedBytes": 2500000,
       "requiredPaths": 17,
       "releasePublishingApproved": false
@@ -46,49 +46,49 @@
   },
   "artifact": {
     "filename": "flowpeek-0.2.0.tgz",
-    "sha256": "2620d0c098b8d2d36318268f3303af8aadc627b3909995d81682709614d803a1",
-    "packedBytes": 789436
+    "sha256": "91b382d066e4a26b4e332ee715791f201d40fad817e4995acfada8c6cfc3d43f",
+    "packedBytes": 922844
   },
   "phases": [
     {
       "id": "pack-and-audit",
       "status": "passed",
-      "milliseconds": 5915.504
+      "milliseconds": 4863.032
     },
     {
       "id": "copy-fixture",
       "status": "passed",
-      "milliseconds": 212.208
+      "milliseconds": 175.693
     },
     {
       "id": "install-tarball",
       "status": "passed",
-      "milliseconds": 28630.051
+      "milliseconds": 43030.533
     },
     {
       "id": "binary-version",
       "status": "passed",
-      "milliseconds": 4639.946
+      "milliseconds": 8677.94
     },
     {
       "id": "binary-help",
       "status": "passed",
-      "milliseconds": 3793.462
+      "milliseconds": 7893.889
     },
     {
       "id": "binary-doctor",
       "status": "passed",
-      "milliseconds": 3651.044
+      "milliseconds": 5932.842
     },
     {
       "id": "bounded-static-scan",
       "status": "passed",
-      "milliseconds": 4014.917
+      "milliseconds": 4472.195
     },
     {
       "id": "mcp-startup",
       "status": "passed",
-      "milliseconds": 4009.687
+      "milliseconds": 3466.273
     }
   ],
   "smoke": {
@@ -125,7 +125,7 @@
     },
     "mcp": {
       "connected": true,
-      "toolCount": 32,
+      "toolCount": 61,
       "requiredTools": {
         "getAgentBootstrap": true,
         "getFlowProjection": true,
@@ -155,7 +155,7 @@
   },
   "cleanup": {
     "status": "passed",
-    "milliseconds": 11139.318
+    "milliseconds": 6889.434
   },
   "publication": {
     "attempted": false,

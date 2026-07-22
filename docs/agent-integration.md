@@ -55,17 +55,24 @@ The expected provider workflow is:
 
 ```text
 get_agent_bootstrap
+  -> get_scan_status
   -> get_handoff_context or focused discovery
   -> raw node / Flow Lens evidence
   -> source fallback where coverage is incomplete
   -> edit with host workspace tools
   -> refresh_graph
+  -> get_scan_status
   -> changed contexts / before-current comparison / impact
   -> repository-owned tests and checks
   -> evidence-backed report
 ```
 
 Static graph evidence does not prove runtime order, dynamic dispatch, successful side effects, business intent, or complete test coverage. Missing evidence is a reason to inspect source or gather another evidence class, not proof that behavior is absent.
+
+`get_scan_status` must report `complete` and `current` before a refreshed graph is
+treated as current-source evidence. A `stale-unverified` result is only the last
+complete baseline. `cancel_scan` can stop active bounded analysis without
+promoting an incomplete graph; unbounded scanning is not interruptible.
 
 ## Troubleshooting
 

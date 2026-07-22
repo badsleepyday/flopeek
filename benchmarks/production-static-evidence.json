@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "flowpeek-production-static-evidence/v1",
+  "capturedAt": "2026-07-22T16:14:11+07:00",
+  "flowpeek": {
+    "sourceRevision": "da6ae3941e2369a5b99b0eaff56ffbbf44e25b2f",
+    "workingTree": "dirty",
+    "node": "v24.18.0",
+    "platform": "Windows 11 Pro"
+  },
+  "externalRelationshipAudit": {
+    "manifest": "benchmarks/real-repository-corpus.json",
+    "reproduction": "node src/real-repository-corpus.js --clone-directory <temporary-directory> --format json --timeout-ms 900000",
+    "repositories": ["pnpm@0a68c77", "nest@f293848", "sveltekit@14d7d5a", "vite@fef682d", "symfony@7dbebd8"],
+    "completedRepositories": 5,
+    "totalRepositories": 5,
+    "auditedRelationships": 92,
+    "truePositives": 92,
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "precision": 1,
+    "recall": 1
+  },
+  "djangoFrameworkEntryAudit": {
+    "repository": "django/django",
+    "requestedTag": "5.2.5",
+    "revision": "a3b1107a4955bdd994908efb4c6e1d03c281e69f",
+    "reproduction": "git clone --depth 1 --branch 5.2.5 https://github.com/django/django.git <temporary-directory>; scan with persistIdentity:false and cache:false",
+    "scannedFiles": 2864,
+    "supportedDjangoManagementCommands": 47,
+    "frameworkCommandFlowLenses": 24,
+    "checkedRelation": {
+      "source": "command:django/contrib/auth/management/commands/changepassword.py:django:changepassword",
+      "type": "declares-command-target",
+      "target": "symbol:django/contrib/auth/management/commands/changepassword.py:class:Command",
+      "status": "passed"
+    }
+  },
+  "limitations": [
+    "The external audit measures only manually audited exact outgoing static relationships in the declared scopes.",
+    "The Django audit measures only the narrow static management-command declaration subset.",
+    "This audit does not execute target applications, package commands, tests, servers, configuration, or runtime integrations.",
+    "This is not a general language-support score, runtime matrix, performance guarantee, or release approval."
+  ]
+}

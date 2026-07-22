@@ -8,6 +8,7 @@
   },
   "allowedExactPaths": [
     "ARCHITECTURE.md",
+    "LICENSE",
     "BENCHMARKS.md",
     "PRODUCT.md",
     "README.md",
@@ -16,11 +17,13 @@
     "package.json",
     "benchmarks/agent-comparison-report.json",
     "benchmarks/agent-comparison-runs.template.json",
+    "benchmarks/framework-entry-production-evidence.json",
     "benchmarks/handoff-quality.json",
     "benchmarks/orientation-baseline.json",
     "benchmarks/orientation-cases.json",
     "benchmarks/orientation-flowpeek.json",
     "benchmarks/private-dogfood-summary.json",
+    "benchmarks/production-static-evidence.json",
     "benchmarks/public-proof.json",
     "benchmarks/real-repository-corpus.json",
     "benchmarks/semantic-flow-suggestions.json",
@@ -34,6 +37,7 @@
     "src"
   ],
   "requiredPaths": [
+    "LICENSE",
     "README.md",
     "docs/README.md",
     "docs/using-flowpeek.md",
@@ -80,6 +84,6 @@
     ".pem",
     ".pfx"
   ],
-  "maximumEntries": 160,
+  "maximumEntries": 180,
   "maximumUnpackedBytes": 2500000
 }

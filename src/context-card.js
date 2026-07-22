@@ -178,6 +178,7 @@ function createFlowMarkdown(card) {
     `- Graph: \`${card.project.projectId}\` v${card.project.graphVersion}`,
     `- Knowledge: ${card.knowledgeClass} (${card.confidence})`,
     `- Entry: \`${card.flow.entryId}\``,
+    `- Entry family: ${card.flow.entry?.kind || "unknown-static-entry"}`,
     "",
     "## Technical summary",
     "",

@@ -89,7 +89,7 @@
     ".pem",
     ".pfx"
   ],
-  "maximumEntries": 280,
+  "maximumEntries": 350,
   "maximumBytes": 6000000,
   "releaseReadiness": {
     "licenseFileRequired": true,

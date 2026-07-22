@@ -52,6 +52,24 @@ test("README user paths and screenshots are present and portable", () => {
   assert.equal(readme.includes("AppData\\Local\\Temp"), false);
 });
 
+test("bounded scan documentation states the shared complete-result-only contract", () => {
+  const readme = read("README.md");
+  const guide = read("docs/using-flowpeek.md");
+  assert.equal(readme.includes("cancellation parity remain planned"), false);
+  assert.ok(readme.includes("CLI, Viewer/HTTP/SSE, and MCP share"));
+  assert.equal(guide.includes("This behavior is currently CLI-only."), false);
+  assert.ok(guide.includes("local Viewer/HTTP/SSE, and MCP"));
+  assert.ok(guide.includes("cancel_scan"));
+});
+
+test("clean-room documentation keeps its explicit public benchmark count aligned with package metadata", () => {
+  const guide = read("docs/clean-room-package.md");
+  const packageJson = JSON.parse(read("package.json"));
+  const benchmarkCount = packageJson.files.filter((item) => item.startsWith("benchmarks/")).length;
+  assert.match(guide, new RegExp(`\\b${benchmarkCount} explicitly named machine-readable public benchmark/template artifacts\\b`));
+  assert.ok(guide.includes("until both npm and policy allowlists are deliberately updated"));
+});
+
 test("documentation screenshots are real PNG captures with a useful viewport", () => {
   const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
   for (const name of ["flow-lens.png", "flow-comparison.png", "product-proof.png"]) {

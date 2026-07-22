@@ -1,7 +1,8 @@
 {
   "name": "flowpeek",
-  "version": "0.2.1-alpha.1",
+  "version": "0.2.1-alpha.2",
   "private": true,
+  "license": "Apache-2.0",
   "description": "Local-first technical flow explorer for existing repositories.",
   "keywords": [
     "code-intelligence",
@@ -31,6 +32,8 @@
     "benchmarks/agent-comparison-report.json",
     "benchmarks/agent-comparison-runs.template.json",
     "benchmarks/handoff-quality.json",
+    "benchmarks/framework-entry-production-evidence.json",
+    "benchmarks/production-static-evidence.json",
     "benchmarks/orientation-baseline.json",
     "benchmarks/orientation-cases.json",
     "benchmarks/orientation-flowpeek.json",
@@ -69,6 +72,7 @@
     "test:showcase": "node scripts/run-tests.js showcase",
     "evaluate:handoff-quality": "node src/handoff-quality-benchmark.js",
     "evaluate:orientation": "node src/cli.js evaluate orientation . --cases benchmarks/orientation-cases.json",
+    "evaluate:language-dogfood": "node src/supported-language-dogfood.js",
     "update:orientation-evidence": "node scripts/update-orientation-evidence.js",
     "audit:package": "node scripts/verify-package.js",
     "audit:public-repository": "node scripts/verify-public-repository.js",
@@ -91,6 +95,9 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "overrides": {
+    "@hono/node-server": "2.0.11"
   },
   "dependencies": {
     "@lezer/python": "^1.1.19",

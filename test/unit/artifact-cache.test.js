@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const { getOrCreateArtifact, invalidateArtifactCache, listArtifactCacheAudit } = require("../../src/artifact-cache");
+const { cacheHygiene, getOrCreateArtifact, invalidateArtifactCache, listArtifactCacheAudit, pruneArtifactCache } = require("../../src/artifact-cache");
 const { getFlowContextCard, getFlowProjection } = require("../../src/graph-service");
 const { parseFlowLensMaxStepsQuery, validateFlowLensMaxSteps } = require("../../src/flow-lens-options");
 const { scanRepository } = require("../../src/scanner");
@@ -72,6 +72,53 @@ test("invalid derived cache metadata is unavailable and never silently overwritt
     assert.deepEqual(fallback.value, { ok: true });
     assert.equal(fallback.cache.status, "unavailable");
     assert.equal(fs.readFileSync(registry, "utf8"), before);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cache hygiene measures only Flowpeek state and manual pruning removes only registered old artifacts", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-cache-hygiene-"));
+  try {
+    const graph = fixture(root);
+    const key = { mode: "overview" };
+    for (let version = 1; version <= 3; version += 1) {
+      const versioned = { ...graph, state: { ...graph.state, graphVersion: version, sourceFingerprint: `sha256:source-${version}` } };
+      getOrCreateArtifact(root, versioned, "feature-summary", key, () => ({ version }), { dependencyPaths: ["src/orders.ts"], now: `2026-07-14T01:0${version}:00.000Z` });
+    }
+    const unknown = path.join(root, ".flowpeek", "unknown-user-state.json");
+    fs.writeFileSync(unknown, "keep", "utf8");
+    const before = cacheHygiene(root, graph);
+    assert.equal(before.schemaVersion, "flowpeek-cache-hygiene/v1");
+    assert.equal(before.storage.derivedArtifacts.records, 3);
+    assert.ok(before.storage.unclassifiedBytes >= 4);
+    const preview = pruneArtifactCache(root, { keepRecords: 1, dryRun: true, now: "2026-07-14T01:10:00.000Z" });
+    assert.equal(preview.pruned.length, 2);
+    assert.equal(fs.existsSync(unknown), true);
+    const applied = pruneArtifactCache(root, { keepRecords: 1, now: "2026-07-14T01:11:00.000Z" });
+    assert.equal(applied.pruned.length, 2);
+    assert.ok(applied.reclaimedBytes > 0);
+    assert.equal(fs.existsSync(unknown), true);
+    const after = cacheHygiene(root, graph);
+    assert.equal(after.storage.derivedArtifacts.records, 1);
+    const audit = listArtifactCacheAudit(root, graph);
+    assert.equal(audit.counts.pruned, 2);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("session-only scans never create derived artifact cache state", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-no-cache-artifacts-"));
+  try {
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "no-cache-artifacts" }));
+    fs.mkdirSync(path.join(root, "src"));
+    fs.writeFileSync(path.join(root, "src", "orders.routes.ts"), "import { submit } from './orders.service';\nrouter.post('/orders', () => submit());");
+    fs.writeFileSync(path.join(root, "src", "orders.service.ts"), "export function submit() { return true; }");
+    const graph = scanRepository(root, { persistIdentity: false });
+    assert.equal(graph.analysis.cacheState.status, "disabled");
+    getFlowProjection(graph, "flow:endpoint:src/orders.routes.ts:POST:/orders");
+    assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

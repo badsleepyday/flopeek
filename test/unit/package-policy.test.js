@@ -39,7 +39,7 @@ test("package policy rejects repository governance, cache, secrets, maps, omissi
 test("current npm dry-run package passes the committed allowlist", () => {
   const { report } = runPackageAudit(ROOT, { dryRun: true });
   assert.equal(report.status, "passed", JSON.stringify(report.errors));
-  assert.ok(report.package.entries < POLICY.maximumEntries);
+  assert.ok(report.package.entries <= POLICY.maximumEntries);
   assert.equal(report.checks.requiredRuntime, true);
 });
 

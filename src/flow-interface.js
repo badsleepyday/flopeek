@@ -20,10 +20,21 @@ function relatedTests(graph, lens) {
 
 function createFlowInterface(graph, lens) {
   const entry = graph.nodes.find((node) => node.id === lens.flow.entryId) || null;
+  const entryContract = lens.flow.entry || null;
+  const isHttpEntry = entryContract?.kind === "http-request" || entry?.kind === "endpoint";
+  const isPackageScript = entryContract?.kind === "package-script" || entry?.entryKind === "package-script";
+  const isFrameworkCommand = entryContract?.kind === "framework-command" || entry?.entryKind === "django-management-command";
+  const isCommand = isPackageScript || isFrameworkCommand;
+  const isScheduledTask = entryContract?.kind === "scheduled-task" || entry?.entryKind === "node-cron-schedule";
   const endpoint = endpointIdentity(entry);
-  const exactHandler = lens.handlerEvidence?.binding === "exact-handler" && lens.handlerEvidence.handlerId
+  const exactHandler = isHttpEntry && lens.handlerEvidence?.binding === "exact-handler" && lens.handlerEvidence.handlerId
     ? { status: "available", id: lens.handlerEvidence.handlerId, evidenceClass: "parser-fact" }
-    : { status: "unavailable", id: null, reason: "No exact endpoint-to-handler symbol edge is available." };
+    : { status: "unavailable", id: null, reason: isHttpEntry ? "No exact endpoint-to-handler symbol edge is available." : "This static entry family has no HTTP handler contract." };
+  const scheduledTask = isScheduledTask && lens.entryEvidence?.binding === "exact-local-task" && lens.entryEvidence.targetId
+    ? { status: "available", id: lens.entryEvidence.targetId, evidenceClass: "parser-fact" }
+    : isScheduledTask
+      ? { status: "unavailable", id: null, reason: "No exact scheduler-registration-to-local-task edge is available." }
+      : null;
   const parserContract = exactHandler.status === "available" && entry?.handlerId === exactHandler.id && entry?.contract?.schemaVersion === "flowpeek-next-route-contract/v1"
     ? entry.contract
     : null;
@@ -32,24 +43,40 @@ function createFlowInterface(graph, lens) {
     : {
       status: "unavailable",
       fields: [],
-      reason: "Current parser adapters do not retain request-schema declarations with enough cross-framework consistency to claim a payload contract.",
+      reason: isHttpEntry ? "Current parser adapters do not retain request-schema declarations with enough cross-framework consistency to claim a payload contract." : "Request payload schemas are not applicable to this static entry family.",
     };
   const responses = parserContract
     ? { ...parserContract.responses, evidenceClass: "parser-fact", adapter: parserContract.adapter }
     : {
       status: "unavailable",
       variants: [],
-      reason: "Current parser adapters do not retain response schemas or status branches as deterministic contract evidence.",
+      reason: isHttpEntry ? "Current parser adapters do not retain response schemas or status branches as deterministic contract evidence." : "HTTP response schemas are not applicable to this static entry family.",
     };
   return {
     schemaVersion: "flowpeek-flow-interface/v1",
     flow: { id: lens.flow.id, contextRef: lens.flow.contextRef, graphVersion: graph.state.graphVersion },
     boundary: {
-      kind: entry?.kind === "endpoint" ? "http-endpoint" : "detected-flow-entry",
-      method: endpoint.method,
-      route: endpoint.route,
+      kind: isHttpEntry ? "http-endpoint" : isPackageScript ? "package-script" : isFrameworkCommand ? "framework-command" : isScheduledTask ? "scheduled-task" : "detected-flow-entry",
+      method: isHttpEntry ? endpoint.method : null,
+      route: isHttpEntry ? endpoint.route : null,
       handler: exactHandler,
+      task: scheduledTask,
       evidenceClass: "parser-fact",
+      command: isCommand ? {
+        adapter: isFrameworkCommand ? entry?.adapter || entryContract?.declaration?.adapter || null : "package-script",
+        manifest: entry?.manifest || entryContract?.declaration?.manifest || null,
+        scriptName: entry?.scriptName || entryContract?.declaration?.scriptName || null,
+        commandName: entry?.commandName || entryContract?.declaration?.commandName || null,
+        runner: entry?.runner || entryContract?.declaration?.runner || null,
+        targetPath: entry?.targetPath || entryContract?.declaration?.targetPath || null,
+        targetId: entry?.targetId || entryContract?.declaration?.targetId || lens.entryEvidence?.targetId || null,
+      } : null,
+      schedule: isScheduledTask ? {
+        adapter: entry?.adapter || entryContract?.declaration?.adapter || null,
+        expression: entry?.scheduleExpression || entryContract?.declaration?.expression || null,
+        taskName: entry?.taskName || entryContract?.declaration?.taskName || null,
+        targetPath: entry?.targetPath || entryContract?.declaration?.targetPath || null,
+      } : null,
     },
     request,
     responses,

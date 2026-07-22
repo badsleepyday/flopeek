@@ -9,6 +9,7 @@ const { sourceBasis } = require("./durable-brief");
 const ARTIFACT_CACHE_SCHEMA = "flowpeek-derived-artifact/v1";
 const ARTIFACT_CACHE_REGISTRY_SCHEMA = "flowpeek-derived-artifact-registry/v1";
 const ARTIFACT_CACHE_AUDIT_SCHEMA = "flowpeek-derived-cache-audit/v1";
+const CACHE_HYGIENE_SCHEMA = "flowpeek-cache-hygiene/v1";
 const ARTIFACT_CACHE_REGISTRY_RELATIVE_PATH = ".flowpeek/cache/artifacts.json";
 const ARTIFACT_CACHE_DIRECTORY_RELATIVE_PATH = ".flowpeek/cache/artifacts";
 const MAX_AUDIT_EVENTS = 1000;
@@ -36,7 +37,7 @@ function registryPath(root) {
   return path.join(root, ARTIFACT_CACHE_REGISTRY_RELATIVE_PATH);
 }
 
-function emptyRegistry(projectId) {
+function emptyRegistry(projectId = null) {
   return { schemaVersion: ARTIFACT_CACHE_REGISTRY_SCHEMA, projectId, records: [], events: [], eventsOmitted: 0 };
 }
 
@@ -60,7 +61,7 @@ function validRecord(record) {
 
 function validEvent(event) {
   return event && typeof event === "object" && typeof event.id === "string" && event.id
-    && ["hit", "miss", "invalidated", "retained-unaffected"].includes(event.status)
+    && ["hit", "miss", "invalidated", "retained-unaffected", "pruned"].includes(event.status)
     && typeof event.type === "string" && VALID_TYPES.has(event.type)
     && typeof event.keyHash === "string" && event.keyHash.startsWith("sha256:")
     && typeof event.reason === "string" && event.reason
@@ -68,12 +69,12 @@ function validEvent(event) {
     && typeof event.createdAt === "string" && !Number.isNaN(Date.parse(event.createdAt));
 }
 
-function readArtifactCacheRegistry(root, projectId) {
+function readArtifactCacheRegistry(root, projectId = null) {
   const target = registryPath(root);
   if (!fs.existsSync(target)) return { status: "missing", path: target, registry: emptyRegistry(projectId), diagnostics: [] };
   try {
     const registry = JSON.parse(fs.readFileSync(target, "utf8"));
-    if (registry?.schemaVersion !== ARTIFACT_CACHE_REGISTRY_SCHEMA || registry.projectId !== projectId || !Array.isArray(registry.records) || !registry.records.every(validRecord) || !Array.isArray(registry.events) || !registry.events.every(validEvent) || !Number.isSafeInteger(registry.eventsOmitted) || registry.eventsOmitted < 0) {
+    if (registry?.schemaVersion !== ARTIFACT_CACHE_REGISTRY_SCHEMA || (projectId && registry.projectId !== projectId) || typeof registry.projectId !== "string" || !registry.projectId || !Array.isArray(registry.records) || !registry.records.every(validRecord) || !Array.isArray(registry.events) || !registry.events.every(validEvent) || !Number.isSafeInteger(registry.eventsOmitted) || registry.eventsOmitted < 0) {
       return { status: "invalid", path: target, registry: null, diagnostics: [{ code: "invalid-artifact-cache-registry", message: "Derived artifact cache registry is invalid and will not be reused or overwritten." }] };
     }
     return { status: "valid", path: target, registry, diagnostics: [] };
@@ -200,7 +201,7 @@ function listArtifactCacheAudit(root, graph) {
     const freshnessStatus = record.graphVersion === graph.state.graphVersion && record.sourceFingerprint === graph.state.sourceFingerprint ? "current" : "stale";
     return { ...record, artifactStatus, freshnessStatus };
   });
-  const counts = { hits: read.registry.events.filter((item) => item.status === "hit").length, misses: read.registry.events.filter((item) => item.status === "miss").length, invalidated: read.registry.events.filter((item) => item.status === "invalidated").length, retainedUnaffected: read.registry.events.filter((item) => item.status === "retained-unaffected").length };
+  const counts = { hits: read.registry.events.filter((item) => item.status === "hit").length, misses: read.registry.events.filter((item) => item.status === "miss").length, invalidated: read.registry.events.filter((item) => item.status === "invalidated").length, retainedUnaffected: read.registry.events.filter((item) => item.status === "retained-unaffected").length, pruned: read.registry.events.filter((item) => item.status === "pruned").length };
   return {
     schemaVersion: ARTIFACT_CACHE_AUDIT_SCHEMA,
     status: "available",
@@ -223,8 +224,124 @@ function listArtifactCacheAudit(root, graph) {
   };
 }
 
+function relativeCachePath(root, target) {
+  const value = path.relative(root, target).replaceAll("\\", "/");
+  return value && !value.startsWith("../") && value !== ".." ? value : null;
+}
+
+function collectCacheFiles(root, target = path.join(root, ".flowpeek")) {
+  const result = { files: 0, bytes: 0, paths: [] };
+  if (!fs.existsSync(target)) return result;
+  const visit = (current) => {
+    const entry = fs.lstatSync(current);
+    if (entry.isSymbolicLink()) return;
+    if (entry.isDirectory()) {
+      for (const child of fs.readdirSync(current)) visit(path.join(current, child));
+      return;
+    }
+    if (!entry.isFile()) return;
+    const relativePath = relativeCachePath(root, current);
+    if (!relativePath) return;
+    result.files += 1;
+    result.bytes += entry.size;
+    result.paths.push({ relativePath, bytes: entry.size });
+  };
+  visit(target);
+  return result;
+}
+
+function bytesFor(root, relativePath) {
+  const target = path.join(root, relativePath);
+  try { return fs.lstatSync(target).isFile() ? fs.lstatSync(target).size : 0; } catch { return 0; }
+}
+
+function cacheHygiene(root, graph = null) {
+  const expectedProjectId = graph?.project?.projectId || null;
+  const read = readArtifactCacheRegistry(root, expectedProjectId);
+  const all = collectCacheFiles(root);
+  const paths = {
+    graph: ".flowpeek/graph.json",
+    state: ".flowpeek/state.json",
+    registry: ARTIFACT_CACHE_REGISTRY_RELATIVE_PATH,
+  };
+  const artifacts = read.status === "valid"
+    ? read.registry.records.map((record) => ({ id: record.id, relativePath: record.artifact.relativePath, bytes: bytesFor(root, record.artifact.relativePath), freshnessStatus: graph && record.graphVersion === graph.state.graphVersion && record.sourceFingerprint === graph.state.sourceFingerprint ? "current" : "stale" }))
+    : [];
+  const knownBytes = artifacts.reduce((total, artifact) => total + artifact.bytes, 0);
+  const categorizedBytes = bytesFor(root, paths.graph) + bytesFor(root, paths.state) + bytesFor(root, paths.registry) + knownBytes;
+  return {
+    schemaVersion: CACHE_HYGIENE_SCHEMA,
+    status: read.status === "invalid" ? "unavailable" : "available",
+    projectIdentity: read.status === "valid" ? { projectId: read.registry.projectId } : expectedProjectId ? { projectId: expectedProjectId } : null,
+    currentGraph: graph ? { graphVersion: graph.state.graphVersion, sourceFingerprint: graph.state.sourceFingerprint } : null,
+    storage: {
+      total: { files: all.files, bytes: all.bytes },
+      graph: { relativePath: paths.graph, bytes: bytesFor(root, paths.graph) },
+      state: { relativePath: paths.state, bytes: bytesFor(root, paths.state) },
+      registry: { relativePath: paths.registry, bytes: bytesFor(root, paths.registry) },
+      derivedArtifacts: { records: artifacts.length, retainedFiles: artifacts.filter((item) => item.bytes > 0).length, bytes: knownBytes, staleRecords: artifacts.filter((item) => item.freshnessStatus === "stale").length },
+      unclassifiedBytes: Math.max(all.bytes - categorizedBytes, 0),
+    },
+    retention: {
+      policy: "manual-prune-only",
+      defaultKeepRecordsPerLogicalArtifact: 4,
+      destructiveScope: "Only registered files below .flowpeek/cache/artifacts are eligible for pruning; graph, state, history, delta, handoff, and unknown files are retained.",
+      staleReuse: "never-silent",
+    },
+    diagnostics: read.diagnostics,
+    limitation: "Cache hygiene measures local Flowpeek metadata only. It neither proves cross-version artifact reuse nor deletes unregistered files.",
+  };
+}
+
+function pruneArtifactCache(root, options = {}) {
+  const keepRecords = Math.min(Math.max(Number(options.keepRecords) || 4, 1), 50);
+  const dryRun = Boolean(options.dryRun);
+  const read = readArtifactCacheRegistry(root);
+  if (read.status === "invalid") return { schemaVersion: CACHE_HYGIENE_SCHEMA, status: "unavailable", dryRun, pruned: [], retained: [], diagnostics: read.diagnostics };
+  if (read.status === "missing") return { schemaVersion: CACHE_HYGIENE_SCHEMA, status: "available", dryRun, pruned: [], retained: [], diagnostics: [], limitation: "No derived-artifact registry exists." };
+  const grouped = new Map();
+  for (const record of read.registry.records) {
+    const key = `${record.type}\u0000${record.keyHash}`;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(record);
+  }
+  const prune = [];
+  const retained = [];
+  for (const records of grouped.values()) {
+    records.sort((left, right) => right.graphVersion - left.graphVersion || right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id));
+    retained.push(...records.slice(0, keepRecords));
+    prune.push(...records.slice(keepRecords));
+  }
+  const safeArtifactPrefix = `${ARTIFACT_CACHE_DIRECTORY_RELATIVE_PATH}/`;
+  const candidates = prune.filter((record) => record.artifact.relativePath.replaceAll("\\", "/").startsWith(safeArtifactPrefix));
+  const pruned = candidates.map((record) => ({ id: record.id, type: record.type, relativePath: record.artifact.relativePath, bytes: bytesFor(root, record.artifact.relativePath) }));
+  if (!dryRun && candidates.length) {
+    for (const record of candidates) {
+      const target = path.join(root, record.artifact.relativePath);
+      if (fs.existsSync(target) && fs.lstatSync(target).isFile()) fs.unlinkSync(target);
+    }
+    const records = read.registry.records.filter((record) => !candidates.some((candidate) => candidate.id === record.id));
+    const events = candidates.map((record) => event(record.type, record.keyHash, record.graphVersion, "pruned", "manual-retention-prune", record.id, options.now));
+    const allEvents = [...read.registry.events, ...events];
+    const newlyOmitted = Math.max(allEvents.length - MAX_AUDIT_EVENTS, 0);
+    atomicWriteJson(read.path, { ...read.registry, records, events: allEvents.slice(-MAX_AUDIT_EVENTS), eventsOmitted: read.registry.eventsOmitted + newlyOmitted });
+  }
+  return {
+    schemaVersion: CACHE_HYGIENE_SCHEMA,
+    status: "available",
+    dryRun,
+    keepRecordsPerLogicalArtifact: keepRecords,
+    pruned,
+    retained: retained.map((record) => ({ id: record.id, type: record.type, relativePath: record.artifact.relativePath })),
+    reclaimedBytes: pruned.reduce((total, item) => total + item.bytes, 0),
+    limitation: "Pruning removes only older registered derived artifacts. It does not remove graph history, graph deltas, context records, handoffs, or unregistered files.",
+    diagnostics: [],
+  };
+}
+
 module.exports = {
   ARTIFACT_CACHE_AUDIT_SCHEMA,
+  CACHE_HYGIENE_SCHEMA,
   ARTIFACT_CACHE_DIRECTORY_RELATIVE_PATH,
   ARTIFACT_CACHE_REGISTRY_RELATIVE_PATH,
   ARTIFACT_CACHE_REGISTRY_SCHEMA,
@@ -232,6 +349,8 @@ module.exports = {
   ArtifactCacheError,
   getOrCreateArtifact,
   invalidateArtifactCache,
+  cacheHygiene,
   listArtifactCacheAudit,
+  pruneArtifactCache,
   readArtifactCacheRegistry,
 };

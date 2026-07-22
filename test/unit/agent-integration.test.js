@@ -4,7 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const test = require("node:test");
-const { doctorAgentIntegration, installAgentIntegration, uninstallAgentIntegration } = require("../../src/agent-integration");
+const { atomicWrite, doctorAgentIntegration, installAgentIntegration, uninstallAgentIntegration } = require("../../src/agent-integration");
 const { platformRegistry } = require("../../src/agent-integration-registry");
 
 function repository(t) {
@@ -61,6 +61,42 @@ test("JSON host install and uninstall preserve unrelated MCP servers and setting
   assert.equal(config.mcpServers.flowpeek, undefined);
   assert.equal(config.mcpServers.existing.command, "other");
   assert.equal(config.theme, "dark");
+});
+
+test("agent integration atomic writes retry a transient Windows-style replacement lock", () => {
+  const files = new Map();
+  const target = "C:\\workspace\\.gemini\\settings.json";
+  const fileSystem = {
+    mkdirSync() {},
+    writeFileSync(file, content) { files.set(file, content); },
+    renameSync(from, to) {
+      this.renameAttempts = (this.renameAttempts || 0) + 1;
+      if (this.renameAttempts < 3) {
+        const error = new Error("temporary lock");
+        error.code = "EPERM";
+        throw error;
+      }
+      files.set(to, files.get(from));
+      files.delete(from);
+    },
+    existsSync(file) { return files.has(file); },
+    rmSync(file) { files.delete(file); },
+    renameAttempts: 0,
+  };
+  const delays = [];
+
+  const result = atomicWrite(target, "{\"mcpServers\":{}}\n", {
+    fileSystem,
+    attempts: 3,
+    retryDelayMs: 10,
+    wait(milliseconds) { delays.push(milliseconds); },
+  });
+
+  assert.equal(result.attempts, 3);
+  assert.equal(fileSystem.renameAttempts, 3);
+  assert.deepEqual(delays, [10, 20]);
+  assert.equal(files.get(target), "{\"mcpServers\":{}}\n");
+  assert.equal([...files.keys()].some((file) => file.endsWith(".tmp")), false);
 });
 
 test("separate installs merge ownership and auto-uninstall removes every managed platform", (t) => {

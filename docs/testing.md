@@ -18,6 +18,19 @@ The lane runner caps Node test-file concurrency at four. Several integration fil
 
 The fast and contract lanes also validate repository-local reviewer skills, explicit-invocation policy, AGENTS routing, and review/specialist artifact schema identity. This structural gate does not replace independent provider execution or manual QA.
 
+`test/unit/repository-discovery.test.js` validates deterministic inventory,
+scope, static manifest/package classification, exact and exceeded bounds,
+opaque analysis-plan fingerprints, and metadata-free CLI preflight.
+`test/unit/bounded-scan.test.js` requires complete-result-only graph delivery,
+immutable shared-plan source binding, source-set mutation rejection after
+discovery, cancellation without graph promotion, prior-cache preservation, and
+no-cache CLI behavior. `test/unit/repository-discovery.test.js` verifies the
+same plan detects added source files/directories while leaving non-source,
+non-control edits outside its source-inventory contract. These tests do not yet
+prove cross-platform cleanup of optional adapter child processes or
+server/Viewer/MCP parity. The plan fingerprint is metadata-based; an adversarial
+same-size, timestamp-preserving rewrite remains outside this test lane.
+
 `npm run test:full` retains the complete local test suite. `test:unit`, `test:docs`, `test:orientation`, `test:agent-comparison`, `test:package`, `test:public-repository`, `test:showcase`, `test:semantic`, `test:feedback`, `test:reviewed-evaluation`, `test:trace`, `test:adapters`, `test:contracts`, `test:viewer`, and `test:fixtures` provide focused lanes. `test:docs` checks that evidence-backed SVGs match their JSON inputs and that README screenshots are present, portable PNG captures. `test:orientation` is the deterministic repository-understanding gate described in `docs/orientation-benchmark-protocol.md`. `test:agent-comparison` validates the provider-neutral paired-run contract, consent boundary, Context Ref identity, evidence requirements, and checked `not-run` artifact without invoking an AI provider. `test:package` validates the package allowlist, denied-content and private-release boundaries, npm dry-run inventory, version command, source fingerprinting, and checked clean-room report. `test:public-repository` validates the clean-snapshot allowlist, private governance exclusions, history-free export, and release blockers. `verify:clean-room` remains an explicit isolated tarball installation and MCP smoke run rather than an ordinary unit test. `test:showcase` exercises the temporary-copy Viewer/HTTP/MCP walkthrough without executing the target. `test:semantic` evaluates candidate fields and abstention against a committed deterministic contract corpus. `test:feedback` checks immutable/idempotent labels, exact Context Ref trace binding, supersession, invalid-store preservation, and synthetic metric aggregation. `test:reviewed-evaluation` checks the consent/privacy contract, held-out leakage protection, and recommendation thresholds using only in-test data. `test:trace` checks immutable/idempotent trace append, safe repository-relative paths, Context Ref status, bounded query, and invalid-store preservation. `test:real-corpus` remains an explicit external audit lane and is not part of ordinary pull-request verification; it reports progress and enforces a configurable per-repository process timeout.
 
 Documentation charts are generated from checked JSON evidence:

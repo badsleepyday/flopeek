@@ -76,7 +76,7 @@ For an agent host configured against the temporary workspace, the equivalent saf
 
 ```text
 get_agent_bootstrap
-get_request_flows
+get_entry_flows
 get_flow_projection
 get_flow_context_card
 get_related_tests

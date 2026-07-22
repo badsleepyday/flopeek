@@ -1,0 +1,6 @@
+{
+  "name": "php-package-flow",
+  "scripts": {
+    "checkout": "php src/checkout.php"
+  }
+}

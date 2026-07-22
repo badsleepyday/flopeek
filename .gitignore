@@ -5,3 +5,4 @@ node_modules/
 .project-flow/
 coverage/
 *.flowpeek-reviewed.json
+/test/fixtures/**/.flowpeek/

@@ -27,7 +27,7 @@ npm exec -- flowpeek scan D:\path\to\repository --format json --no-cache
 
 ## How to interpret an empty Flow Lens catalog
 
-A Flow Lens exists only when Flowpeek extracts a supported static HTTP/request endpoint. A repository with zero Flow Lenses can still have a useful technical map: use Feature overview, Find code, and Direct dependencies. It does not imply that the application has no behavior or no runtime entry point.
+A Flow Lens exists only when Flowpeek extracts a supported static entry: an HTTP/request endpoint, a literal package script, or the narrow literal node-cron schedule subset. A repository with zero Flow Lenses can still have a useful technical map: use Feature overview, Find code, and Direct dependencies. It does not imply that the application has no behavior or no runtime entry point.
 
 ## Current anonymous observation
 

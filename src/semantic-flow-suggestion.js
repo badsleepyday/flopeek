@@ -117,6 +117,9 @@ function candidateTitle(method, subject, route, action) {
 
 function createSemanticFlowSuggestion(graph, lens) {
   if (!graph?.state || !Number.isSafeInteger(graph.state.graphVersion) || !lens?.flow || !Array.isArray(lens.steps)) throw new Error("Semantic flow suggestions require a versioned Flow Lens.");
+  if (lens.flow.entry?.kind && lens.flow.entry.kind !== "http-request") {
+    return abstain(graph, lens, "unsupported-entry-family", "Deterministic semantic naming currently supports literal HTTP/request entries only; this entry family remains static technical evidence without a generated purpose label.", ["literal HTTP method", "literal route path"]);
+  }
   const match = String(lens.flow.title || "").match(HTTP_ENTRY);
   if (!match) return abstain(graph, lens, "unsupported-entry", "The flow entry is not a supported literal HTTP method and route.", ["literal HTTP method", "literal route path"]);
   const [, method, route] = match;
@@ -191,7 +194,7 @@ function semanticSuggestionPolicy() {
     candidateFields: ["title", "technicalPurpose", "role", "grouping"],
     outcomes: ["suggested", "abstained"],
     humanVerificationSeparation: "Suggestions may prefill a verification form but never create human verification.",
-    limitation: "Suggestions use supported static HTTP route, step-role, transition, and boundary evidence only; runtime and business purpose remain unknown.",
+    limitation: "Suggestions currently use supported static HTTP route, step-role, transition, and boundary evidence only. Other static entry families explicitly abstain; runtime and business purpose remain unknown.",
   };
 }
 

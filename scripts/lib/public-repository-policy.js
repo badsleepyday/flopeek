@@ -7,6 +7,7 @@ const { readRepositoryScope } = require("../../src/scope");
 
 const POLICY_SCHEMA = "flowpeek-public-repository-policy/v2";
 const AUDIT_SCHEMA = "flowpeek-public-repository-audit/v1";
+const TRANSIENT_RENAME_CODES = new Set(["EACCES", "EBUSY", "EPERM"]);
 
 class PublicRepositoryError extends Error {
   constructor(code, message, details = null) {
@@ -93,6 +94,29 @@ function loadPolicy(file) {
 
 function pathAllowed(file, policy) {
   return !policy.excludedExactPaths.includes(file) && (policy.allowedExactPaths.includes(file) || policy.allowedDirectories.some((directory) => file.startsWith(`${directory}/`)));
+}
+
+function wait(milliseconds) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+function renameDirectoryWithRetry(source, destination, options = {}) {
+  const attempts = Math.min(Math.max(Number.isSafeInteger(options.attempts) ? options.attempts : 6, 1), 8);
+  const retryDelayMs = Math.min(Math.max(Number.isFinite(options.retryDelayMs) ? options.retryDelayMs : 40, 0), 250);
+  const rename = options.rename || fs.renameSync;
+  const pause = options.wait || wait;
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      rename(source, destination);
+      return { attempts: attempt };
+    } catch (error) {
+      lastError = error;
+      if (!TRANSIENT_RENAME_CODES.has(error?.code) || attempt === attempts) break;
+      pause(Math.min(retryDelayMs * attempt, 250));
+    }
+  }
+  throw lastError;
 }
 
 function git(root, args, encoding = "utf8") {
@@ -234,7 +258,7 @@ function outputPath(root, value) {
   return output;
 }
 
-function exportPublicRepository(root, policyPath, outputValue) {
+function exportPublicRepository(root, policyPath, outputValue, options = {}) {
   const audit = auditRepository(root, policyPath);
   if (!audit.clean) throw new PublicRepositoryError("dirty-source", "Commit or discard every private-source change before exporting a public candidate.");
   if (audit.report.structureStatus !== "passed") throw new PublicRepositoryError("invalid-candidate", "The public candidate failed its structural audit.", audit.report.errors);
@@ -251,7 +275,7 @@ function exportPublicRepository(root, policyPath, outputValue) {
       fs.copyFileSync(source, destination);
       try { fs.chmodSync(destination, stat.mode); } catch {}
     }
-    fs.renameSync(staging, output);
+    renameDirectoryWithRetry(staging, output, options);
   } catch (error) {
     fs.rmSync(staging, { recursive: true, force: true });
     throw error;
@@ -269,6 +293,7 @@ module.exports = {
   loadPolicy,
   outputPath,
   pathAllowed,
+  renameDirectoryWithRetry,
   selectPublicFiles,
   selectPublicEntries,
   validatePolicy,

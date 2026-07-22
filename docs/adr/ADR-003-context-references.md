@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted and implemented for raw graph nodes and bounded HTTP/request flows.
+Accepted and implemented for raw graph nodes and bounded supported static-entry flows.
 
 ## Context
 
@@ -20,7 +20,7 @@ The first Context Card must remain local-first, bounded, and parser-evidence bas
    ```
 
 2. The URI is an identifier, not a network location. Resolving it never makes a network request.
-3. Current context kinds are raw `node` and bounded HTTP/request `flow`. Aggregate feature summaries, work records, and human-verification records use future kinds and schemas.
+3. Current context kinds are raw `node` and bounded supported static-entry `flow` (HTTP/request, literal package-script, and narrow literal node-cron schedule families). Aggregate feature summaries, work records, and human-verification records use future kinds and schemas.
 4. A node Context Card uses `flowpeek-context/v1`. It includes project/graph identity, extracted technical responsibility, bounded parser evidence, direct incoming/outgoing relations, related static flows/tests, limitations, human-description state, and safe navigation/recommendation actions.
 5. A Context Packet uses `flowpeek-context-packet/v1` and is available as JSON or Markdown. It excludes source-file bodies, secrets, shell commands, credentials, deployment actions, and hidden model state.
 6. A flow Context Card uses `flowpeek-context/v1` with `kind: flow`. It packages one bounded `flowpeek-flow-lens/v1` projection, direct related-test evidence, truncation, limitations, unresolved questions, and safe actions. Its title and technical summary are derived static descriptions, not business purpose.
@@ -40,7 +40,7 @@ The first Context Card must remain local-first, bounded, and parser-evidence bas
 - Retained adjacent deltas are not full historical graph snapshots. `historical` establishes removal evidence, not a reconstructed old Context Card.
 - A removed flow may return the bounded Flow Lens snapshot already captured in its adjacent comparison. That snapshot is not a full historical Flow Context Card.
 - Successor candidates are a conservative path/type heuristic, not refactor proof or verified continuity.
-- Existing local node descriptions have no verifier, timestamp, owner, risk, or supersession lifecycle. Bounded HTTP/request flow cards may expose a separate immutable local verification record defined by ADR-004; node descriptions remain unattributed notes.
+- Existing local node descriptions have no verifier, timestamp, owner, risk, or supersession lifecycle. Bounded supported-entry flow cards may expose a separate immutable local verification record defined by ADR-004; node descriptions remain unattributed notes.
 - Context Cards are static technical evidence. They do not prove runtime execution, test success, business purpose, or approval.
 
 ## Consequences

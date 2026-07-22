@@ -1,13 +1,14 @@
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
-const { invalidateArtifactCache } = require("./artifact-cache");
-const { exportHandoffWorkspace, findNodes, getAgentBootstrap, getAgentEvidenceTraces, getAgentSemanticProposal, getArtifactCacheAudit, getChangeImpact, getChangedContexts, getContextCard, getDurableBrief, getFlowComparison, getFlowContextCard, getFlowProjection, getFlowSuggestion, getFlowVerification, getFlowVerificationHistory, getGraphDelta, getHandoffContext, getHandoffQuality, getHandoffWorkspace, getNodeDetails, getProductProof, getProjectHome, getRuntimeEvidence, getSemanticReviewQueue, getSemanticSuggestionFeedback, getTestRuns, getTrustAnalytics, getVerifiedSemanticMemory, importHandoffWorkspace, listDurableBriefManifests, listHandoffWorkspaces, listImportedHandoffs, listSemanticSuggestionFeedback, materializeDurableBrief, projectView, recordAgentEvidenceTrace, recordAgentSemanticProposal, recordRuntimeEvidence, recordSemanticSuggestionFeedback, recordTestRunEvent, resolveContextRef, saveHandoffNote, saveHandoffWorkspace, verifyFlow } = require("./graph-service");
+const { assignWorkflow, availableGraphDelta, createContinuationCheckpoint, createPlannedOverlay, createWorkRecord, exportHandoffWorkspace, findNodes, getAgentBootstrap, getAgentEvidenceTraces, getAgentSemanticProposal, getArtifactCacheAudit, getCacheHygiene, getChangeImpact, getChangedContexts, getCheckpointDivergence, getContextCard, getContinuationCheckpoint, getContinuationComparison, getContinuationContext, getDurableBrief, getEntryFlows, getFlowComparison, getFlowContextCard, getFlowProjection, getFlowSuggestion, getFlowVerification, getFlowVerificationHistory, getGraphDelta, getHandoffContext, getHandoffQuality, getHandoffWorkspace, getNodeDetails, getPlanReconciliation, getPlannedOverlay, getProductProof, getProjectHome, getRuntimeEvidence, getSemanticReviewQueue, getSemanticSuggestionFeedback, getTestRuns, getTrustAnalytics, getVerifiedSemanticMemory, getWorkDependencyStatus, getWorkRecordWorkflow, getWorkTimeline, importHandoffWorkspace, latestAvailableGraphDelta, listContinuationCheckpoints, listDurableBriefManifests, listHandoffWorkspaces, listImportedHandoffs, listPlanReconciliations, listPlannedOverlays, listSemanticSuggestionFeedback, listWorkRecords, listWorkflows, materializeDurableBrief, projectView, recordAgentEvidenceTrace, recordAgentSemanticProposal, recordPlanReconciliation, recordRuntimeEvidence, recordSemanticSuggestionFeedback, recordTestRunEvent, recordWorkEvent, resolveContextRef, resolvePlanRef, saveHandoffNote, saveHandoffWorkspace, saveWorkflow, transitionWorkRecord, updateWorkPlan, verifyFlow } = require("./graph-service");
+const { listWorkDependencyStatuses } = require("./graph-service");
+const { getActiveBranchGitEvidence, getGitContextContinuity } = require("./graph-service");
 const { benchmarkRepository } = require("./benchmark");
 const { compareGitSnapshots, createGitSnapshot } = require("./history");
-const { createRepositoryScanner, graphToMermaid, saveDescription, writeGraphCache } = require("./scanner");
+const { graphToMermaid, saveDescription } = require("./scanner");
 const { readGraphCacheResult, summarizeCacheResult } = require("./graph-cache");
-const { readGraphDelta, readLatestGraphDelta } = require("./graph-state");
+const { createScanCoordinator } = require("./scan-coordinator");
 const { listServeWorkspace, registerServeWorkspace, unregisterServeWorkspace } = require("./serve-workspace");
 const { parseFlowLensMaxStepsQuery } = require("./flow-lens-options");
 
@@ -158,7 +159,7 @@ async function listenOnAvailablePort(server, requestedPort, options = {}) {
 
 async function startServer(options) {
   let root = fs.realpathSync(options.root);
-  let scanner = createRepositoryScanner(root);
+  let coordinator = null;
   let graph = null;
   let previousGraph = null;
   let closeWatcher = () => {};
@@ -176,10 +177,23 @@ async function startServer(options) {
       else writeSse(response, event, payload);
     }
   };
+  const createCoordinator = (targetRoot = root, coordinatorOptions = {}) => createScanCoordinator(targetRoot, {
+    cache: options.cache,
+    timeBudgetMs: options.timeBudgetMs,
+    maxFiles: options.maxFiles,
+    maxBytes: options.maxBytes,
+    packagePath: options.packagePath,
+    onProgress: coordinatorOptions.broadcastProgress === false ? undefined : ({ phase, outcome: currentOutcome }) => {
+      broadcast("scan-status", { phase, ...currentOutcome });
+    },
+  });
+  coordinator = createCoordinator();
   const elapsedMilliseconds = (startedAt) => Number(process.hrtime.bigint() - startedAt) / 1_000_000;
   const broadcastGraphUpdate = (reason, refreshStartedAt = null) => {
     const contextStartedAt = process.hrtime.bigint();
-    const delta = graph.analysis.latestDelta || getGraphDelta(previousGraph, graph, { limit: 20 });
+    const delta = previousGraph
+      ? graph.analysis.latestDelta || getGraphDelta(previousGraph, graph, { limit: 20 })
+      : getGraphDelta(null, graph, { limit: 20 });
     const changedContexts = delta.schemaVersion
       ? getChangedContexts(graph, { fromVersion: delta.fromGraphVersion, toVersion: delta.toGraphVersion })
       : null;
@@ -207,33 +221,57 @@ async function startServer(options) {
       timing: refreshStartedAt ? { refreshToAffectedContextMs: elapsedMilliseconds(refreshStartedAt), changedContextProjectionMs: changedContextMs } : null,
     });
   };
-  const refresh = (reason = null, changedPaths = null) => {
+  const refresh = async (reason = null, changedPaths = null) => {
     const refreshStartedAt = process.hrtime.bigint();
-    previousGraph = graph;
-    graph = scanner.scan(changedPaths);
-    graph.analysis.cacheState = summarizeCacheResult(writeGraphCache(root, graph, { reason: reason || "scan", changedPaths }));
-    graph.analysis.derivedCacheInvalidation = invalidateArtifactCache(root, graph, changedPaths || [], { topologyChanged: Boolean(graph.analysis.latestDelta?.topologyChanged) });
-    if (reason) broadcastGraphUpdate(reason, refreshStartedAt);
+    const result = await coordinator.refresh(changedPaths, reason || "scan");
+    previousGraph = result.previousGraph;
+    graph = result.graph;
+    if (!graph) {
+      const failure = result.outcome.failure?.message || result.outcome.reason || "No complete graph is available.";
+      throw new Error(`Flowpeek scan ${result.outcome.status}: ${failure}`);
+    }
+    if (reason && result.outcome.status === "complete") broadcastGraphUpdate(reason, refreshStartedAt);
     return graph;
   };
-  const currentGraph = () => graph || refresh();
+  const scanFailureMessage = (currentOutcome) => {
+    const detail = currentOutcome.failure?.message || currentOutcome.reason || "The current source was not promoted.";
+    return `Flowpeek scan ${currentOutcome.status}: ${detail}`;
+  };
+  const sendManualScanResult = async (response, changedPaths = null) => {
+    const refreshedGraph = await refresh("manual", changedPaths);
+    const currentOutcome = coordinator.currentOutcome();
+    if (currentOutcome.status !== "complete") {
+      return send(response, 409, {
+        error: scanFailureMessage(currentOutcome),
+        scanOutcome: currentOutcome,
+        activeGraph: currentOutcome.activeGraph,
+      });
+    }
+    return send(response, 200, refreshedGraph);
+  };
+  const currentGraph = () => {
+    if (!graph) throw new Error("No complete Flowpeek graph is available.");
+    return graph;
+  };
   const scheduleRefresh = (changedPath = null) => {
     if (changedPath) pendingChangedPaths.add(changedPath);
     else requiresReconciliation = true;
     if (refreshTimer) clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(() => {
+    refreshTimer = setTimeout(async () => {
       refreshTimer = null;
       if (refreshInProgress) {
         refreshQueued = true;
         return;
       }
       refreshInProgress = true;
+      const changedPaths = requiresReconciliation ? null : [...pendingChangedPaths];
+      pendingChangedPaths = new Set();
+      requiresReconciliation = false;
       try {
-        const changedPaths = requiresReconciliation ? null : [...pendingChangedPaths];
-        pendingChangedPaths = new Set();
-        requiresReconciliation = false;
-        refresh("filesystem", changedPaths);
+        await refresh("filesystem", changedPaths);
+        if (coordinator.currentOutcome().failure?.code === "repository-changed-during-analysis") refreshQueued = true;
       } catch (error) {
+        if (error?.code === "FLOWPEEK_SCAN_IN_PROGRESS") refreshQueued = true;
         broadcast("graph-error", { message: error.message || "Unable to refresh graph." });
       } finally {
         refreshInProgress = false;
@@ -270,10 +308,16 @@ async function startServer(options) {
         response.flushHeaders?.();
         eventStreams.add(response);
         const current = currentGraph();
-        writeSse(response, "ready", { generatedAt: current.generatedAt, project: current.project, graphState: current.state });
+        writeSse(response, "ready", {
+          generatedAt: current.generatedAt,
+          project: current.project,
+          graphState: current.state,
+          scanOutcome: coordinator.currentOutcome(),
+        });
         request.on("close", () => eventStreams.delete(response));
         return;
       }
+      if (request.method === "GET" && url.pathname === "/api/scan-status") return send(response, 200, coordinator.currentOutcome());
       if (request.method === "GET" && url.pathname === "/api/graph") return send(response, 200, currentGraph());
       if (request.method === "GET" && url.pathname === "/api/capabilities") {
         const current = currentGraph();
@@ -283,16 +327,18 @@ async function startServer(options) {
         return send(response, 200, summarizeCacheResult(readGraphCacheResult(root, { expectedProjectId: currentGraph().project.projectId })));
       }
       if (request.method === "GET" && url.pathname === "/api/cache-artifacts") return send(response, 200, getArtifactCacheAudit(currentGraph()));
+      if (request.method === "GET" && url.pathname === "/api/cache-hygiene") return send(response, 200, getCacheHygiene(currentGraph()));
       if (request.method === "GET" && url.pathname === "/api/trust-analytics") return send(response, 200, getTrustAnalytics(currentGraph()));
       if (request.method === "GET" && url.pathname === "/api/product-proof") return send(response, 200, getProductProof(currentGraph()));
       if (request.method === "GET" && url.pathname === "/api/project-home") return send(response, 200, getProjectHome(currentGraph(), { concept: url.searchParams.get("concept") }));
       if (request.method === "GET" && url.pathname === "/api/delta") {
         const from = url.searchParams.get("fromVersion");
         const to = url.searchParams.get("toVersion");
+        const current = currentGraph();
         const delta = from !== null && to !== null
-          ? readGraphDelta(root, Number(from), Number(to))
-          : readLatestGraphDelta(root, currentGraph().state.graphVersion);
-        return delta ? send(response, 200, delta) : send(response, 404, { error: "No matching persisted graph delta was found." });
+          ? availableGraphDelta(current, Number(from), Number(to))
+          : latestAvailableGraphDelta(current);
+        return delta ? send(response, 200, delta) : send(response, 404, { error: "No matching graph delta was found." });
       }
       if (request.method === "GET" && url.pathname === "/api/changed-contexts") {
         return send(response, 200, getChangedContexts(currentGraph(), { fromVersion: url.searchParams.get("fromVersion"), toVersion: url.searchParams.get("toVersion") }));
@@ -315,6 +361,112 @@ async function startServer(options) {
       }
       if (request.method === "GET" && url.pathname === "/api/runtime-evidence") return send(response, 200, getRuntimeEvidence(currentGraph(), { limit: Number(url.searchParams.get("limit") || 30) }));
       if (request.method === "GET" && url.pathname === "/api/test-runs") return send(response, 200, getTestRuns(currentGraph(), { flowId: url.searchParams.get("flowId"), status: url.searchParams.get("status"), limit: url.searchParams.get("limit") }));
+      if (request.method === "GET" && url.pathname === "/api/workflows") return send(response, 200, listWorkflows(currentGraph()));
+      if (request.method === "GET" && url.pathname === "/api/work-records") return send(response, 200, listWorkRecords(currentGraph(), { limit: url.searchParams.get("limit") }));
+      if (request.method === "GET" && url.pathname === "/api/work-timeline") return send(response, 200, getWorkTimeline(currentGraph(), url.searchParams.get("recordId") || null));
+      if (request.method === "GET" && url.pathname === "/api/work-dependency-status") {
+        const recordId = url.searchParams.get("recordId");
+        if (!recordId) throw requestError(400, "recordId is required.");
+        return send(response, 200, getWorkDependencyStatus(currentGraph(), recordId));
+      }
+      if (request.method === "GET" && url.pathname === "/api/work-dependency-statuses") return send(response, 200, listWorkDependencyStatuses(currentGraph(), { limit: url.searchParams.get("limit") }));
+      if (request.method === "GET" && url.pathname === "/api/continuation-checkpoints") return send(response, 200, listContinuationCheckpoints(currentGraph()));
+      if (request.method === "GET" && url.pathname === "/api/continuation-checkpoint") {
+        const checkpointId = url.searchParams.get("id");
+        if (!checkpointId) throw requestError(400, "id is required.");
+        return send(response, 200, getContinuationCheckpoint(currentGraph(), checkpointId));
+      }
+      if (request.method === "GET" && url.pathname === "/api/continuation-comparison") {
+        const checkpointId = url.searchParams.get("checkpointId");
+        const overlayId = url.searchParams.get("overlayId");
+        return send(response, 200, getContinuationComparison(currentGraph(), { checkpointId, overlayId }));
+      }
+      if (request.method === "GET" && url.pathname === "/api/checkpoint-divergence") {
+        const checkpointId = url.searchParams.get("checkpointId");
+        if (!checkpointId) throw requestError(400, "checkpointId is required.");
+        return send(response, 200, getCheckpointDivergence(currentGraph(), checkpointId));
+      }
+      if (request.method === "GET" && url.pathname === "/api/continuation-context") {
+        const checkpointId = url.searchParams.get("checkpointId");
+        if (!checkpointId) throw requestError(400, "checkpointId is required.");
+        return send(response, 200, getContinuationContext(currentGraph(), { checkpointId, overlayId: url.searchParams.get("overlayId"), tokenBudget: url.searchParams.has("tokenBudget") ? Number(url.searchParams.get("tokenBudget")) : undefined }));
+      }
+      if (request.method === "GET" && url.pathname === "/api/planned-overlays") return send(response, 200, listPlannedOverlays(currentGraph()));
+      if (request.method === "GET" && url.pathname === "/api/planned-overlay") {
+        const overlayId = url.searchParams.get("id");
+        if (!overlayId) throw requestError(400, "id is required.");
+        return send(response, 200, getPlannedOverlay(currentGraph(), overlayId));
+      }
+      if (request.method === "GET" && url.pathname === "/api/plan/resolve") {
+        const planRef = url.searchParams.get("ref");
+        if (!planRef) throw requestError(400, "ref is required.");
+        return send(response, 200, resolvePlanRef(currentGraph(), planRef));
+      }
+      if (request.method === "GET" && url.pathname === "/api/plan-reconciliations") return send(response, 200, listPlanReconciliations(currentGraph(), { planRef: url.searchParams.get("planRef") || null }));
+      if (request.method === "GET" && url.pathname === "/api/plan-reconciliation") {
+        const reconciliationId = url.searchParams.get("id");
+        if (!reconciliationId) throw requestError(400, "id is required.");
+        return send(response, 200, getPlanReconciliation(currentGraph(), reconciliationId));
+      }
+      if (request.method === "GET" && url.pathname === "/api/work-record-workflow") {
+        const recordId = url.searchParams.get("recordId");
+        if (!recordId) throw requestError(400, "recordId is required.");
+        return send(response, 200, getWorkRecordWorkflow(currentGraph(), recordId));
+      }
+      if (request.method === "POST" && url.pathname === "/api/work-records") {
+        if (!isTrustedMutation(request)) throw requestError(403, "Work-record writes must come from a trusted local client.");
+        const result = createWorkRecord(currentGraph(), await readBody(request));
+        broadcast("work-record", { recordId: result.record.id, eventType: result.event.eventType, created: result.created });
+        return send(response, result.created ? 201 : 200, result);
+      }
+      if (request.method === "POST" && url.pathname === "/api/work-plans") {
+        if (!isTrustedMutation(request)) throw requestError(403, "Work-plan writes must come from a trusted local client.");
+        const result = updateWorkPlan(currentGraph(), await readBody(request));
+        broadcast("work-record", { recordId: result.record.id, eventType: result.event.eventType, updated: result.updated });
+        return send(response, 200, result);
+      }
+      if (request.method === "POST" && url.pathname === "/api/work-events") {
+        if (!isTrustedMutation(request)) throw requestError(403, "Work-event writes must come from a trusted local client.");
+        const result = recordWorkEvent(currentGraph(), await readBody(request));
+        broadcast("work-event", { recordId: result.event.recordId, eventType: result.event.eventType, created: result.created });
+        return send(response, result.created ? 201 : 200, result);
+      }
+      if (request.method === "POST" && url.pathname === "/api/continuation-checkpoints") {
+        if (!isTrustedMutation(request)) throw requestError(403, "Continuation checkpoint writes must come from a trusted local client.");
+        const result = createContinuationCheckpoint(currentGraph(), await readBody(request));
+        broadcast("continuation-checkpoint", { checkpointId: result.checkpoint.id, created: result.created });
+        return send(response, result.created ? 201 : 200, result);
+      }
+      if (request.method === "POST" && url.pathname === "/api/planned-overlays") {
+        if (!isTrustedMutation(request)) throw requestError(403, "Planned-overlay writes must come from a trusted local client.");
+        const result = createPlannedOverlay(currentGraph(), await readBody(request));
+        broadcast("planned-overlay", { overlayId: result.overlay.id, checkpointId: result.overlay.checkpointId, overlayVersion: result.overlay.overlayVersion, created: result.created });
+        return send(response, result.created ? 201 : 200, result);
+      }
+      if (request.method === "POST" && url.pathname === "/api/plan-reconciliations") {
+        if (!isTrustedMutation(request)) throw requestError(403, "Plan-reconciliation writes must come from a trusted local client.");
+        const result = recordPlanReconciliation(currentGraph(), await readBody(request));
+        broadcast("plan-reconciliation", { reconciliationId: result.reconciliation.id, planRef: result.reconciliation.planRef, outcome: result.reconciliation.outcome, created: result.created });
+        return send(response, result.created ? 201 : 200, result);
+      }
+      if (request.method === "POST" && url.pathname === "/api/workflows") {
+        if (!isTrustedMutation(request)) throw requestError(403, "Workflow writes must come from a trusted local client.");
+        const result = saveWorkflow(currentGraph(), await readBody(request));
+        broadcast("workflow", { workflowId: result.workflow.id, created: result.created });
+        return send(response, result.created ? 201 : 200, result);
+      }
+      if (request.method === "POST" && url.pathname === "/api/workflow-assignments") {
+        if (!isTrustedMutation(request)) throw requestError(403, "Workflow assignments must come from a trusted local client.");
+        const result = assignWorkflow(currentGraph(), await readBody(request));
+        broadcast("workflow", { recordId: result.event.recordId, workflowId: result.workflow.id, state: result.state, assigned: result.assigned });
+        return send(response, result.assigned ? 201 : 200, result);
+      }
+      if (request.method === "POST" && url.pathname === "/api/workflow-transitions") {
+        if (!isTrustedMutation(request)) throw requestError(403, "Workflow transitions must come from a trusted local client.");
+        const result = transitionWorkRecord(currentGraph(), await readBody(request));
+        broadcast("workflow", { recordId: result.event.recordId, workflowId: result.workflow.id, state: result.toState, transitioned: result.transitioned });
+        return send(response, result.transitioned ? 201 : 200, result);
+      }
       if (request.method === "POST" && url.pathname === "/api/runtime-evidence") {
         if (!isTrustedMutation(request)) throw requestError(403, "Runtime evidence writes must come from the local Flowpeek viewer or trusted local caller.");
         return send(response, 201, recordRuntimeEvidence(currentGraph(), await readBody(request)));
@@ -363,6 +515,7 @@ async function startServer(options) {
       if (request.method === "GET" && url.pathname === "/api/search") return send(response, 200, findNodes(currentGraph(), url.searchParams));
       if (request.method === "GET" && url.pathname === "/api/project") return send(response, 200, currentGraph().project);
       if (request.method === "GET" && url.pathname === "/api/flows") return send(response, 200, currentGraph().flows);
+      if (request.method === "GET" && url.pathname === "/api/entry-flows") return send(response, 200, getEntryFlows(currentGraph(), url.searchParams.get("query") || "", url.searchParams.get("scope") || "application"));
       if (request.method === "GET" && url.pathname === "/api/flow-lens") {
         const requestedMaxSteps = parseFlowLensMaxStepsQuery(url.searchParams.get("maxSteps"));
         const lens = getFlowProjection(currentGraph(), url.searchParams.get("flow"), url.searchParams.get("scope") || "application", { maxSteps: requestedMaxSteps });
@@ -402,6 +555,16 @@ async function startServer(options) {
         return send(response, 200, getProductProof(currentGraph(), { localBenchmark: benchmarkRepository(root, { iterations }) }));
       }
       if (request.method === "GET" && url.pathname === "/api/history") return send(response, 200, compareGitSnapshots(root, { from: url.searchParams.get("from") || "HEAD~1", to: url.searchParams.get("to") || "HEAD" }));
+      if (request.method === "GET" && url.pathname === "/api/active-branch-git-evidence") {
+        const contextRef = url.searchParams.get("contextRef");
+        if (!contextRef) throw requestError(400, "A contextRef query parameter is required.");
+        return send(response, 200, getActiveBranchGitEvidence(currentGraph(), contextRef, { limit: url.searchParams.get("limit") }));
+      }
+      if (request.method === "GET" && url.pathname === "/api/git-context-continuity") {
+        const contextRef = url.searchParams.get("contextRef");
+        if (!contextRef) throw requestError(400, "A contextRef query parameter is required.");
+        return send(response, 200, getGitContextContinuity(currentGraph(), contextRef, { from: url.searchParams.get("from") || "HEAD~1", to: url.searchParams.get("to") || "HEAD" }));
+      }
       if (request.method === "GET" && url.pathname === "/api/impact") return send(response, 200, getChangeImpact(currentGraph(), url.searchParams.getAll("path"), { maxDepth: url.searchParams.get("maxDepth"), previousGraph }));
       if (request.method === "GET" && url.pathname === "/api/export/mermaid") return send(response, 200, { mermaid: graphToMermaid(currentGraph()) });
       if (request.method === "GET" && url.pathname === "/api/context-card") {
@@ -419,16 +582,46 @@ async function startServer(options) {
         if (!isTrustedMutation(request)) throw requestError(403, "Mutating requests must come from the local Flowpeek viewer.");
         const body = await readBody(request);
         if (body.root) {
+          if (coordinator.isRunning()) throw requestError(409, "Wait for or cancel the active bounded scan before switching repositories.");
           const requestedRoot = fs.realpathSync(String(body.root));
           if (!fs.statSync(requestedRoot).isDirectory()) throw new Error("Scan target must be a directory.");
+          if (requestedRoot === root) return sendManualScanResult(response);
+          const candidateCoordinator = createCoordinator(requestedRoot, { broadcastProgress: false });
+          const candidate = await candidateCoordinator.refresh(null, "manual-root-switch");
+          if (candidate.outcome.status !== "complete" || !candidate.graph) {
+            return send(response, 409, {
+              error: `Repository switch was not applied. ${scanFailureMessage(candidate.outcome)}`,
+              scanOutcome: candidate.outcome,
+              activeGraph: coordinator.currentOutcome().activeGraph,
+            });
+          }
           root = requestedRoot;
-          scanner = createRepositoryScanner(root);
+          coordinator = candidateCoordinator;
+          graph = candidate.graph;
           previousGraph = null;
           pendingChangedPaths = new Set();
           requiresReconciliation = false;
           startWatching();
+          if (serveWorkspaceRegistration) {
+            serveWorkspaceRegistration = registerServeWorkspace(graph, {
+              workspaceId: options.workspaceId,
+              serviceLabel: options.serviceLabel,
+              port: server.address().port,
+              registryRoot: options.registryRoot,
+              instanceId: serveWorkspaceRegistration.record.instanceId,
+              startedAt: serveWorkspaceRegistration.record.startedAt,
+            });
+          }
+          broadcast("scan-status", { phase: "terminal", ...coordinator.currentOutcome() });
+          broadcastGraphUpdate("manual-root-switch");
+          return send(response, 200, graph);
         }
-        return send(response, 200, refresh("manual"));
+        return sendManualScanResult(response);
+      }
+      if (request.method === "POST" && url.pathname === "/api/scan/cancel") {
+        if (!isTrustedMutation(request)) throw requestError(403, "Scan cancellation must come from the local Flowpeek viewer or trusted local caller.");
+        const result = coordinator.cancel();
+        return send(response, result.accepted ? 202 : 409, result);
       }
       if (request.method === "POST" && url.pathname === "/api/snapshots") {
         if (!isTrustedMutation(request)) throw requestError(403, "Mutating requests must come from the local Flowpeek viewer.");
@@ -515,7 +708,7 @@ async function startServer(options) {
         const node = activeGraph.nodes.find((candidate) => candidate.id === body.id);
         if (!node) return send(response, 404, { error: "Node not found." });
         saveDescription(root, body.id, body.description);
-        const refreshed = refresh("description", []);
+        const refreshed = await refresh("description", []);
         const refreshedNode = refreshed.nodes.find((candidate) => candidate.id === body.id);
         return send(response, 200, { node: refreshedNode, graphState: refreshed.state, delta: refreshed.analysis.latestDelta || null });
       }
@@ -535,7 +728,7 @@ async function startServer(options) {
 
   portBinding = await listenOnAvailablePort(server, options.port, options);
   try {
-    refresh();
+    await refresh();
     if (options.registerServeWorkspace !== false) {
       serveWorkspaceRegistration = registerServeWorkspace(graph, {
         workspaceId: options.workspaceId,
@@ -561,6 +754,8 @@ async function startServer(options) {
     root,
     port: server.address().port,
     getGraph: () => currentGraph(),
+    getScanOutcome: () => coordinator.currentOutcome(),
+    cancelScan: () => coordinator.cancel(),
     portBinding,
     project: graph.project,
     serveWorkspace: serveWorkspaceRegistration?.workspace || null,

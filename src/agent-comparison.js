@@ -13,7 +13,7 @@ const CLAIM_OUTCOMES = new Set(["supported", "unsupported", "unknown"]);
 const VERIFICATION_STATUSES = new Set(["passed", "failed", "not-run", "unknown"]);
 const STALE_STATUSES = new Set(["stale", "historical", "successor-candidate"]);
 const CONTEXT_STATUSES = new Set(["current", "stale", "historical", "successor-candidate", "unavailable", "unresolved", "expired"]);
-const FLOWPEEK_TOOLS = new Set(["find_nodes", "get_agent_bootstrap", "get_changed_contexts", "get_flow_comparison", "get_flow_context_card", "get_flow_projection", "get_handoff_context", "get_related_tests", "get_request_flows", "refresh_graph", "resolve_context_ref"]);
+const FLOWPEEK_TOOLS = new Set(["cancel_scan", "find_nodes", "get_active_branch_git_evidence", "get_agent_bootstrap", "get_changed_contexts", "get_entry_flows", "get_flow_comparison", "get_flow_context_card", "get_flow_projection", "get_git_context_continuity", "get_handoff_context", "get_related_tests", "get_request_flows", "get_scan_status", "refresh_graph", "resolve_context_ref"]);
 const TOKEN_ESTIMATOR = "flowpeek-char4-estimator/v1";
 
 class AgentComparisonError extends Error {

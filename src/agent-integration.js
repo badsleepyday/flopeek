@@ -8,19 +8,42 @@ const AGENT_INTEGRATION_MANIFEST_SCHEMA = "flowpeek-agent-integrations/v1";
 const MANAGED_BLOCK_START = "# >>> flowpeek managed MCP >>>";
 const MANAGED_BLOCK_END = "# <<< flowpeek managed MCP <<<";
 const CANONICAL_SKILL = path.resolve(__dirname, "..", "integrations", "skills", "flowpeek");
+const TRANSIENT_RENAME_CODES = new Set(["EACCES", "EBUSY", "EPERM"]);
 
 function normalizeRelative(value) {
   return value.split("/").join(path.sep);
 }
 
-function atomicWrite(file, content) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+function wait(milliseconds) {
+  if (!milliseconds) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+function atomicWrite(file, content, options = {}) {
+  const fileSystem = options.fileSystem || fs;
+  const configuredAttempts = Number(options.attempts);
+  const configuredRetryDelay = Number(options.retryDelayMs);
+  const attempts = Math.min(Math.max(Number.isFinite(configuredAttempts) && configuredAttempts > 0 ? configuredAttempts : 8, 1), 8);
+  const retryDelayMs = Math.min(Math.max(Number.isFinite(configuredRetryDelay) && configuredRetryDelay >= 0 ? configuredRetryDelay : 25, 0), 250);
+  const pause = options.wait || wait;
+  fileSystem.mkdirSync(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
   try {
-    fs.writeFileSync(temporary, content, "utf8");
-    fs.renameSync(temporary, file);
+    fileSystem.writeFileSync(temporary, content, "utf8");
+    let lastError = null;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        fileSystem.renameSync(temporary, file);
+        return { path: file, attempts: attempt };
+      } catch (error) {
+        lastError = error;
+        if (!TRANSIENT_RENAME_CODES.has(error?.code) || attempt === attempts) break;
+        pause(Math.min(retryDelayMs * attempt, 250));
+      }
+    }
+    throw lastError;
   } finally {
-    if (fs.existsSync(temporary)) fs.rmSync(temporary, { force: true });
+    if (fileSystem.existsSync(temporary)) fileSystem.rmSync(temporary, { force: true });
   }
 }
 
@@ -310,6 +333,7 @@ function doctorAgentIntegration(root, options = {}) {
 }
 
 module.exports = {
+  atomicWrite,
   AGENT_INTEGRATION_MANIFEST_SCHEMA,
   CANONICAL_SKILL,
   detectExecutable,

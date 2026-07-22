@@ -43,11 +43,16 @@ Follow one live change:
 | Review a change | Affected contexts, before/current static flow, impact, and related tests |
 | Hand work to another developer | A compact Context Ref or Context Packet tied to a graph version |
 | Ground a coding agent | Bounded MCP context with parser coverage, evidence limits, and stale detection |
-| Keep a large repository readable | Feature summaries, focus mode, scoped layers, search, and server-side projection |
+| Track local delivery context | Evidence-linked Work records, planned windows, workflow state, and append-only actual events |
+| Keep a large repository readable | Domain → Feature → Component → Symbol navigation, focus mode, scoped layers, search, and server-side projection |
 
 ### Human view
 
-The local Viewer stays intentionally small. It provides a Project Home, Flow Lens, direct dependencies, live change tray, Context Cards, proof reports, and a focused source inspector—not another IDE.
+The local Viewer stays intentionally small. It provides a Project Home, bounded
+semantic zoom, Flow Lens, direct dependencies, live change tray, Context Cards,
+proof reports, a read-only local Work ledger, and a focused source inspector—not
+another IDE or project tracker. Semantic summary nodes are derived from static
+source facts; they are not files, runtime services, or execution steps.
 
 ![Before and current static flow comparison](docs/assets/screenshots/flow-comparison.png)
 
@@ -57,7 +62,8 @@ An agent starts with `get_agent_bootstrap`, resolves a flow or node, reads only 
 
 ```text
 get_agent_bootstrap
-  → get_request_flows
+  → get_scan_status
+  → get_entry_flows
   → get_flow_projection
   → get_related_tests
   → edit with existing workspace tools
@@ -72,11 +78,41 @@ Flowpeek MCP exposes no arbitrary shell, deployment, credential, or repository-s
 From the Flowpeek checkout:
 
 ```powershell
+npm exec -- flowpeek discover D:\path\to\repository --max-files 5000 --budget-ms 10000
 npm exec -- flowpeek scan D:\path\to\repository
+npm exec -- flowpeek scan D:\path\to\repository --max-files 5000 --max-bytes 250000000 --budget-ms 60000
+npm exec -- flowpeek scan D:\path\to\repository --package apps\api
 npm exec -- flowpeek scan D:\path\to\repository --no-cache
-npm exec -- flowpeek serve D:\path\to\repository
+npm exec -- flowpeek view D:\path\to\repository --level domain --format json
+npm exec -- flowpeek serve D:\path\to\repository --max-files 5000 --max-bytes 250000000 --budget-ms 60000
 npm exec -- flowpeek doctor D:\path\to\repository --platform all
 ```
+
+The local Viewer and MCP expose the same scan freshness. If a bounded refresh
+does not complete, Flowpeek keeps the last complete graph and labels it
+`stale-unverified` instead of serving a partial reconstruction.
+
+### Focus one package first
+
+For a large monorepo, select a concrete package directory before asking for a
+technical map:
+
+```powershell
+npm exec -- flowpeek discover D:\path\to\repository --package apps\api --format json
+npm exec -- flowpeek serve D:\path\to\repository --package apps\api
+npm exec -- flowpeek mcp D:\path\to\repository --package apps\api
+```
+
+The path must be inside the repository and contain its own regular
+`package.json`. Flowpeek labels the map as **Package: apps/api** for both people
+and agents. It is a static source subtree, not proof of workspace membership,
+dependency ownership, build activation, or runtime topology. To keep that
+boundary safe, package scans are ephemeral sessions: they do not overwrite the
+repository-wide cache and cannot join `serve --global` yet.
+
+The selected subtree still obeys the repository's `.flowpeek/config.json`
+source, test, fixture, and exclusion rules; `--package` does not silently
+override them.
 
 Install project-local MCP configuration for a supported host:
 
@@ -106,6 +142,12 @@ This benchmark does **not** prove developer productivity, AI patch quality, runt
 ## Reuse work on large repositories
 
 Flowpeek retains parser facts and reparses changed files. Relationship assembly remains graph-wide, but supported unchanged files do not need a full parser pass.
+
+Before scanning an unfamiliar workspace, `flowpeek discover` can report
+candidate source, scope, static manifests, adapter demand, and declared resource
+bounds without parsing source. A bounded CLI scan returns no partial graph and
+does not replace the last complete cache. CLI, Viewer/HTTP/SSE, and MCP share
+the same progress, cancellation, and `stale-unverified` outcome contract.
 
 ![Incremental scan evidence](docs/assets/incremental-performance.svg)
 
@@ -155,6 +197,7 @@ Start at the [documentation index](docs/README.md).
 | Understand product boundaries | [Product contract](PRODUCT.md) |
 | Understand internals | [Architecture](ARCHITECTURE.md) |
 | See what comes next | [Roadmap](ROADMAP.md) |
+| Implement versioned work continuation | [Continuation execution plan](docs/work-continuation-plan.md) |
 
 ## Verification
 

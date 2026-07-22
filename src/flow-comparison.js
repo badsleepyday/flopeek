@@ -67,8 +67,8 @@ function comparisonChanges(before, current, changedStepIds = []) {
   const addedTransitionIds = currentTransitionIds.filter((id) => !beforeTransitionIds.includes(id));
   const removedTransitionIds = beforeTransitionIds.filter((id) => !currentTransitionIds.includes(id));
   const flowMetadataChanged = Boolean(before && current && !sameJson(
-    { id: before.flow.id, title: before.flow.title, entryId: before.flow.entryId },
-    { id: current.flow.id, title: current.flow.title, entryId: current.flow.entryId },
+    { id: before.flow.id, title: before.flow.title, entryId: before.flow.entryId, entry: before.flow.entry || null },
+    { id: current.flow.id, title: current.flow.title, entryId: current.flow.entryId, entry: current.flow.entry || null },
   ));
   const staticStructureChanged = Boolean(addedStepIds.length || removedStepIds.length || movedStepIds.length || transitionChangedStepIds.length || nodeMetadataChangedStepIds.length || addedTransitionIds.length || removedTransitionIds.length || flowMetadataChanged);
   return {
@@ -100,7 +100,7 @@ function createAdjacentFlowComparisons(previousGraph, graph, contextFlows, optio
     const changes = comparisonChanges(before, current, item.changedStepIds || []);
     return {
       id: `flow-comparison:${item.flow.id}@${previousGraph.state.graphVersion}-${graph.state.graphVersion}`,
-      flow: { id: item.flow.id, title: current?.flow.title || before?.flow.title || item.flow.title, entryId: current?.flow.entryId || before?.flow.entryId || item.flow.entryId },
+      flow: { id: item.flow.id, title: current?.flow.title || before?.flow.title || item.flow.title, entryId: current?.flow.entryId || before?.flow.entryId || item.flow.entryId, entry: current?.flow.entry || before?.flow.entry || item.flow.entry || null },
       status: item.status,
       before,
       current,

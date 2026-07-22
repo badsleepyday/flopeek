@@ -30,6 +30,8 @@ Choose the shortest path for what you need now.
 | Runtime modules and data contracts | [Architecture](../ARCHITECTURE.md) |
 | Supported adapters and known gaps | [Support matrix](../SUPPORT.md) |
 | Prioritized delivery | [Roadmap](../ROADMAP.md) |
+| Versioned work-continuation execution contract | [Work-continuation plan](work-continuation-plan.md) |
+| Stability and semantic-zoom execution contract | [Stability and semantic zoom](stability-semantic-zoom-execution-plan.md) |
 | Automated verification lanes | [Testing](testing.md) |
 | Runner observations | [Runner adapter contract](runner-adapter-contract.md) |
 

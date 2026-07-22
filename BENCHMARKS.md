@@ -12,6 +12,7 @@ Every result is bounded by its dataset, revision, host, and evidence class. Raw 
 | Is parser reuse faster than full reparse? | **1.67×–54.53×** | Four host-specific repository samples; not a universal promise |
 | Does Flowpeek add context beyond literal retrieval? | **14/14 ordered steps; 3/3 stale refs** | Three small source-pinned fixtures; no productivity claim |
 | Can the package install from its exact tarball? | **Passed** | One private Windows/Node clean-room observation; no publish approval |
+| Does a framework command adapter work beyond a fixture? | **47 declarations** | One pinned Django source snapshot; static declaration evidence only |
 
 Machine-readable entry point: [`benchmarks/public-proof.json`](benchmarks/public-proof.json).
 
@@ -32,11 +33,23 @@ The external corpus pins pnpm, NestJS, SvelteKit, Vite, and Symfony. Fourteen so
 
 Raw manifest: [`benchmarks/real-repository-corpus.json`](benchmarks/real-repository-corpus.json).
 
+Fresh declared-host reproduction: [`production-static-evidence.json`](benchmarks/production-static-evidence.json) records the complete 5/5 corpus run at the current dirty development baseline.
+
 ```powershell
 node src/real-repository-corpus.js --clone-directory D:\benchmarks\flowpeek-real-corpus --format json
 ```
 
 **Boundary:** 92/92 describes only the declared relationships in those 14 scopes. It is not accuracy for every edge, file, language construct, or runtime path in the repositories.
+
+## Django command declaration slice
+
+Flowpeek scanned [Django 5.2.5](https://github.com/django/django/tree/5.2.5) at pinned revision `a3b1107a4955bdd994908efb4c6e1d03c281e69f`: **2,864** scanned files, **47** supported narrow management-command declarations, and **24** application-scope Framework Command Flow Lenses. The checked command-to-class relation passed.
+
+Raw evidence: [`framework-entry-production-evidence.json`](benchmarks/framework-entry-production-evidence.json).
+
+The same Django snapshot was re-scanned at the current dirty development baseline; the reproduced 2,864 files, 47 supported declarations, 24 Flow Lenses, and checked relation are recorded in [`production-static-evidence.json`](benchmarks/production-static-evidence.json).
+
+**Boundary:** this validates only Flowpeek's narrow static `management/commands` declaration subset. It does not prove Django app registration, settings loading, command discovery at runtime, invocation, `handle()` execution, or application behavior.
 
 ## Repository orientation
 
@@ -128,6 +141,30 @@ Checked observation: [`packaging/evidence/clean-room-current.json`](packaging/ev
 Raw aggregate only: [`private-dogfood-summary.json`](benchmarks/private-dogfood-summary.json). Protocol: [`docs/private-dogfooding.md`](docs/private-dogfooding.md).
 
 The run did not execute target applications, tests, configuration, or runtime integrations and retained no machine paths or source bodies. `--no-cache` is regression-tested to create neither graph cache nor project-identity metadata. A zero Flow Lens catalog means no supported static HTTP/request endpoint was extracted; it does not mean that the target has no behavior.
+
+## Supported-language product journey
+
+The pinned product cohort exercises one bounded static Flow Lens through
+semantic levels, MCP Context Ref retrieval, a disposable source-only refresh,
+and stale-context resolution for three declared subsets.
+
+| Static subset | Audited relationships | Flow steps | Domain / Feature / Component / Symbol | MCP Context Ref | Source-only refresh |
+| --- | ---: | ---: | ---: | --- | --- |
+| TypeScript HTTP | 7/7 | 5 | 1 / 1 / 1 / 9 | resolved | `v1 → v2`, stale |
+| Python decorator HTTP | 4/4 | 5 | 1 / 1 / 1 / 7 | resolved | `v1 → v2`, stale |
+| PHP package-command + direct function | 2/2 | 4 | 1 / 1 / 2 / 1 | resolved | `v1 → v2`, stale |
+
+Raw case definitions and source digests: [`supported-language-dogfood-cases.json`](benchmarks/supported-language-dogfood-cases.json). Checked outcome: [`supported-language-dogfood.json`](benchmarks/supported-language-dogfood.json).
+
+```powershell
+npm run evaluate:language-dogfood
+```
+
+**Boundary:** every source edit occurs in a disposable copy. This demonstrates
+only the listed static subsets, semantic projection availability, MCP Context
+Ref basis, and stale lifecycle. It does not execute the target applications,
+tests, package scripts, PHP runtime, or HTTP server; it is not a universal
+language-support score or release approval.
 
 ## Evaluation contracts that are not product outcomes
 

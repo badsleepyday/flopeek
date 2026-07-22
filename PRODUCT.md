@@ -57,6 +57,34 @@ repository changes
   -> delivery records reference the same evidence
 ```
 
+### Development vision lock
+
+The following statements are the product-direction lock used during implementation,
+dogfooding, stress testing, and review:
+
+1. Flowpeek humanizes existing projects as bounded technical flows; it does not
+   replace the repository, IDE, project tracker, test runner, or coding agent.
+2. Deterministic repository evidence remains the foundation. AI, ML, generated
+   wording, reviewer opinion, and workflow status may enrich or assess evidence,
+   but cannot silently become parser fact or human verification.
+3. People and agents resolve the same project identity, graph version, Context
+   Ref, limitations, and freshness state through the local cache.
+4. Static topology is never presented as runtime order, successful behavior,
+   complete coverage, business intent, or original rationale.
+5. Large repositories are handled through discovery, scope, budgets, bounded
+   projections, progressive disclosure, and explicit omissions—not an
+   unbounded canvas or a misleading partial result.
+6. SDLC methods remain templates over evidence-linked delivery records. Changing
+   a task or checkpoint cannot fabricate implementation, verification, release,
+   or runtime evidence.
+7. Flowpeek stays local-first and permission-bounded. It may coordinate approved
+   evidence workflows later, but it does not become an unrestricted autonomous
+   shell, source writer, deployment agent, or production control plane.
+
+A proposal that conflicts with this lock requires an explicit product-contract
+change and an ADR before implementation. A dogfooding observation may reveal a
+defect or a missing capability; it does not change the vision by itself.
+
 ## Problem statement
 
 Existing and legacy repositories are difficult to enter safely because their behavior is distributed across routes, functions, modules, data access, queues, tests, configuration, external services, and historical decisions.
@@ -167,17 +195,21 @@ Flowpeek evolves through four capability levels. Each level depends on the trust
 
 Status: `current`
 
+- Discover candidate source, workspace manifests, adapter demand, and declared scan bounds before parsing.
+- Run an optional CLI bounded scan that promotes only a complete, inventory-verified graph.
 - Scan supported source code.
 - Build technical nodes and relationships.
 - Show parser coverage and limitations.
-- Query direct dependencies, request flows, impact, and related tests.
+- Query direct dependencies, supported static entry flows, impact, and related tests.
 - Compare static Git snapshots.
+- Retrieve bounded active-branch, path-touch Git evidence for a current or stale Context Ref without checking out or changing the repository.
+- Compare one current or stale Context Ref against two pinned static Git snapshots, preserving exact static identity separately from same-path candidates.
 
 ### Level 2 — Explain
 
 Status: `partial`
 
-- Project focused human-readable technical flows through a bounded HTTP/request Flow Lens.
+- Project focused human-readable technical flows through a bounded Flow Lens for extracted HTTP/request entries, literal package scripts that directly target one scanned source file, a narrow Django management-command declaration subset bound to one direct `Command` class, and the narrow module-scope `node-cron` literal schedule subset bound to one local top-level function.
 - Produce Context Cards and Context Packets.
 - Track graph versions and stale references.
 - Preserve local node descriptions and immutable attributed flow verification records.
@@ -198,12 +230,13 @@ Status: `partial`
 
 Status: `partial`
 
-- Suggest technical roles and flow groupings with evidence (`current` for bounded HTTP/request flows).
+- Suggest technical roles and flow groupings with evidence (`current` for bounded HTTP/request flows; supported package-script, framework-command, and scheduler entries explicitly abstain until their own deterministic wording contract exists).
 - Accept bounded agent/provider draft proposals while keeping human review and verification authoritative (`current`).
 - Recommend inspection, testing, review, and documentation actions (`partial`).
 - Track explicit runner-adapter progress and failure at displayed static steps through a tested fixture (`partial`; Flowpeek does not execute tests or claim real-CI integration).
 - Attach Context Cards to requirements and SDLC checkpoints.
-- Enforce evidence requirements for workflow transitions.
+- Enforce evidence requirements for local workflow transitions (`current` for built-in Agile/Waterfall and validated custom definitions; external evidence authority remains out of scope).
+- Preserve local Work records, planned windows, append-only actual events, owner/dependency metadata, and current/stale Context Ref status (`current`; the Viewer ledger is read-only).
 
 ### Level 4 — Coordinate
 
@@ -455,33 +488,34 @@ Status: `current` unless marked otherwise.
 
 - Local repository scan, validated graph cache, and generated/configured project identity.
 - AST/compiler-based adapters with documented language-specific limits.
-- Technical nodes, relationships, HTTP entry flows, and aggregate projections.
+- Technical nodes, relationships, extracted HTTP entry flows, literal direct package-script entry flows, narrow Django management-command declaration flows, narrow literal `node-cron` schedule entry flows, and bounded Domain/Feature/Component/Symbol aggregate projections. Derived hierarchy ids retain their selected ancestors and never turn summaries into source or runtime facts.
 - Parser coverage and machine-readable agent interpretation rules.
-- CLI summary, JSON, Mermaid, impact, benchmark, snapshot, and history commands.
-- Lightweight local viewer with search, bounded views, HTTP/request Flow Lens, captured before/current Flow Lens comparison, node/flow Context Card copy/resolve, immutable local flow verification, inspector, human descriptions, benchmark panel, and live SSE refresh with affected-context/flow highlighting.
+- CLI summary, JSON, Mermaid, impact, benchmark, snapshot, history, Git-evidence, and Git-continuity commands.
+- Lightweight local viewer with search, bounded views, an Entry map, Flow Lens for supported static entries, captured before/current Flow Lens comparison, node/flow Context Card copy/resolve, immutable local flow verification, inspector, human descriptions, benchmark panel, live SSE refresh with affected-context/flow highlighting, and a read-only local Work ledger inspector.
 - Human-first Project Home with explicit human-authored/unavailable purpose and architecture, feature/domain map, critical and recently changed flows, trust boundaries, documentation completeness, unresolved questions, evidence-linked starting points, and deterministic application-scoped concept search.
 - Portable human concept tags in immutable Handoff Workspace versions; concept search shows whether a match came from a human tag, route/path metadata, feature/domain, or parser label, and abstains on ambiguous aliases.
 - Versioned handoff quality reports over explicit legacy-style fixture cases, including bounded retrieval stages, observed composition time, token size, stale-context detection, evidence traceability, and separately classified agent outcomes without runtime claims.
 - Explicit opt-in runtime-observation metadata bound to Context Refs, with source/log/credential/path sanitization, separate local retention, and expired manifests; it never creates static graph edges or upgrades another evidence class.
-- Source-read-only MCP tools for overview, node search, evidence, node/flow Context Cards, flow verification, dependencies, request flows, Flow Lens, captured adjacent Flow Lens comparison, impact, tests, capabilities, graph delta, changed contexts, refresh, and Git snapshots, plus append-only local agent-trace and semantic-feedback metadata tools. Flow Lens and Flow Context Card requests share one strict bounded-depth contract across MCP, HTTP, viewer copy actions, JSON, Markdown, and derived caching.
+- Source-read-only MCP tools for overview, node search, evidence, node/flow Context Cards, flow verification, dependencies, static entry flows, Flow Lens, captured adjacent Flow Lens comparison, impact, tests, capabilities, graph delta, changed contexts, refresh, Git snapshots, bounded active-branch path-touch Git evidence, and exact Context Ref continuity across two static Git snapshots, plus bounded local agent-trace, semantic-feedback, Delivery Work-record, workflow-assignment, transition, actual-event, immutable continuation-checkpoint, and immutable planned-overlay/Plan Ref metadata tools. Flow Lens and Flow Context Card requests share one strict bounded-depth contract across MCP, HTTP, viewer copy actions, JSON, Markdown, and derived caching.
 - A provider-independent `flowpeek-agent-bootstrap/v1` contract plus project-local, non-destructive integration for Codex, Claude Code, Cursor, and Gemini CLI. The generated skill standardizes graph-first orientation, source fallback, post-edit refresh, and evidence limits without embedding provider personas or giving Flowpeek source-write authority.
 - A source-pinned repository-orientation retrieval benchmark that compares literal direct-repository retrieval with Flowpeek static context while keeping deterministic results, human observations, and provider outcomes separate. Missing baseline flow/stale capabilities remain unavailable rather than fabricated as failures.
 - A provider-neutral paired agent-comparison evaluator for explicitly supplied sessions with and without Flowpeek. It validates condition isolation, consent, graph identity, Context Refs, outcomes, separately reviewed claims, verification, and optional cost without invoking a provider or treating agent output as graph truth.
 - An explicit npm package allowlist and clean-room tarball verifier that installs the exact private artifact into an isolated temporary consumer, checks bounded CLI/scan/MCP contracts with lifecycle scripts disabled, fingerprints the copied fixture before and after, and cleans all temporary state. This is packaging evidence, not publication permission or release readiness.
 - Optional repository-local reviewer skills and a portable `flowpeek-independent-review/v1` artifact contract for UI/UX, implementation, system-flow, documentation, and release-readiness review. Reviewer output remains advisory evidence and never changes parser facts or creates human verification.
 - Incremental parser-fact reuse and global relationship rebuilding.
-- Static Git commit snapshots and flow/topology comparison.
+- Static Git commit snapshots, flow/topology comparison, and Context Ref continuity projection across two snapshots.
 - Deterministic HTTP/request semantic suggestions with versioned candidate fields, reasons, evidence references, confidence, and explicit abstention.
 
 Current limitations include:
 
-- generated Flow Lenses begin only at extracted HTTP/request endpoints; route/controller nodes without endpoint evidence remain technical-map nodes rather than synthetic request flows;
-- Flow Lens and Flow Context Cards support HTTP/request entries only and derive roles/boundaries from static node and edge facts; they are not runtime order, control-flow, or business intent;
+- generated Flow Lenses begin only at extracted HTTP/request endpoints, literal package scripts with one direct scanned source-file target, a narrow Django `management/commands` declaration subset with one direct `Command`/`BaseCommand`/`handle` form, or the narrow module-scope `node-cron` default-import literal-schedule subset with one exact local top-level function target; route/controller nodes, unsupported scripts, unsupported framework command forms, and unsupported scheduler registrations remain technical-map nodes or unsupported-entry inventory rather than synthetic flows;
+- Flow Lens and Flow Context Cards support those narrow static entry families and derive roles/boundaries from static node and edge facts; they are not command invocation, Django app registration or settings loading, scheduler initialization or task execution, runtime order, control-flow, or business intent;
 - graph state has a durable monotonic version and bounded adjacent delta history; changed-context projections connect one retained adjacent delta to current/historical technical nodes and Flow Lens entries, but remain static evidence rather than a runtime trace, full source history, or historical Context Card reconstruction;
+- Git Context continuity compares only exact static IDs and bounded same-path candidates in two chosen snapshots; it neither follows rename/move history nor automatically declares a successor, implementation match, or preserved behavior;
 - node identity is path/symbol based and does not survive every move or rename;
-- node and bounded HTTP/request flow Context Cards/Packets exist; bounded HTTP/request flows also have immutable local human-verification lifecycle, while full historical card reconstruction does not;
+- node and bounded supported-entry flow Context Cards/Packets exist; bounded supported-entry flows also have immutable local human-verification lifecycle, while full historical card reconstruction does not;
 - repository scope configuration is path-based; it does not infer semantic ownership or execute project configuration;
-- deterministic route-oriented semantic suggestions and local immutable feedback capture are implemented, while trained models, business-purpose inference, and SDLC methods are not;
+- deterministic route-oriented semantic suggestions and local immutable feedback capture are implemented, while trained models and business-purpose inference are not; the local SDLC workflow foundation, immutable continuation checkpoints, immutable planned overlays/Plan Refs with CLI/HTTP/MCP parity, an opt-in Viewer Continue mode, append-only human reconciliation records, deterministic baseline/plan/current comparison, read-only local checkpoint divergence, and bounded agent continuation packets exist, but checkpoint editing and external evidence authority are not current;
 - dynamic/runtime-only relationships remain outside static proof.
 - Runtime observations are caller-supplied metadata only; Flowpeek does not run probes, collect logs, or infer runtime behavior from them.
 
@@ -524,12 +558,13 @@ Current limitations include:
 
 ### SDLC methods
 
-- generic workflow state-machine schema;
-- Agile, Waterfall, and custom templates;
-- evidence requirements per transition;
-- planned-versus-actual timeline;
-- human and agent ownership/dependencies;
+- generic workflow state-machine schema (`current`);
+- Agile, Waterfall, and custom templates (`current` for built-ins and validated local custom definitions);
+- evidence requirements per transition (`current` for declared local evidence kinds);
+- planned windows and append-only actual timeline metadata (`current`); editable Viewer timeline remains target behavior;
+- human and agent ownership/dependencies (`partial`; storage is current, blocking resolution remains target behavior);
 - decision, review, release, and observation records;
+- checkpoint editing and read-only branch-divergence analysis;
 - permissioned integrations with external systems.
 
 ## UX requirements

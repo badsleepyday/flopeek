@@ -16,7 +16,7 @@ This protocol does not publish the package and is not a release approval. `packa
 - framework-free Viewer assets under `public/`;
 - the canonical Flowpeek host skill under `integrations/skills/flowpeek/`;
 - the bounded checkout showcase under `examples/commerce-showcase/`;
-- ten explicitly named machine-readable public benchmark/template artifacts under `benchmarks/`; a new JSON file is excluded until both npm and policy allowlists are deliberately updated;
+- 13 explicitly named machine-readable public benchmark/template artifacts under `benchmarks/`; a new JSON file is excluded until both npm and policy allowlists are deliberately updated;
 - approved public Markdown and generated documentation assets under the root and `docs/`;
 - npm-always-included `README.md` and `package.json`.
 

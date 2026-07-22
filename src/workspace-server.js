@@ -225,6 +225,9 @@ async function startWorkspaceServer(options = {}) {
       open: false,
       registerServeWorkspace: false,
       registryRoot: options.registryRoot,
+      timeBudgetMs: input.timeBudgetMs ?? options.timeBudgetMs,
+      maxFiles: input.maxFiles ?? options.maxFiles,
+      maxBytes: input.maxBytes ?? options.maxBytes,
     });
     const projectId = app.project.projectId;
     const existing = projects.get(projectId);
@@ -425,7 +428,13 @@ async function activateOnWorkspaceHubPort(options, port) {
   const activated = await fetch(`http://127.0.0.1:${port}/api/workspace/projects`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ root: path.resolve(options.root), serviceLabel: options.serviceLabel || null }),
+    body: JSON.stringify({
+      root: path.resolve(options.root),
+      serviceLabel: options.serviceLabel || null,
+      timeBudgetMs: options.timeBudgetMs ?? null,
+      maxFiles: options.maxFiles ?? null,
+      maxBytes: options.maxBytes ?? null,
+    }),
   });
   if (!activated.ok) throw new Error((await activated.json()).error || "Unable to activate project on the existing workspace hub.");
   return activated.json();

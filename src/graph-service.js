@@ -1,8 +1,22 @@
 const VALID_MODES = new Set(["overview", "requests", "dependencies"]);
 const VALID_SCOPES = new Set(["application", "runtime", "framework", "devtool", "all"]);
+const VALID_VIEW_LEVELS = new Set(["domain", "feature", "component", "symbol"]);
+const VIEW_PROJECTION_SCHEMA = "flowpeek-view-projection/v2";
+const DEFAULT_VIEW_MAX_NODES = 40;
+const DEFAULT_VIEW_MAX_EDGES = 80;
+const MAX_VIEW_NODES = 100;
+const MAX_VIEW_EDGES = 200;
 const MAX_AGENT_SEMANTIC_SUGGESTIONS = 12;
+const { createWorkRecord: createStoredWorkRecord, getWorkTimeline: getStoredWorkTimeline, listWorkRecords: listStoredWorkRecords, recordWorkEvent: recordStoredWorkEvent, updateWorkPlan: updateStoredWorkPlan } = require("./delivery-graph");
+const { createContinuationCheckpoint: createStoredContinuationCheckpoint, getContinuationCheckpoint: getStoredContinuationCheckpoint, listContinuationCheckpoints: listStoredContinuationCheckpoints } = require("./continuation-checkpoint");
+const { createPlannedOverlay: createStoredPlannedOverlay, getPlannedOverlay: getStoredPlannedOverlay, listPlannedOverlays: listStoredPlannedOverlays, resolvePlanRef: resolveStoredPlanRef } = require("./planned-overlay");
+const { getPlanReconciliation: getStoredPlanReconciliation, listPlanReconciliations: listStoredPlanReconciliations, recordPlanReconciliation: recordStoredPlanReconciliation } = require("./plan-reconciliation");
+const { compareContinuation: compareStoredContinuation } = require("./continuation-comparison");
+const { getCheckpointDivergence: getStoredCheckpointDivergence } = require("./continuation-divergence");
+const { createContinuationContext: buildContinuationContext } = require("./continuation-context");
+const { assignWorkflow: assignStoredWorkflow, getWorkDependencyStatus: getStoredWorkDependencyStatus, getWorkRecordWorkflow: getStoredWorkRecordWorkflow, listWorkDependencyStatuses: listStoredWorkDependencyStatuses, listWorkflows: listStoredWorkflows, saveWorkflow: saveStoredWorkflow, transitionWorkRecord: transitionStoredWorkRecord } = require("./workflow-engine");
 const { createContextPacket, createContextRef, createNodeContextCard, parseContextRef, resolveContextRef: resolveStoredContextRef } = require("./context-card");
-const { getOrCreateArtifact, listArtifactCacheAudit } = require("./artifact-cache");
+const { cacheHygiene, getOrCreateArtifact, listArtifactCacheAudit, pruneArtifactCache } = require("./artifact-cache");
 const { DURABLE_BRIEF_SCHEMA, createDurableBriefPacket, listDurableBriefManifests: listStoredDurableBriefManifests, materializeDurableBrief: materializeStoredDurableBrief, resolveDurableBriefRef } = require("./durable-brief");
 const { createHandoffContext: buildHandoffContext } = require("./handoff-context");
 const { evaluateHandoffQuality } = require("./handoff-quality");
@@ -13,7 +27,7 @@ const { flowComparisonResult } = require("./flow-comparison");
 const { createFlowContextCard } = require("./flow-context-card");
 const { getFlowProjection: buildFlowProjection } = require("./flow-lens");
 const { DEFAULT_FLOW_LENS_MAX_STEPS, validateFlowLensMaxSteps } = require("./flow-lens-options");
-const { readGraphDelta } = require("./graph-state");
+const { readGraphDelta, readLatestGraphDelta } = require("./graph-state");
 const { FlowVerificationError, getFlowVerificationHistory, resolveDetachedFlowVerification, resolveFlowVerification, saveFlowVerification } = require("./flow-verification");
 const { createSemanticFlowSuggestion, semanticSuggestionPolicy } = require("./semantic-flow-suggestion");
 const { agentEvidenceTracePolicy, listAgentEvidenceTraces: listStoredAgentEvidenceTraces, saveAgentEvidenceTrace } = require("./agent-evidence-trace");
@@ -24,6 +38,10 @@ const { listTestRuns: listStoredTestRuns, saveTestRunEvent } = require("./test-r
 const { TRUST_ANALYTICS_SCHEMA, buildTrustAnalytics } = require("./trust-analytics");
 const { PRODUCT_PROOF_SCHEMA, createProductProof } = require("./product-proof");
 const { createAgentBootstrap } = require("./agent-bootstrap");
+const { isSupportedFlowEntryNode } = require("./flow-entry");
+const { getActiveBranchGitEvidence: buildActiveBranchGitEvidence } = require("./active-branch-git-evidence");
+const { getGitContextContinuity: buildGitContextContinuity } = require("./git-context-continuity");
+const { getGraphDelta } = require("./graph-delta");
 
 function optionValue(options, key, fallback = null) {
   if (options && typeof options.get === "function") return options.get(key) || fallback;
@@ -92,6 +110,7 @@ function memberSummary(node) {
 
 function summaryType(members, key) {
   if (members.some((node) => node.kind === "endpoint")) return "endpoint";
+  if (members.some((node) => node.kind === "command")) return "command";
   if (key.startsWith("data")) return "database";
   if (key.startsWith("runtime")) return "external";
   if (members.some((node) => node.type === "service")) return "service";
@@ -99,7 +118,7 @@ function summaryType(members, key) {
   return "feature";
 }
 
-function aggregateProjection(graph, sourceNodes, mode, scope, keyForNode = featureKey) {
+function aggregateProjection(graph, sourceNodes, mode, scope, keyForNode = featureKey, options = {}) {
   const groupMap = new Map();
   for (const node of sourceNodes) {
     const key = keyForNode(node);
@@ -108,7 +127,7 @@ function aggregateProjection(graph, sourceNodes, mode, scope, keyForNode = featu
   }
   const memberToSummary = new Map();
   const nodes = [...groupMap.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([key, members]) => {
-    const id = `feature:${key}`;
+    const id = options.idForKey ? options.idForKey(key) : `${options.idPrefix || "feature"}:${key}`;
     members.forEach((member) => memberToSummary.set(member.id, id));
     const types = [...new Set(members.map((member) => member.type))].sort();
     const typeCounts = Object.fromEntries(types.map((type) => [type, members.filter((member) => member.type === type).length]));
@@ -116,7 +135,7 @@ function aggregateProjection(graph, sourceNodes, mode, scope, keyForNode = featu
       id,
       kind: "summary",
       type: summaryType(members, key),
-      label: featureLabel(key),
+      label: options.labelForKey ? options.labelForKey(key) : featureLabel(key),
       feature: key,
       layer: "projection",
       memberCount: members.length,
@@ -125,6 +144,11 @@ function aggregateProjection(graph, sourceNodes, mode, scope, keyForNode = featu
       typeCounts,
       detectedResponsibility: `Feature summary of ${members.length} source node${members.length === 1 ? "" : "s"}.`,
       analysis: { parser: "flowpeek-projection", status: "aggregate", confidence: "derived" },
+      hierarchy: {
+        level: options.level || "feature",
+        key,
+        parentId: options.parentIdForKey ? options.parentIdForKey(key) : null,
+      },
     };
   });
   const edgeMap = new Map();
@@ -155,12 +179,16 @@ function aggregateProjection(graph, sourceNodes, mode, scope, keyForNode = featu
   return { nodes, edges, sourceNodeCount: sourceNodes.length, mode, scope };
 }
 
-function requestSourceNodes(graph, scope) {
+function entrySourceNodes(graph, scope) {
   const visible = graph.nodes.filter((node) => isVisibleInScope(node, scope) && node.type !== "test");
   const visibleIds = new Set(visible.map((node) => node.id));
-  const included = new Set(visible.filter((node) => node.kind === "endpoint").map((node) => node.id));
+  const included = new Set(visible
+    .filter(isSupportedFlowEntryNode)
+    .map((node) => node.id));
   for (const edge of graph.edges) {
     if (edge.type === "handles" && included.has(edge.source) && visibleIds.has(edge.target)) included.add(edge.target);
+    if (edge.type === "declares-command-target" && included.has(edge.source) && visibleIds.has(edge.target)) included.add(edge.target);
+    if (edge.type === "schedules" && included.has(edge.source) && visibleIds.has(edge.target)) included.add(edge.target);
     if (edge.type === "requests" && included.has(edge.target) && visibleIds.has(edge.source)) included.add(edge.source);
   }
   for (const edge of graph.edges) {
@@ -174,7 +202,7 @@ function dependencyProjection(graph, scope, focusId) {
   const visibleIds = new Set(visible.map((node) => node.id));
   const focus = visible.find((node) => node.id === focusId);
   if (!focus) return { nodes: [], edges: [], sourceNodeCount: 0, emptyState: "Search for a file, endpoint, or service, then select it to inspect direct dependencies." };
-  const relatedEdges = graph.edges.filter((edge) => (edge.source === focus.id || edge.target === focus.id) && visibleIds.has(edge.source) && visibleIds.has(edge.target)).slice(0, 36);
+  const relatedEdges = graph.edges.filter((edge) => (edge.source === focus.id || edge.target === focus.id) && visibleIds.has(edge.source) && visibleIds.has(edge.target));
   const included = new Set([focus.id]);
   relatedEdges.forEach((edge) => { included.add(edge.source); included.add(edge.target); });
   return {
@@ -185,6 +213,218 @@ function dependencyProjection(graph, scope, focusId) {
   };
 }
 
+const HIERARCHY_SEPARATOR = "\u0000";
+
+function domainKey(node) { return node.domain || "project"; }
+
+function hierarchyId(level, ...parts) {
+  return `${level}:${parts.map((part) => encodeURIComponent(String(part))).join(":")}`;
+}
+
+function hierarchyParts(value) {
+  return String(value || "").split(HIERARCHY_SEPARATOR);
+}
+
+function hierarchyGroupKey(...parts) {
+  return parts.join(HIERARCHY_SEPARATOR);
+}
+
+function featureGroupKey(node) {
+  return hierarchyGroupKey(domainKey(node), featureKey(node));
+}
+
+function componentKey(node) {
+  if (!node.path) return node.type || "external";
+  const segments = node.path.split("/");
+  segments.pop();
+  return segments.length ? segments.join("/") : "root";
+}
+
+function componentGroupKey(node) {
+  return hierarchyGroupKey(domainKey(node), featureKey(node), componentKey(node));
+}
+
+function semanticLabel(level, key) {
+  if (level === "feature") return featureLabel(key);
+  if (level === "domain") return humanizeSegment(key);
+  const segments = key.split("/");
+  const feature = segments.slice(0, 2).join("/");
+  const component = segments.slice(2).join("/") || "root";
+  return `${featureLabel(feature)} · ${component.split("/").map(humanizeSegment).join(" / ")}`;
+}
+
+function semanticHierarchyLabel(level, key) {
+  const parts = hierarchyParts(key);
+  if (level === "domain") return humanizeSegment(key);
+  if (level === "feature") return featureLabel(parts[1] || parts[0]);
+  const component = parts[2] || "root";
+  return `${featureLabel(parts[1])} / ${component.split("/").map(humanizeSegment).join(" / ")}`;
+}
+
+function parentHierarchyId(level, key) {
+  const parts = hierarchyParts(key);
+  if (level === "feature") return hierarchyId("domain", parts[0]);
+  if (level === "component") return hierarchyId("feature", parts[0], parts[1]);
+  return null;
+}
+
+function parseHierarchyFocus(focusId) {
+  if (!focusId) return null;
+  const [level, ...encodedParts] = focusId.split(":");
+  if (!encodedParts.length || !["domain", "feature", "component"].includes(level)) return null;
+  try {
+    return { level, parts: encodedParts.map((part) => decodeURIComponent(part)) };
+  } catch {
+    return null;
+  }
+}
+
+function semanticFocusMatches(node, focusId) {
+  if (!focusId) return true;
+  const hierarchyFocus = parseHierarchyFocus(focusId);
+  if (hierarchyFocus?.level === "domain") return domainKey(node) === hierarchyFocus.parts[0];
+  if (hierarchyFocus?.level === "feature") return domainKey(node) === hierarchyFocus.parts[0] && featureKey(node) === hierarchyFocus.parts[1];
+  if (hierarchyFocus?.level === "component") return domainKey(node) === hierarchyFocus.parts[0] && featureKey(node) === hierarchyFocus.parts[1] && componentKey(node) === hierarchyFocus.parts[2];
+  // Legacy ids can still be resolved from a retained client/cache, but new
+  // projections always use composite hierarchy ids so a child cannot escape
+  // the selected domain or feature.
+  if (focusId.startsWith("domain:")) return domainKey(node) === focusId.slice("domain:".length);
+  if (focusId.startsWith("feature:")) return overviewFeatureKey(node) === focusId.slice("feature:".length) || featureKey(node) === focusId.slice("feature:".length);
+  if (focusId.startsWith("component:")) return componentKey(node) === focusId.slice("component:".length);
+  return node.id === focusId;
+}
+
+function semanticProjection(graph, mode, scope, level, focusId) {
+  const candidates = mode === "requests" ? entrySourceNodes(graph, scope) : graph.nodes.filter((node) => isVisibleInScope(node, scope));
+  const sourceNodes = candidates.filter((node) => semanticFocusMatches(node, focusId));
+  if (level === "symbol") {
+    const ids = new Set(sourceNodes.map((node) => node.id));
+    return {
+      nodes: sourceNodes.map((node) => ({
+        ...node,
+        hierarchy: { ...(node.hierarchy || {}), level: "symbol", parentId: focusId || null },
+      })),
+      edges: graph.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target)),
+      sourceNodeCount: sourceNodes.length,
+      mode,
+      scope,
+      focusId,
+      hierarchy: { level, parentFocusId: focusId || null },
+    };
+  }
+  const keyForNode = level === "domain" ? domainKey : level === "component" ? componentGroupKey : featureGroupKey;
+  return {
+    ...aggregateProjection(graph, sourceNodes, mode, scope, keyForNode, {
+      idPrefix: level,
+      idForKey: (key) => {
+        const parts = hierarchyParts(key);
+        return level === "domain" ? hierarchyId("domain", key) : hierarchyId(level, ...parts);
+      },
+      labelForKey: (key) => semanticHierarchyLabel(level, key),
+      parentIdForKey: (key) => parentHierarchyId(level, key),
+      level,
+    }),
+    focusId,
+    hierarchy: { level, parentFocusId: focusId || null },
+  };
+}
+
+function projectionLimit(value, fallback, maximum, label) {
+  if (value === null || value === undefined || value === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > maximum) throw new Error(`${label} must be an integer from 1 through ${maximum}.`);
+  return parsed;
+}
+
+function projectionNodeOrder(focusId) {
+  return (left, right) => {
+    if (left.id === focusId) return -1;
+    if (right.id === focusId) return 1;
+    return left.id.localeCompare(right.id);
+  };
+}
+
+function boundedProjection(projection, options = {}) {
+  const maxNodes = projectionLimit(optionValue(options, "maxNodes", null), DEFAULT_VIEW_MAX_NODES, MAX_VIEW_NODES, "maxNodes");
+  const maxEdges = projectionLimit(optionValue(options, "maxEdges", null), DEFAULT_VIEW_MAX_EDGES, MAX_VIEW_EDGES, "maxEdges");
+  const allNodes = [...projection.nodes].sort(projectionNodeOrder(projection.focusId));
+  const nodes = allNodes.slice(0, maxNodes);
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const allEdges = projection.edges
+    .filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target))
+    .sort((left, right) => String(left.id || `${left.source}\u0000${left.target}\u0000${left.type}`).localeCompare(String(right.id || `${right.source}\u0000${right.target}\u0000${right.type}`)));
+  const edges = allEdges.slice(0, maxEdges);
+  const omittedNodes = allNodes.slice(maxNodes).map((node) => node.id);
+  const omittedEdges = allEdges.slice(maxEdges).map((edge) => edge.id || `${edge.source}\u0000${edge.target}\u0000${edge.type}`);
+  const unavailableEdges = projection.edges.length - allEdges.length;
+  const truncated = omittedNodes.length > 0 || omittedEdges.length > 0 || unavailableEdges > 0;
+  return {
+    ...projection,
+    nodes,
+    edges,
+    display: {
+      bounds: { maxNodes, maxEdges, hardMaxNodes: MAX_VIEW_NODES, hardMaxEdges: MAX_VIEW_EDGES },
+      catalog: {
+        nodes: { total: allNodes.length, returned: nodes.length, omitted: omittedNodes.length, sampleOmittedIds: omittedNodes.slice(0, 12) },
+        edges: { total: projection.edges.length, eligible: allEdges.length, returned: edges.length, omitted: omittedEdges.length, omittedBecauseNodeBound: unavailableEdges, sampleOmittedIds: omittedEdges.slice(0, 12) },
+        truncated,
+        warning: truncated ? "This view is bounded. Use focus, scope, Flow Lens, or a smaller hierarchy level to inspect omitted static evidence." : null,
+      },
+    },
+  };
+}
+
+function agentEntryInventory(graph) {
+  const inventory = graph.analysis?.entryPoints;
+  if (!inventory) return null;
+  const reasonCounts = new Map();
+  for (const entry of inventory.unsupported?.packageScripts || []) {
+    reasonCounts.set(entry.reason, (reasonCounts.get(entry.reason) || 0) + 1);
+  }
+  const scheduleReasonCounts = new Map();
+  for (const entry of inventory.unsupported?.nodeCronSchedules || []) {
+    scheduleReasonCounts.set(entry.reason, (scheduleReasonCounts.get(entry.reason) || 0) + 1);
+  }
+  const frameworkCommandReasonCounts = new Map();
+  for (const entry of inventory.unsupported?.djangoManagementCommands || []) {
+    frameworkCommandReasonCounts.set(entry.reason, (frameworkCommandReasonCounts.get(entry.reason) || 0) + 1);
+  }
+  return {
+    schemaVersion: inventory.schemaVersion || null,
+    supported: {
+      packageScripts: (inventory.supported?.packageScripts || []).map((entry) => ({
+        id: entry.id,
+        manifest: entry.manifest,
+        scriptName: entry.scriptName,
+        runner: entry.runner,
+        targetPath: entry.targetPath,
+        targetId: entry.targetId,
+      })),
+      djangoManagementCommands: (inventory.supported?.djangoManagementCommands || []).map((entry) => ({
+        id: entry.id,
+        path: entry.path,
+        commandName: entry.commandName,
+        targetPath: entry.targetPath,
+        targetId: entry.targetId,
+      })),
+      nodeCronSchedules: (inventory.supported?.nodeCronSchedules || []).map((entry) => ({
+        id: entry.id,
+        path: entry.path,
+        expression: entry.expression,
+        taskName: entry.taskName,
+        targetPath: entry.targetPath,
+        targetId: entry.targetId,
+      })),
+    },
+    unsupported: {
+      packageScriptReasonCounts: Object.fromEntries([...reasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right))),
+      djangoManagementCommandReasonCounts: Object.fromEntries([...frameworkCommandReasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right))),
+      nodeCronScheduleReasonCounts: Object.fromEntries([...scheduleReasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right))),
+    },
+    limitations: inventory.limitations || [],
+  };
+}
+
 function createAgentContext(graph, projection, mode, scope, focusId) {
   const derivedCache = listArtifactCacheAudit(graph.project.root, graph);
   const derivedCacheEvents = (derivedCache.events || []).slice(0, 10);
@@ -192,12 +432,13 @@ function createAgentContext(graph, projection, mode, scope, focusId) {
   const projectionMeaning = mode === "overview"
     ? "Each visible node is a feature summary that aggregates source nodes. It is not a source file, runtime service, or execution step."
     : mode === "requests"
-      ? "Each visible node is a feature summary. Edges aggregate detected HTTP handler, static fetch, import, or usage facts; they do not prove end-to-end runtime execution."
+      ? "Each visible node is a feature summary. Edges aggregate supported static entry, HTTP handler, static fetch, import, or usage facts; they do not prove command invocation or end-to-end runtime execution."
       : "Each visible node is an original graph node. Edges are direct parser facts for the selected node's neighborhood.";
   return {
     schemaVersion: "flowpeek-agent-context/v1",
     mode,
     scope,
+    level: projection.hierarchy?.level || (mode === "dependencies" ? "symbol" : "feature"),
     focusId: focusId || null,
     projection: {
       meaning: projectionMeaning,
@@ -214,7 +455,7 @@ function createAgentContext(graph, projection, mode, scope, focusId) {
     interpretationRules: [
       "Do not treat a feature summary as a source file, service boundary, or runtime call trace.",
       "Do not infer business intent or runtime order from import relationships.",
-      "Use get_request_flows followed by get_flow_projection for a bounded static HTTP/request explanation; inspect a step Context Card before changing code.",
+      "Use get_entry_flows followed by get_flow_projection for a bounded static explanation of a supported HTTP/request, command, or scheduler entry; inspect a step Context Card before changing code.",
       "Use get_flow_context_card to copy or hand off one versioned bounded flow context; resolve its Context Ref before reusing it after a graph refresh.",
       "Flow Lens roles, boundaries, branches, and truncation are derived static metadata, not runtime control flow or side-effect proof.",
       "Semantic flow suggestions are deterministic derived candidates with evidence and abstention; they never constitute or create human verification.",
@@ -230,7 +471,9 @@ function createAgentContext(graph, projection, mode, scope, focusId) {
     calls: graph.analysis.calls,
     resolution: graph.analysis.resolution,
     coverage: graph.analysis.coverage,
+    entryPoints: agentEntryInventory(graph),
     repositoryScope: graph.analysis.repositoryScope,
+    packageSelection: graph.analysis.packageSelection || graph.analysis.scanOutcome?.discovery?.selection || null,
     project: graph.project,
     graphState: graph.state,
     latestDelta: graph.analysis.latestDelta || null,
@@ -329,17 +572,27 @@ function projectView(graph, options = {}) {
   const requestedScope = optionValue(options, "scope", "application");
   const scope = VALID_SCOPES.has(requestedScope) ? requestedScope : "application";
   const focusId = optionValue(options, "focus", null);
+  const requestedLevel = optionValue(options, "level", "feature");
+  const level = mode === "dependencies" ? "symbol" : VALID_VIEW_LEVELS.has(requestedLevel) ? requestedLevel : "feature";
   let projection;
   if (mode === "dependencies") projection = dependencyProjection(graph, scope, focusId);
-  else projection = getOrCreateArtifact(graph.project.root, graph, "feature-summary", { mode, scope }, () => mode === "requests"
-    ? aggregateProjection(graph, requestSourceNodes(graph, scope), mode, scope, overviewFeatureKey)
-    : aggregateProjection(graph, graph.nodes.filter((node) => isVisibleInScope(node, scope)), mode, scope, overviewFeatureKey), { dependencyPaths: ["*"] }).value;
+  else projection = getOrCreateArtifact(graph.project.root, graph, "feature-summary", {
+    mode,
+    scope,
+    level,
+    focusId,
+    // Hierarchy keys deliberately retain every selected ancestor. Keep cached
+    // summaries from the earlier flat-key algorithm out of this projection.
+    semanticHierarchyVersion: 2,
+  }, () => semanticProjection(graph, mode, scope, level, focusId), { dependencyPaths: ["*"] }).value;
+  projection = boundedProjection(projection, options);
   const aiContext = createAgentContext(graph, projection, mode, scope, focusId);
   const availableFlows = scope === "all" ? graph.diagnosticFlows || graph.flows : graph.flows;
   // Flow discovery is uncapped. If pagination is introduced later, this catalog
   // keeps the omission contract visible and deterministic.
   const flows = availableFlows;
   return {
+    schemaVersion: VIEW_PROJECTION_SCHEMA,
     generatedAt: graph.generatedAt,
     project: graph.project,
     stats: graph.stats,
@@ -347,7 +600,9 @@ function projectView(graph, options = {}) {
     edges: projection.edges,
     flows,
     flowCatalog: flowCatalog(availableFlows, flows),
-    view: { mode, scope, focusId, sourceNodeCount: projection.sourceNodeCount, emptyState: projection.emptyState || null },
+    basis: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion, sourceFingerprint: graph.state.sourceFingerprint },
+    display: projection.display,
+    view: { mode, scope, level, focusId, sourceNodeCount: projection.sourceNodeCount, emptyState: projection.emptyState || null, hierarchy: projection.hierarchy || { level, parentFocusId: null } },
     aiContext,
   };
 }
@@ -357,7 +612,7 @@ function findNodes(graph, options = {}) {
   if (!text) return { query: "", results: [] };
   const requestedScope = optionValue(options, "scope", "application");
   const scope = VALID_SCOPES.has(requestedScope) ? requestedScope : "application";
-  const typeRank = { endpoint: 0, route: 1, controller: 2, service: 3, class: 4, function: 5, repository: 6, database: 7, queue: 8, module: 9 };
+  const typeRank = { endpoint: 0, command: 1, schedule: 2, route: 3, controller: 4, service: 5, class: 6, function: 7, repository: 8, database: 9, queue: 10, module: 11 };
   const results = graph.nodes
     .filter((node) => isVisibleInScope(node, scope))
     .filter((node) => [node.label, node.path, node.feature, node.domain, node.type].filter(Boolean).join(" ").toLowerCase().includes(text))
@@ -397,7 +652,7 @@ function attachFlowVerification(graph, lens) {
   const agentSemanticProposal = resolveAgentSemanticProposal(graph.project.root, graph, lens);
   const agentEvidenceTraces = listStoredAgentEvidenceTraces(graph.project.root, graph, { contextId: lens.flow.id, limit: 10 });
   const verification = resolveFlowVerification(graph.project.root, graph, lens, {
-    readDelta: (fromVersion, toVersion) => readGraphDelta(graph.project.root, fromVersion, toVersion),
+    readDelta: (fromVersion, toVersion) => availableGraphDelta(graph, fromVersion, toVersion),
   });
   const flowInterface = createFlowInterface(graph, lens);
   const testRuns = listStoredTestRuns(graph.project.root, graph, { flowId: lens.flow.id, limit: 5 });
@@ -434,7 +689,7 @@ function resolveContextRef(graph, contextRef) {
   return resolveStoredContextRef(graph, contextRef, {
     getNodeDetails,
     getFlowContextCard: (current, flowId) => buildFlowContextCard(current, flowId, "all"),
-    readDelta: (fromVersion, toVersion) => readGraphDelta(graph.project.root, fromVersion, toVersion),
+    readDelta: (fromVersion, toVersion) => availableGraphDelta(graph, fromVersion, toVersion),
   });
 }
 
@@ -457,6 +712,14 @@ function getHandoffContext(graph, input = {}) {
 
 function getArtifactCacheAudit(graph) {
   return listArtifactCacheAudit(graph.project.root, graph);
+}
+
+function getCacheHygiene(graph) {
+  return cacheHygiene(graph.project.root, graph);
+}
+
+function pruneDerivedArtifacts(graph, options = {}) {
+  return pruneArtifactCache(graph.project.root, options);
 }
 
 function getProjectHome(graph, options = {}) {
@@ -534,16 +797,30 @@ function getRelatedTests(graph, id) {
   };
 }
 
-function getRequestFlows(graph, endpoint = "", scope = "application") {
-  const query = endpoint.trim().toLowerCase();
+function getEntryFlows(graph, entry = "", scope = "application") {
+  const query = entry.trim().toLowerCase();
   const availableFlows = scope === "all" ? graph.diagnosticFlows || graph.flows : graph.flows;
   const flows = availableFlows.filter((flow) => !query || flow.title.toLowerCase().includes(query) || flow.entryId.toLowerCase().includes(query));
+  const byFamily = {};
+  for (const flow of flows) {
+    const family = flow.entry?.family || "unknown";
+    byFamily[family] = (byFamily[family] || 0) + 1;
+  }
   return {
-    query: endpoint || null,
+    query: entry || null,
     scope,
     flows,
     flowCatalog: flowCatalog(availableFlows, flows),
-    limitation: "Flow steps are static graph traversal from detected entry points. They do not prove runtime order or dynamic execution.",
+    entryFamilies: byFamily,
+    limitation: "Flow steps are static graph traversal from supported detected entry facts. They do not prove command invocation, runtime order, dynamic execution, or business behavior.",
+  };
+}
+
+function getRequestFlows(graph, endpoint = "", scope = "application") {
+  return {
+    ...getEntryFlows(graph, endpoint, scope),
+    legacyAlias: "get_request_flows",
+    limitation: "This legacy request-flow alias returns all supported static entry flows. Flow steps do not prove command invocation, runtime order, dynamic execution, or business behavior.",
   };
 }
 
@@ -569,7 +846,8 @@ function getSemanticReviewQueue(graph, options = {}) {
       agentProposal: { status: agentProposal.status, candidate: agentProposal.record?.candidate || null, proposedBy: agentProposal.record?.proposedBy || null, provider: agentProposal.record?.provider || null, rationale: agentProposal.record?.rationale || null },
       feedback: { status: feedback.status, decision, reviewedBy: feedback.record?.reviewedBy || null, editedCandidate: feedback.record?.editedCandidate || null, reason: feedback.record?.reason || null },
       sourceEvidence: {
-        endpoint: entry ? { id: entry.id, label: entry.label, path: entry.path, evidence: entry.evidence || null, contextRef: lens.flow.entryContextRef } : null,
+        entry: entry ? { id: entry.id, label: entry.label, path: entry.path, evidence: entry.evidence || null, contextRef: lens.flow.entryContextRef, kind: lens.flow.entry?.kind || "unknown-static-entry" } : null,
+        endpoint: entry?.kind === "endpoint" ? { id: entry.id, label: entry.label, path: entry.path, evidence: entry.evidence || null, contextRef: lens.flow.entryContextRef } : null,
         handler: handler ? { id: handler.id, label: handler.label, path: handler.path, evidence: handler.evidence || null } : null,
         handlerBinding: lens.handlerEvidence?.binding || "unknown",
       },
@@ -580,6 +858,7 @@ function getSemanticReviewQueue(graph, options = {}) {
     schemaVersion: "flowpeek-semantic-review-queue/v1",
     status,
     endpointCount: graph.nodes.filter((node) => node.kind === "endpoint" && (node.sourceScope === "application" || !node.sourceScope)).length,
+    entryCount: flows.length,
     flowCatalog: flowCatalog(flows, flows),
     totalMatched: items.length,
     items,
@@ -702,7 +981,7 @@ function getVerifiedSemanticMemory(graph, options = {}) {
   for (const flow of graph.flows || []) {
     const lens = buildFlowProjection(graph, flow.id, "application");
     if (!lens) continue;
-    const resolution = resolveFlowVerification(graph.project.root, graph, lens, { readDelta: (fromVersion, toVersion) => readGraphDelta(graph.project.root, fromVersion, toVersion) });
+    const resolution = resolveFlowVerification(graph.project.root, graph, lens, { readDelta: (fromVersion, toVersion) => availableGraphDelta(graph, fromVersion, toVersion) });
     if (!resolution.record) continue;
     const reusable = ["current", "compatible"].includes(resolution.status);
     if (!reusable && !includeStale) {
@@ -755,15 +1034,89 @@ function getTestRuns(graph, options = {}) {
   return listStoredTestRuns(graph.project.root, graph, options);
 }
 
+function createWorkRecord(graph, input) { return createStoredWorkRecord(graph.project.root, graph, input); }
+function updateWorkPlan(graph, input) { return updateStoredWorkPlan(graph.project.root, graph, input); }
+function recordWorkEvent(graph, input) { return recordStoredWorkEvent(graph.project.root, graph, input); }
+function listWorkRecords(graph, options = {}) { return listStoredWorkRecords(graph.project.root, graph, options); }
+function getWorkTimeline(graph, recordId = null) { return getStoredWorkTimeline(graph.project.root, graph, recordId); }
+function listWorkflows(graph) { return listStoredWorkflows(graph.project.root); }
+function saveWorkflow(graph, input) { return saveStoredWorkflow(graph.project.root, input); }
+function assignWorkflow(graph, input) { return assignStoredWorkflow(graph.project.root, graph, input); }
+function transitionWorkRecord(graph, input) { return transitionStoredWorkRecord(graph.project.root, graph, input); }
+function getWorkRecordWorkflow(graph, recordId) { return getStoredWorkRecordWorkflow(graph.project.root, graph, recordId); }
+function getWorkDependencyStatus(graph, recordId) { return getStoredWorkDependencyStatus(graph.project.root, graph, recordId); }
+function listWorkDependencyStatuses(graph, options = {}) { return listStoredWorkDependencyStatuses(graph.project.root, graph, options); }
+function createContinuationCheckpoint(graph, input) { return createStoredContinuationCheckpoint(graph.project.root, graph, input); }
+function getContinuationCheckpoint(graph, checkpointId) { return getStoredContinuationCheckpoint(graph.project.root, graph, checkpointId); }
+function listContinuationCheckpoints(graph) { return listStoredContinuationCheckpoints(graph.project.root, graph); }
+function createPlannedOverlay(graph, input) {
+  const result = createStoredPlannedOverlay(graph.project.root, graph, input);
+  const projection = getStoredPlannedOverlay(graph.project.root, graph, result.overlay.id);
+  return { ...result, overlay: projection.overlay, limitation: projection.limitation };
+}
+function getPlannedOverlay(graph, overlayId) { return getStoredPlannedOverlay(graph.project.root, graph, overlayId); }
+function listPlannedOverlays(graph) { return listStoredPlannedOverlays(graph.project.root, graph); }
+function resolvePlanRef(graph, planRef) { return resolveStoredPlanRef(graph.project.root, graph, planRef); }
+function recordPlanReconciliation(graph, input) {
+  const result = recordStoredPlanReconciliation(graph.project.root, graph, input);
+  const projection = getStoredPlanReconciliation(graph.project.root, graph, result.reconciliation.id);
+  return { ...result, reconciliation: projection.reconciliation, limitation: projection.limitation };
+}
+function getPlanReconciliation(graph, reconciliationId) { return getStoredPlanReconciliation(graph.project.root, graph, reconciliationId); }
+function listPlanReconciliations(graph, options) { return listStoredPlanReconciliations(graph.project.root, graph, options); }
+function getContinuationComparison(graph, options) { return compareStoredContinuation(graph.project.root, graph, options); }
+function getCheckpointDivergence(graph, checkpointId) { return getStoredCheckpointDivergence(graph.project.root, graph, checkpointId); }
+function getContinuationContext(graph, input) { return buildContinuationContext(graph.project.root, graph, input, { resolveContextRef: (contextRef) => resolveContextRef(graph, contextRef) }); }
+function getActiveBranchGitEvidence(graph, contextRef, options = {}) {
+  return buildActiveBranchGitEvidence(graph.project.root, graph, contextRef, {
+    ...options,
+    resolution: resolveContextRef(graph, contextRef),
+  });
+}
+function getGitContextContinuity(graph, contextRef, options = {}) {
+  return buildGitContextContinuity(graph.project.root, graph, contextRef, {
+    ...options,
+    resolution: resolveContextRef(graph, contextRef),
+  });
+}
+
 function contextVersion(value, fallback) {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+function isPersistentGraphDeltaAvailable(graph) {
+  return Boolean(graph?.project?.projectId)
+    && graph.analysis?.cacheState?.status !== "disabled"
+    && graph.project?.identity?.source !== "session"
+    && !String(graph.project.projectId).startsWith("session:");
+}
+
+function matchingGraphDelta(graph, delta) {
+  return delta?.projectId === graph?.project?.projectId ? delta : null;
+}
+
+function availableGraphDelta(graph, fromGraphVersion, toGraphVersion) {
+  const current = graph.analysis?.latestDelta;
+  if (current?.projectId === graph.project.projectId
+    && current.fromGraphVersion === fromGraphVersion
+    && current.toGraphVersion === toGraphVersion) return current;
+  if (!isPersistentGraphDeltaAvailable(graph)) return null;
+  return matchingGraphDelta(graph, readGraphDelta(graph.project.root, fromGraphVersion, toGraphVersion));
+}
+
+function latestAvailableGraphDelta(graph) {
+  const current = graph.analysis?.latestDelta;
+  if (current?.projectId === graph.project.projectId
+    && current.toGraphVersion === graph.state?.graphVersion) return current;
+  if (!isPersistentGraphDeltaAvailable(graph)) return null;
+  return matchingGraphDelta(graph, readLatestGraphDelta(graph.project.root, graph.state?.graphVersion));
+}
+
 function getChangedContexts(graph, options = {}) {
   const toGraphVersion = contextVersion(optionValue(options, "toVersion", graph.state.graphVersion), graph.state.graphVersion);
   const fromGraphVersion = contextVersion(optionValue(options, "fromVersion", toGraphVersion - 1), toGraphVersion - 1);
-  const delta = readGraphDelta(graph.project.root, fromGraphVersion, toGraphVersion);
+  const delta = availableGraphDelta(graph, fromGraphVersion, toGraphVersion);
   const base = {
     schemaVersion: "flowpeek-changed-contexts/v1",
     project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion, sourceRevision: graph.state.sourceRevision || null },
@@ -840,7 +1193,7 @@ function getChangedContexts(graph, options = {}) {
 function getFlowComparison(graph, flowId, options = {}) {
   const toGraphVersion = contextVersion(optionValue(options, "toVersion", graph.state.graphVersion), graph.state.graphVersion);
   const fromGraphVersion = contextVersion(optionValue(options, "fromVersion", toGraphVersion - 1), toGraphVersion - 1);
-  const delta = readGraphDelta(graph.project.root, fromGraphVersion, toGraphVersion);
+  const delta = availableGraphDelta(graph, fromGraphVersion, toGraphVersion);
   return flowComparisonResult(graph, delta, flowId);
 }
 
@@ -857,59 +1210,6 @@ function impactNode(node, distance, relationship = distance === 0 ? "changed" : 
 
 function dependencyNode(node, distance) {
   return { ...memberSummary(node), distance, relationship: distance === 0 ? "changed" : "dependency" };
-}
-
-function graphEdgeKey(edge) {
-  return `${edge.source}\u0000${edge.target}\u0000${edge.type}`;
-}
-
-function graphEdgeSummary(edge, nodesById) {
-  return {
-    type: edge.type,
-    confidence: edge.confidence,
-    source: memberSummary(nodesById.get(edge.source)),
-    target: memberSummary(nodesById.get(edge.target)),
-  };
-}
-
-function getGraphDelta(previousGraph, graph, options = {}) {
-  const limit = Math.min(Math.max(Number(options.limit) || 100, 1), 500);
-  if (!previousGraph) {
-    return {
-      available: false,
-      limitation: "No previous in-process graph is available for comparison. Refresh once after the MCP server starts or after a prior refresh.",
-    };
-  }
-  const previousNodes = new Map(previousGraph.nodes.map((node) => [node.id, node]));
-  const currentNodes = new Map(graph.nodes.map((node) => [node.id, node]));
-  const previousEdges = new Map(previousGraph.edges.map((edge) => [graphEdgeKey(edge), edge]));
-  const currentEdges = new Map(graph.edges.map((edge) => [graphEdgeKey(edge), edge]));
-  const addedNodeIds = [...currentNodes.keys()].filter((id) => !previousNodes.has(id)).sort();
-  const removedNodeIds = [...previousNodes.keys()].filter((id) => !currentNodes.has(id)).sort();
-  const addedEdgeKeys = [...currentEdges.keys()].filter((key) => !previousEdges.has(key)).sort();
-  const removedEdgeKeys = [...previousEdges.keys()].filter((key) => !currentEdges.has(key)).sort();
-  return {
-    available: true,
-    compared: {
-      projectId: graph.project?.projectId || null,
-      previousGraphVersion: previousGraph.state?.graphVersion ?? null,
-      graphVersion: graph.state?.graphVersion ?? null,
-      previousGeneratedAt: previousGraph.generatedAt,
-      generatedAt: graph.generatedAt,
-    },
-    summary: {
-      addedNodes: addedNodeIds.length,
-      removedNodes: removedNodeIds.length,
-      addedEdges: addedEdgeKeys.length,
-      removedEdges: removedEdgeKeys.length,
-    },
-    addedNodes: addedNodeIds.slice(0, limit).map((id) => memberSummary(currentNodes.get(id))),
-    removedNodes: removedNodeIds.slice(0, limit).map((id) => memberSummary(previousNodes.get(id))),
-    addedEdges: addedEdgeKeys.slice(0, limit).map((key) => graphEdgeSummary(currentEdges.get(key), currentNodes)),
-    removedEdges: removedEdgeKeys.slice(0, limit).map((key) => graphEdgeSummary(previousEdges.get(key), previousNodes)),
-    truncated: addedNodeIds.length > limit || removedNodeIds.length > limit || addedEdgeKeys.length > limit || removedEdgeKeys.length > limit,
-    limitation: "This compares only Flowpeek graph topology in the current MCP process. Unchanged IDs can still have source edits, and this is not a source diff, Git diff, or runtime behavior diff.",
-  };
 }
 
 function indexNodesByPath(graph) {
@@ -1069,7 +1369,10 @@ module.exports = {
   VALID_SCOPES,
   findNodes,
   getAgentBootstrap,
+  getActiveBranchGitEvidence,
+  getGitContextContinuity,
   getArtifactCacheAudit,
+  getCacheHygiene,
   getContextCard,
   getNodeDetails,
   getProjectHome,
@@ -1080,6 +1383,8 @@ module.exports = {
   getRelatedTests,
   getChangeImpact,
   getGraphDelta,
+  availableGraphDelta,
+  latestAvailableGraphDelta,
   getChangedContexts,
   getFlowComparison,
   getFlowContextCard,
@@ -1088,6 +1393,31 @@ module.exports = {
   getFlowVerification,
   getVerifiedSemanticMemory,
   getTestRuns,
+  createWorkRecord,
+  updateWorkPlan,
+  recordWorkEvent,
+  listWorkRecords,
+  getWorkTimeline,
+  listWorkflows,
+  saveWorkflow,
+  assignWorkflow,
+  transitionWorkRecord,
+  getWorkRecordWorkflow,
+  getWorkDependencyStatus,
+  listWorkDependencyStatuses,
+  createContinuationCheckpoint,
+  getContinuationCheckpoint,
+  listContinuationCheckpoints,
+  createPlannedOverlay,
+  getPlannedOverlay,
+  listPlannedOverlays,
+  resolvePlanRef,
+  recordPlanReconciliation,
+  getPlanReconciliation,
+  listPlanReconciliations,
+  getContinuationComparison,
+  getCheckpointDivergence,
+  getContinuationContext,
   getFlowVerificationHistory: getFlowVerificationHistoryForGraph,
   getDurableBrief,
   getHandoffContext,
@@ -1095,6 +1425,7 @@ module.exports = {
   getAgentEvidenceTraces,
   getAgentSemanticProposal,
   getSemanticSuggestionFeedback,
+  getEntryFlows,
   getRequestFlows,
   getSemanticReviewQueue,
   listSemanticSuggestionFeedback,
@@ -1105,6 +1436,7 @@ module.exports = {
   exportHandoffWorkspace,
   importHandoffWorkspace,
   projectView,
+  pruneDerivedArtifacts,
   recordAgentEvidenceTrace,
   recordAgentSemanticProposal,
   recordRuntimeEvidence,

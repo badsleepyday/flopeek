@@ -8,6 +8,9 @@ const FIXTURES_ROOT = path.join(__dirname, "fixtures");
 
 function nodeReference(node) {
   if (node.kind === "endpoint") return `endpoint:${node.label}`;
+  if (node.kind === "command" && node.entryKind === "django-management-command") return `command:${node.path}:${node.commandName}`;
+  if (node.kind === "command") return `command:${node.manifest}:${node.scriptName}`;
+  if (node.kind === "schedule") return `schedule:${node.path}:${node.taskName}`;
   if (node.kind === "external") return `external:${node.label}`;
   if (node.kind === "symbol") return `symbol:${node.path}:${node.type}:${node.label}`;
   return `file:${node.path}`;

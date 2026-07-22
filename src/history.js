@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
-const { getGraphDelta } = require("./graph-service");
+const { getGraphDelta } = require("./graph-delta");
 const { scanRepository } = require("./scanner");
 const { resolveProjectIdentity } = require("./project-identity");
 
@@ -70,15 +70,99 @@ function writeSnapshot(root, snapshot) {
   return target;
 }
 
+function tarText(buffer, offset, width) {
+  const end = buffer.indexOf(0, offset);
+  return buffer.subarray(offset, end < 0 || end > offset + width ? offset + width : end).toString("utf8");
+}
+
+function tarOctal(buffer, offset, width) {
+  const value = tarText(buffer, offset, width).trim();
+  if (!value) return 0;
+  if (!/^[0-7]+$/.test(value)) throw new Error("Git archive contains an invalid tar size.");
+  return Number.parseInt(value, 8);
+}
+
+function parsePax(buffer) {
+  const values = {};
+  let offset = 0;
+  while (offset < buffer.length) {
+    const separator = buffer.indexOf(0x20, offset);
+    if (separator < 0) throw new Error("Git archive contains an invalid PAX header.");
+    const recordLength = Number.parseInt(buffer.subarray(offset, separator).toString("ascii"), 10);
+    if (!Number.isSafeInteger(recordLength) || recordLength <= separator - offset + 1 || offset + recordLength > buffer.length) {
+      throw new Error("Git archive contains an invalid PAX record length.");
+    }
+    const record = buffer.subarray(separator + 1, offset + recordLength).toString("utf8");
+    const equals = record.indexOf("=");
+    if (equals > 0) values[record.slice(0, equals)] = record.slice(equals + 1).replace(/\n$/, "");
+    offset += recordLength;
+  }
+  return values;
+}
+
+function snapshotDestination(root, rawPath) {
+  if (!rawPath || rawPath.includes("\0") || rawPath.includes("\\") || rawPath.includes(":")) throw new Error("Git archive contains an unsafe path.");
+  const normalized = path.posix.normalize(rawPath);
+  if (normalized === "." || normalized === ".." || normalized.startsWith("../") || path.posix.isAbsolute(normalized)) {
+    throw new Error("Git archive contains an unsafe path.");
+  }
+  const destination = path.resolve(root, ...normalized.split("/"));
+  const relative = path.relative(root, destination);
+  if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error("Git archive contains an unsafe path.");
+  }
+  return destination;
+}
+
+function extractGitArchive(archive, temporaryRoot) {
+  let offset = 0;
+  let globalPax = {};
+  let nextPax = null;
+  while (offset + 512 <= archive.length) {
+    const header = archive.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const size = tarOctal(header, 124, 12);
+    const payloadStart = offset + 512;
+    const payloadEnd = payloadStart + size;
+    if (payloadEnd > archive.length) throw new Error("Git archive ended before a tar entry was complete.");
+    const payload = archive.subarray(payloadStart, payloadEnd);
+    const type = String.fromCharCode(header[156] || 48);
+    const name = tarText(header, 0, 100);
+    const prefix = tarText(header, 345, 155);
+    const headerPath = prefix ? `${prefix}/${name}` : name;
+    offset = payloadStart + Math.ceil(size / 512) * 512;
+
+    if (type === "g") {
+      globalPax = { ...globalPax, ...parsePax(payload) };
+      continue;
+    }
+    if (type === "x") {
+      nextPax = parsePax(payload);
+      continue;
+    }
+
+    const metadata = { ...globalPax, ...(nextPax || {}) };
+    nextPax = null;
+    const destination = snapshotDestination(temporaryRoot, metadata.path || headerPath);
+    if (type === "5") {
+      fs.mkdirSync(destination, { recursive: true });
+      continue;
+    }
+    if (type === "0" || type === "\0") {
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.writeFileSync(destination, payload);
+    }
+  }
+}
+
 function scanCommit(root, commit) {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-git-snapshot-"));
-  const archivePath = path.join(temporaryRoot, "source.tar");
   try {
+    // Extract Git's own archive in-process. Windows tar implementations can
+    // treat C:\\temp as a remote target, while an in-process extractor keeps the
+    // snapshot read-only and never checks out the caller's working tree.
     const archive = git(root, ["archive", "--format=tar", commit.revision], { maxBuffer: MAX_ARCHIVE_BYTES });
-    fs.writeFileSync(archivePath, archive);
-    const tar = process.platform === "win32" ? "tar.exe" : "tar";
-    execFileSync(tar, ["-xf", archivePath, "-C", temporaryRoot], { stdio: ["ignore", "pipe", "pipe"], maxBuffer: MAX_ARCHIVE_BYTES });
-    fs.rmSync(archivePath, { force: true });
+    extractGitArchive(archive, temporaryRoot);
     const graph = scanRepository(temporaryRoot);
     const identity = resolveProjectIdentity(root);
     graph.project = {

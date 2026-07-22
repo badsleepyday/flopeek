@@ -32,8 +32,8 @@ const adapters = [
   },
   {
     id: "python", languages: ["python"], extensions: [".py"], parser: "python-lezer", availability: "bundled", requiredToolchain: null,
-    capabilities: { structure: "exact-static", imports: "supported-subset", directCalls: "supported-subset", frameworkFacts: ["literal HTTP decorators", "Flask and Blueprint literal routes"] },
-    resolverCapabilities: ["relative and src-package imports"], evidenceClass: "exact-static", limitations: ["Attribute calls, dynamic dispatch, and dynamic decorator configuration are unsupported."],
+    capabilities: { structure: "exact-static", imports: "supported-subset", directCalls: "supported-subset", frameworkFacts: ["literal HTTP decorators", "Flask and Blueprint literal routes", "narrow Django management command declarations"] },
+    resolverCapabilities: ["relative and src-package imports"], evidenceClass: "exact-static", limitations: ["Attribute calls, dynamic dispatch, dynamic decorator configuration, Django app registration, settings loading, and indirect management-command base classes are unsupported."],
   },
   {
     id: "rust", languages: ["rust"], extensions: [".rs"], parser: "tree-sitter-rust", availability: "bundled", requiredToolchain: null,
@@ -47,7 +47,7 @@ const adapters = [
   },
   {
     id: "typescript", languages: ["javascript", "jsx", "tsx", "typescript"], extensions: [".cjs", ".js", ".jsx", ".mjs", ".ts", ".tsx"], parser: "typescript-ast", availability: "bundled", requiredToolchain: null,
-    capabilities: { structure: "exact-static", imports: "exact-static", directCalls: "supported-subset", frameworkFacts: ["Express", "Fastify", "NestJS", "Next.js", "Prisma", "TypeORM", "Drizzle", "BullMQ"] },
+    capabilities: { structure: "exact-static", imports: "exact-static", directCalls: "supported-subset", frameworkFacts: ["Express", "Fastify", "NestJS", "Next.js", "Prisma", "TypeORM", "Drizzle", "BullMQ", "node-cron module-scope literal default-import schedules"] },
     resolverCapabilities: ["relative paths", "tsconfig/jsconfig paths", "static Vite/Webpack aliases", "package imports/exports", "npm/pnpm workspaces", "Yarn PnP JSON"], evidenceClass: "exact-static", limitations: ["Dynamic imports, general method dispatch, callbacks, dependency injection, reflection, and runtime loading are unsupported."],
   },
 ];

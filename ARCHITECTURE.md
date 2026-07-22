@@ -40,14 +40,15 @@ Developer or agent --> Flowpeek local process --> target repository
        |                    +-- scanner + resolvers
        |                    +-- graph/cache/history
        |                    +-- projection/context services
-       |                    +-- workflow/evidence services (target)
+       |                    +-- workflow/evidence services (current foundation)
+       |                    +-- continuation/plan/reconciliation services (target)
        |
        +-- CLI
        +-- local viewer on 127.0.0.1
        +-- MCP over stdio
 ```
 
-Source analysis does not modify source code. Normal cache-enabled commands write only Flowpeek cache and metadata under `.flowpeek/`; `scan --no-cache` and `impact --no-cache` do not create cache or project-identity metadata. No target application code is executed unless a separately configured external integration explicitly does so.
+Source analysis does not modify source code. Normal cache-enabled commands write only Flowpeek cache and metadata under `.flowpeek/`; `scan --no-cache` and `impact --no-cache` do not create cache or project-identity metadata. A `--package <relative/path>` scan is also session-only: it cannot read or replace the repository-wide cache because a static package subtree is not a repository-wide graph. No target application code is executed unless a separately configured external integration explicitly does so.
 
 ## Current implementation
 
@@ -69,6 +70,9 @@ Status: `current`
 | Module | Current responsibility |
 | --- | --- |
 | `src/cli.js` | Argument parsing, command dispatch, terminal output, optional browser launch. |
+| `src/repository-discovery.js` | Read-only candidate-source, manifest, scope, adapter-demand, resource-bound, and inventory-fingerprint preflight. It can select one validated local package path as a static subtree while retaining ancestor resolver controls. |
+| `src/bounded-scan.js` and `src/bounded-scan-worker.js` | Shared bounded analysis envelope for CLI, Viewer/HTTP/SSE, workspace, and MCP surfaces: worker isolation, discovery-plan binding, post-analysis inventory verification, cancellation outcome, complete-result-only graph delivery, and explicit package-scope evidence. |
+| `src/scan-coordinator.js` | Shared scan lifecycle, terminal outcome, concurrency guard, last-complete fallback, session freshness, and complete-result-only cache promotion across product surfaces. Package scope forces an ephemeral bounded session. |
 | `src/scanner.js` | Repository walk, language parsing, configuration resolution, graph construction, incremental fact cache, Mermaid export, and human descriptions. |
 | `src/adapter-registry.js` | Versioned declarative adapter capability contract, validated independently from repository parse coverage. |
 | `src/graph-schema.js` | Graph schema v5 validation, compatible-v4 migration harness, and cache contract diagnostics. |
@@ -86,7 +90,8 @@ Status: `current`
 | `src/serve-workspace.js` | Machine-local serve-instance registry and deterministic workspace identity derived from project identity. |
 | `src/workspace-server.js` | One user-facing multi-project hub port, project activation/selection, explicit current-context cross-project contract references, persistent machine-local project tree, and proxying to isolated per-project graph services. |
 | `src/workspace-contract-reference.js` | Strict machine-local append-only store for explicit human cross-project Flow Context Ref snapshots and current/stale/unavailable resolution. |
-| `src/flow-lens.js` | Bounded HTTP/request Flow Lens projection with derived roles, deterministic edge evidence references, static boundaries, branches, and limits. |
+| `src/flow-entry.js` | Versioned static entry contracts for extracted HTTP requests, narrow literal package scripts, narrow Django management-command declarations, and narrow literal `node-cron` schedule registrations. |
+| `src/flow-lens.js` | Bounded Flow Lens projection for supported static entries with derived roles, deterministic edge evidence references, static boundaries, branches, and limits. |
 | `src/flow-interface.js` | Honest per-flow boundary projection: method, route, exact handler, related tests, and one handler-bound Next.js literal-contract pilot; dynamic/unsupported payload-response forms remain explicit unavailable. |
 | `src/flow-comparison.js` | Retained bounded before/current Flow Lens snapshots and deterministic adjacent-delta comparison. |
 | `src/flow-context-card.js` | Portable flow Context Card construction from one bounded Flow Lens and direct related-test evidence. |
@@ -94,6 +99,8 @@ Status: `current`
 | `src/agent-semantic-proposal.js` | Immutable current-Context-Ref provider/agent proposal overlays that remain unverified until a person acts. |
 | `src/agent-evidence-trace.js` | Append-only agent-declared Context Ref, action, changed-path, and verification audit metadata. |
 | `src/test-run-journal.js` | Append-only sanitized runner-adapter progress events with validated Flow Lens step transitions and explicit terminal state. |
+| `src/delivery-graph.js` | Local, atomically persisted work-record plans and append-only actual delivery events, each scoped to one project and optional Context Refs. |
+| `src/workflow-engine.js` | Versioned Agile, Waterfall, and validated custom workflow definitions; derives local work state and bounded declared dependency readiness from append-only events, rejects transitions missing declared evidence kinds, and blocks only built-in implementation entry when dependencies are not locally ready. |
 | `src/trust-analytics.js` | Read-only aggregation of independent evidence availability, provenance, denominators, and freshness with explicit non-claims and no composite score. |
 | `src/product-proof.js` | Validates pinned public benchmark evidence, combines it with current-repository facts and an optional explicit local benchmark, and preserves public claim boundaries. |
 | `src/agent-bootstrap.js` | Builds the provider-independent bootstrap contract that names graph identity, readiness, parser coverage, safe workflow, and evidence limits without source bodies or machine paths. |
@@ -138,15 +145,17 @@ Status: `current`
 - Published precision/recall remains scoped to declared audited relationships. Published timings remain host- and revision-specific.
 - Product proof never becomes a live-repository accuracy score, a release gate, or a replacement for Trust Analytics evidence classes.
 | `src/history.js` | Static Git archive snapshots and topology/flow comparison. |
+| `src/active-branch-git-evidence.js` | Bounded read-only active-branch path-touch Git evidence for a resolved current/stale Context Ref. |
+| `src/git-context-continuity.js` | Read-only two-snapshot Context Ref continuity projection with exact static identities and bounded same-path candidates. |
 | `src/benchmark.js` | Full-versus-incremental local benchmark. |
 | `src/real-repository-corpus.js` | Pinned external-repository audit runner with per-repository process bounds, progress, and structured partial results. |
 | `public/` | Framework-free browser viewer using Cytoscape.js and Dagre. |
 
 ### Current Viewer rendering
 
-The Viewer renders bounded server projections; it does not query or reconstruct the repository independently. Cytoscape handles interaction and Dagre provides the initial layout. A focused node applies directional classes to incoming edges, the selected node, and outgoing edges. Shape, border, text, and a persistent legend repeat the meaning so color is never the only signal. Unrelated edges are dimmed and relationship labels appear only in focused context to keep dense maps readable. The graph stage continues to label the map as static evidence.
+The Viewer renders bounded server projections; it does not query or reconstruct the repository independently. Semantic zoom derives Domain, Feature, Component, and Symbol summaries from the same factual graph. Its derived hierarchy ids retain every selected ancestor, so a drill-down cannot broaden into a same-named peer in another domain; summary nodes remain explicitly derived rather than source or runtime facts. Cytoscape's Canvas renderer handles supported interaction and Dagre provides the initial layout. A local explicit WebGL preview can render the same bounded projection with Bezier edges; it remains an experimental evaluation path and automatically falls back to Canvas if unavailable. A focused node applies directional classes to incoming edges, the selected node, and outgoing edges. Shape, border, text, and a persistent legend repeat the meaning so color is never the only signal. Unrelated edges are dimmed and relationship labels appear only in focused context to keep dense maps readable. The graph stage continues to label the map as static evidence.
 
-GraphQL is not part of the rendering stack. It is an API query language, while Flowpeek already has bounded HTTP and MCP contracts for graph retrieval. Adding it would not improve node layout or evidence semantics by itself.
+WebGL is available only as a local preview option for dense projections; Canvas remains the supported backend. A default-renderer change must first demonstrate better interaction latency and memory behavior on pinned dense graphs while preserving label readability, semantic zoom, directional focus, keyboard-accessible navigation outside the canvas, screenshots, and evidence selection parity. Renderer throughput cannot justify sending or displaying an unbounded repository graph. See [ADR-018](docs/adr/ADR-018-bounded-webgl-preview.md).
 
 ### Current scan pipeline
 
@@ -161,12 +170,61 @@ repository root
   -> create file, symbol, endpoint, runtime, and external facts
   -> resolve supported internal imports and direct calls
   -> build nodes and evidence edges
-  -> build bounded HTTP/request flows
+  -> build bounded supported static-entry flows
   -> summarize repository parse coverage and registry capabilities
   -> optionally write .flowpeek/graph.json
 ```
 
 The target repository's code and configuration are not executed. Some optional language adapters compile and run a local helper against source text, not the target application.
+
+An optional bounded CLI path adds a read-only discovery contract before parsing:
+
+```text
+flowpeek discover
+  -> inventory candidate source and static manifests
+  -> classify scope and adapter demand
+  -> calculate an opaque source-plan and resolver-control fingerprint
+  -> report whether declared time/file/byte bounds permit analysis
+
+flowpeek scan --budget-ms/--max-files/--max-bytes
+  -> run the exact discovered source plan in a worker
+  -> verify the same immutable plan after analysis
+  -> re-read only planned directories plus source/resolver-control candidates
+  -> return a complete graph only when the inventory still matches
+  -> never promote a bounded, cancelled, invalidated, or failed graph
+```
+
+The shared scan coordinator now wraps CLI bounded scans, local-server startup and
+watcher refresh, Viewer/HTTP/SSE status, and MCP refresh:
+
+```text
+scan request
+  -> publish one flowpeek-scan-outcome/v1 operation
+  -> expose running phase and declared bounds
+  -> activate a complete current graph only after successful analysis
+  -> otherwise retain the last complete graph as stale-unverified
+  -> never promote incomplete evidence
+  -> permit explicit cancellation only while bounded worker analysis is active
+```
+
+Cache-disabled coordinator sessions use a process-local project identity and
+monotonic graph versions. Their adjacent deltas can detect stale Context Refs
+inside that session, but are not durable or interchangeable with another
+process. Bounded mode still performs full planned analysis per refresh; parser
+fact reuse remains available only in the unbounded in-process scanner.
+Worker termination prevents graph result promotion, but cleanup of optional
+adapter child processes has not yet been demonstrated across operating systems.
+Discovery creates one immutable plan. Analysis consumes its exact source paths;
+verification re-reads the plan's directories and relevant source/control entries
+to reject added directories or changed source inventory without repeating
+workspace, adapter, manifest, scope-report, or limit discovery.
+Its fingerprint records path, size, and modification-time metadata, not source
+content. A rewrite that deliberately preserves both size and timestamp is
+outside this mutation detector's evidence boundary.
+A candidate repository switch is scanned transactionally: it publishes no
+active-project progress unless accepted. Cache-disabled sessions use their own
+process-local graph identity and may resolve only their matching in-memory
+adjacent delta; they never fall back to durable delta storage from the same path.
 
 ### Current incremental pipeline
 
@@ -270,16 +328,16 @@ The exact set varies by adapter. Absence of an edge does not prove absence of ru
 
 ### Current flow model
 
-`buildFlows()` selects extracted endpoint nodes only. Route/controller nodes without endpoint evidence remain technical nodes and are available through overview, search, and dependency views; they do not become HTTP/request Flow Lenses. Each endpoint traversal is bounded:
+`buildFlows()` selects supported static entries: extracted HTTP endpoints, literal `package.json` scripts with exactly one supported runner and one repository-local scanned source target, Django `management/commands/<name>.py` modules with one top-level `Command` class directly extending the imported `django.core.management.base.BaseCommand` binding and one direct `handle` method, and module-scope default-import `node-cron` `schedule()` calls with one safe literal cron expression and one exact local top-level function target. Route/controller nodes plus unsupported scripts, framework command forms, or scheduler registrations remain technical nodes or machine-readable unsupported-entry inventory; they do not become Flow Lenses by fallback. Each entry traversal is bounded:
 
-- at most 50 entry points;
+- no silent entry-count cap; a surface that paginates must expose returned and omitted entry IDs;
 - at most 24 steps per flow;
 - maximum depth 6;
 - test-layer steps are omitted.
 
-The stored flow remains a compact scanner traversal containing node ID, label, type, and depth. `src/flow-lens.js` projects one stored HTTP/request flow into `flowpeek-flow-lens/v1` without changing parser facts. It adds a graph-versioned entry, derived role per displayed step, Context Ref, deterministic edge evidence reference, bounded fan-out, supported static persistence/queue/external boundaries, ambiguity, and truncation metadata. `src/flow-lens-options.js` owns the shared strict display contract: 12 steps by default, an integer range of 1 through 24, and no silent clamping.
+The stored flow remains a compact scanner traversal containing node ID, label, type, depth, and a `flowpeek-static-flow-entry/v1` entry contract. `src/flow-entry.js` defines the contract. `src/flow-lens.js` projects one stored flow into `flowpeek-flow-lens/v1` without changing parser facts. HTTP entries retain handler evidence; package scripts begin with an exact `declares-command-target` transition and retain only manifest, script, runner, and target declaration fields; the Django subset begins with the same exact declaration edge to its `Command` class and retains only adapter, command name, and target declaration fields; the narrow `node-cron` subset begins with an exact `schedules` transition and retains only adapter, literal schedule expression, local task name, and target declaration fields. The projection adds a graph-versioned entry, derived role per displayed step, Context Ref, deterministic edge evidence reference, bounded fan-out, supported static persistence/queue/external boundaries, ambiguity, and truncation metadata. `src/flow-lens-options.js` owns the shared strict display contract: 12 steps by default, an integer range of 1 through 24, and no silent clamping.
 
-The Flow Lens does not infer runtime order, branch conditions, control flow, business process, successful side effects, or flow-level human verification. `src/semantic-flow-suggestion.js` adds `flowpeek-semantic-flow-suggestion/v1` as a deterministic derived layer over literal HTTP entry, displayed roles, direct transitions, and static boundaries. It produces evidence-backed candidate fields or explicit abstention and never creates human verification. Raw node Context Cards remain the step-level evidence drill-down. `src/flow-context-card.js` packages the same suggestion with one current bounded Flow Lens as `kind: flow` in `flowpeek-context/v1`. Viewer, HTTP, MCP, JSON packets, and Markdown packets propagate the same requested limit and report requested, displayed, source, and truncation-reason metadata. Derived-cache keys include `flowId`, scope, and validated limit, so compact and expanded projections cannot alias.
+The Flow Lens does not infer command invocation, Django app registration or settings loading, scheduler initialization, task timing or execution, runtime order, branch conditions, control flow, business process, successful side effects, or flow-level human verification. `src/semantic-flow-suggestion.js` adds `flowpeek-semantic-flow-suggestion/v1` as a deterministic derived layer over literal HTTP entry, displayed roles, direct transitions, and static boundaries. It explicitly abstains for package-script, framework-command, and scheduler entries and never creates human verification. Raw node Context Cards remain the step-level evidence drill-down. `src/flow-context-card.js` packages the same suggestion with one current bounded Flow Lens as `kind: flow` in `flowpeek-context/v1`. Viewer, HTTP, MCP, JSON packets, and Markdown packets propagate the same requested limit and report requested, displayed, source, and truncation-reason metadata. Derived-cache keys include `flowId`, scope, and validated limit, so compact and expanded projections cannot alias.
 
 When an adjacent persisted delta affects a flow, `src/flow-comparison.js` retains only that flow's bounded Flow Lens snapshots (up to 12 affected flows and the Flow Lens step bound). `flowpeek-flow-comparison/v1` compares the retained before/current snapshots by step membership, depth, parser-edge transition IDs, displayed node metadata, and known changed source steps. It can distinguish a source-only change from a bounded static-structure change, but it cannot reconstruct an uncaptured historical flow, source contents, runtime history, or a historical Context Card.
 
@@ -288,7 +346,7 @@ When an adjacent persisted delta affects a flow, `src/flow-comparison.js` retain
 The viewer/API offers three map modes:
 
 - feature overview;
-- request map;
+- entry map (legacy `requests` mode);
 - direct dependencies.
 
 Scopes separate application, runtime, framework, devtool, and broader inventory views. Aggregate nodes and edges are explicitly marked as derived.
@@ -323,7 +381,8 @@ The server binds to `127.0.0.1` and provides:
 | GET | `/api/search` | Deterministic node search. |
 | GET | `/api/project` | Project metadata. |
 | GET | `/api/flows` | Current detected flows. |
-| GET | `/api/flow-lens` | One bounded evidence-rich static HTTP/request flow. |
+| GET | `/api/entry-flows` | Supported current entry flows, grouped by static entry family. |
+| GET | `/api/flow-lens` | One bounded evidence-rich static flow from a supported entry. |
 | GET | `/api/flow-suggestion` | The same deterministic semantic suggestion or abstention exposed by the selected Flow Lens. |
 | GET | `/api/semantic-suggestion-feedback` | Current immutable feedback resolution for one Flow Lens suggestion. |
 | GET/POST | `/api/agent-semantic-proposal`, `/api/agent-semantic-proposals` | Read or append an unverified provider/agent draft bound to the current Flow Context Ref. |
@@ -336,6 +395,8 @@ The server binds to `127.0.0.1` and provides:
 | GET | `/api/flow-comparison` | One retained adjacent before/current Flow Lens comparison, when captured. |
 | GET | `/api/changed-contexts` | Bounded node and Flow Lens contexts affected by one retained adjacent delta. |
 | GET | `/api/history` | Static Git graph comparison. |
+| GET | `/api/active-branch-git-evidence` | Bounded read-only active-branch commits touching current Context Card paths. |
+| GET | `/api/git-context-continuity` | One current/stale Context Ref compared across two static Git snapshots. |
 | GET | `/api/impact` | Static impact traversal. |
 | GET | `/api/export/mermaid` | Mermaid representation. |
 | GET | `/api/node` | Raw node evidence and direct relationships. |
@@ -371,6 +432,11 @@ Hub-only endpoints are `GET /api/workspace/contracts`, `GET /api/workspace/contr
 
 ### Current SSE contract
 
+The `scan-status` event exposes the same operation ID, running phase, declared
+bounds, terminal result, active complete-graph source, freshness, and
+cache-promotion state returned by HTTP and MCP. The `ready` event includes the
+current terminal outcome. A non-complete event never carries a partial graph.
+
 The graph event contains:
 
 - `generatedAt`;
@@ -389,10 +455,13 @@ The browser reloads its current projection after the event and preserves a selec
 MCP is read-only with respect to repository source. Current tools:
 
 - `get_agent_bootstrap`;
+- `get_scan_status`;
+- `cancel_scan`;
 - `get_project_overview`;
 - `find_nodes`;
 - `get_node`;
 - `get_direct_dependencies`;
+- `get_entry_flows`;
 - `get_request_flows`;
 - `get_flow_projection`;
 - `get_semantic_suggestion_feedback`;
@@ -445,6 +514,9 @@ The generated skill is an adapter for using Flowpeek, not a developer persona te
 │   └── events.json
 ├── runtime-evidence/
 │   └── records.json
+├── delivery/
+│   ├── workflows.json
+│   └── work-records.json
 ├── deltas/
 │   └── <from>-<to>.json
 └── history/
@@ -455,7 +527,7 @@ The generated skill is an adapter for using Flowpeek, not a developer persona te
 
 Writes use a temporary file beside the destination, flush and close it when supported, then replace the cache through bounded retry for transient Windows lock errors. On a failure, Flowpeek removes the temporary file and preserves the prior destination. `project.json` records a generated local UUID when config does not provide an explicit `projectId`; see [ADR-001](docs/adr/ADR-001-project-identity.md).
 
-`project.json`, `state.json`, bounded adjacent `deltas/`, immutable `flow-verifications.json`, append-only `agent-evidence-traces.json`, append-only `semantic-suggestion-feedback.json`, durable Brief manifests, the `handoff/` workspace/note/import stores, and the `cache/` derived-artifact registry belong beside `graph.json` and `descriptions.json` in this current layout. Heavy Briefs, imported handoffs, and derived values live in their own artifact directories; their minimal manifests remain auditable if an artifact expires. `config.json`, when present, remains the versionable scope/identity policy file; generated graph and project metadata remain local cache state.
+`project.json`, `state.json`, bounded adjacent `deltas/`, immutable `flow-verifications.json`, append-only `agent-evidence-traces.json`, append-only `semantic-suggestion-feedback.json`, durable Brief manifests, the `handoff/` workspace/note/import stores, the `delivery/` work-record/workflow stores, and the `cache/` derived-artifact registry belong beside `graph.json` and `descriptions.json` in this current layout. Heavy Briefs, imported handoffs, and derived values live in their own artifact directories; their minimal manifests remain auditable if an artifact expires. `config.json`, when present, remains the versionable scope/identity policy file; generated graph and project metadata remain local cache state.
 
 ### Current static history
 
@@ -467,6 +539,30 @@ Git snapshots are produced through `git archive` in a temporary directory. Flowp
 - added/removed/changed static flows.
 
 This history excludes uncommitted changes and is not runtime history.
+
+### Current Git Context continuity
+
+`src/git-context-continuity.js` resolves only a current or stale Context Card,
+then creates or reuses two static `git archive` snapshots. It reports exact
+static node or flow identity presence separately from bounded nodes found at
+the same current repository-relative paths. Same-path results are candidates
+only: Flowpeek does not follow renames, infer successors, reconstruct a
+historical Context Card, or claim implementation/rationale/runtime equivalence.
+The projection is available through local HTTP, MCP, and CLI; it never checks
+out, fetches, merges, rebases, mutates refs, executes code, or returns source
+bodies or author identity.
+
+### Current active-branch Context evidence
+
+`src/active-branch-git-evidence.js` resolves only a current or stale Context
+Card, collects its current repository-relative paths, and reads at most 50
+commits per path from the current attached branch `HEAD`. It never follows
+renames, checks out source, fetches, merges, rebases, mutates refs, or returns
+source bodies or author identity. A commit indicates only that it touched a
+path. It is not evidence of a symbol introduction, original rationale, runtime
+behavior, review, test success, or release state. Detached `HEAD`, non-Git
+targets, missing paths, and unresolved/historical Context Refs return an
+explicit unavailable result.
 
 ## Current quality architecture
 
@@ -518,7 +614,7 @@ Each refresh writes the complete graph. This is simple and correct for the curre
 
 ### Product schema ahead of implementation
 
-Deterministic HTTP/request semantic suggestions now have a current runtime schema; feedback records, trained models, Delivery Graph, and workflow methods remain product commitments without a current runtime schema. Node and flow Context Cards/packets are implemented by ADR-003; immutable flow verification is implemented by ADR-004 and never modifies parser facts. `flowpeek-changed-contexts/v1` is an ephemeral service projection of retained adjacent-delta evidence, not a historical Context Card reconstruction. `flowpeek-flow-comparison/v1` is a retained bounded snapshot comparison for captured adjacent-delta flows, not full graph history or runtime reconstruction.
+Deterministic HTTP/request semantic suggestions and the local `flowpeek-delivery-work-records/v1` store now have current runtime schemas. Delivery storage currently supports editable plan metadata and append-only actual events; workflow methods, transition gates, and user-facing delivery surfaces remain product commitments until their own contracts are implemented. Node and flow Context Cards/packets are implemented by ADR-003; immutable flow verification is implemented by ADR-004 and never modifies parser facts. `flowpeek-changed-contexts/v1` is an ephemeral service projection of retained adjacent-delta evidence, not a historical Context Card reconstruction. `flowpeek-flow-comparison/v1` is a retained bounded snapshot comparison for captured adjacent-delta flows, not full graph history or runtime reconstruction.
 
 ## Target architecture
 
@@ -775,7 +871,7 @@ It emits `possible_successor` with reasons and confidence. Only human approval o
 
 ### Three graph domains
 
-The target storage and service boundaries preserve:
+The current Delivery Graph foundation and all target continuation services preserve:
 
 ```text
 Evidence Graph  --projects/supports--> Context Graph
@@ -784,9 +880,9 @@ Context Graph   --required/affected--> Delivery Graph
 
 Evidence Graph rebuilds from repository facts. Context Graph preserves human verification and derivation. Delivery Graph preserves workflow state and evidence references.
 
-### Workflow engine
+### Current workflow engine
 
-Target workflow definition:
+Current versioned workflow definition:
 
 ```json
 {
@@ -804,6 +900,27 @@ Target workflow definition:
 ```
 
 Agile, Waterfall, and custom methods are templates over this schema. Workflow state cannot fabricate technical evidence. Actual events must link to Flowpeek graph states, Git evidence, declared tests, or permissioned integrations.
+
+### Target work-continuation services
+
+ADR-020 defines the next boundary-preserving layer:
+
+```text
+current Git/source basis + graph version + selected Context Refs
+  -> immutable local continuation checkpoint
+  -> planned technical overlay with distinct Plan Refs
+  -> explicit Viewer Continue mode
+  -> append-only manual reconciliation
+  -> bounded baseline/plan/current comparison
+  -> read-only divergence analysis
+  -> bounded agent continuation packet
+```
+
+Planned entities remain Delivery/Context metadata. They do not enter technical
+graph storage or factual traversal. A positive reconciliation points to current
+technical Context Refs but still does not rewrite parser evidence. Detailed
+schema and surface order live in
+[`docs/work-continuation-plan.md`](docs/work-continuation-plan.md).
 
 ### Semantic inference service
 
@@ -875,7 +992,10 @@ Initial compatible target:
 │   └── <from>-<to>.json
 ├── delivery/
 │   ├── workflows.json
-│   └── work-records.json
+│   ├── work-records.json
+│   ├── continuation-checkpoints.json
+│   ├── planned-overlays.json
+│   └── reconciliations.json
 └── history/
     └── <full-git-sha>.json
 ```
@@ -965,8 +1085,10 @@ Do not report incremental parser speed as total end-to-end live-update latency. 
 6. Add Flow Lens evidence-rich projections.
 7. Modularize scanner adapters and generate support metadata.
 8. Add deterministic semantic inference and feedback capture.
-9. Add Delivery Graph and generic workflow engine.
-10. Evaluate storage backend and permissioned integrations at measured scale.
+9. Add Delivery Graph and generic workflow engine (current foundation).
+10. Expose planned overlays and Plan Refs through CLI, HTTP, MCP, and an explicit opt-in Viewer Continue mode with exact non-redirecting resolution, append-only manual reconciliation, deterministic bounded comparison, read-only divergence, and a bounded agent continuation packet (current).
+11. Complete cross-surface dogfooding and stabilization.
+12. Evaluate storage backend and permissioned integrations at measured scale.
 
 ## Architecture invariants
 
@@ -996,3 +1118,7 @@ Create ADRs before stabilizing:
 - ADR-007: workflow permission and integration boundary;
 - ADR-008: optional model privacy and approval boundary;
 - ADR-009: public packaging, licensing, and release channel.
+
+Later accepted decisions refine that sequence, including ADR-019 for the current
+evidence-gated local Delivery Graph/workflow foundation and ADR-020 for the
+target versioned work-continuation boundary.

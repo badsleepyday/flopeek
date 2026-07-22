@@ -6,7 +6,7 @@ Accepted.
 
 ## Context
 
-Flowpeek can derive bounded HTTP/request Flow Lenses and portable Context Cards from static parser evidence. A person needs to attach confirmed language to a flow without changing parser facts, silently treating a source edit as approved, or granting write authority to an agent.
+Flowpeek can derive bounded Flow Lenses and portable Context Cards from supported static-entry parser evidence. A person needs to attach confirmed language to a flow without changing parser facts, silently treating a source edit as approved, or granting write authority to an agent.
 
 The prior `.flowpeek/descriptions.json` mechanism stores mutable, unattributed text for individual nodes. It is useful as a local note, but it does not establish who confirmed a flow, which graph version they reviewed, whether static evidence has changed, or what earlier wording was replaced.
 
@@ -33,4 +33,4 @@ The prior `.flowpeek/descriptions.json` mechanism stores mutable, unattributed t
 - A local rescan cannot silently overwrite or upgrade a verification record.
 - A source-only edit in a participating file becomes stale even when the visible topology is unchanged.
 - Verification may become `indeterminate` after the bounded delta retention window; a person must review rather than Flowpeek guessing continuity.
-- The feature intentionally covers bounded HTTP/request flows only. Node notes, issue/ADR synchronization, business-intent inference, and SDLC work records remain separate future work.
+- The feature covers bounded supported static-entry flows. A verification remains human-authored evidence and never proves command invocation, runtime behavior, business intent, or a broader SDLC work record. Node notes, issue/ADR synchronization, business-intent inference, and SDLC work records remain separate future work.

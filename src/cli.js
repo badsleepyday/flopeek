@@ -1,29 +1,43 @@
 #!/usr/bin/env node
 
 const path = require("node:path");
+const fs = require("node:fs");
 const { execFile } = require("node:child_process");
 const packageInfo = require("../package.json");
 const { runMcpServer } = require("./mcp");
+const { createScanCoordinator } = require("./scan-coordinator");
 const { startServer } = require("./server");
 const { benchmarkRepository, printBenchmark } = require("./benchmark");
 const { createProductProof, printProductProof } = require("./product-proof");
 const { compareGitSnapshots, createGitSnapshot } = require("./history");
-const { getAgentBootstrap, getChangeImpact } = require("./graph-service");
+const { createContinuationCheckpoint, createPlannedOverlay, getAgentBootstrap, getActiveBranchGitEvidence, getChangeImpact, getContinuationCheckpoint, getGitContextContinuity, getPlanReconciliation, getPlannedOverlay, getWorkDependencyStatus, getWorkTimeline, listContinuationCheckpoints, listPlanReconciliations, listPlannedOverlays, listWorkRecords, projectView, recordPlanReconciliation, resolvePlanRef } = require("./graph-service");
+const { listWorkflows: listStoredWorkflows } = require("./workflow-engine");
 const { doctorAgentIntegration, installAgentIntegration, uninstallAgentIntegration } = require("./agent-integration");
 const { agentComparisonSummary, evaluateAgentComparison, loadAgentComparisonRuns } = require("./agent-comparison");
 const { evaluateOrientation, loadOrientationCases, orientationSummary } = require("./orientation-benchmark");
 const { applyShowcaseChange, printShowcase, resetShowcase, showcasePublicResult, showcaseStatus, startShowcase } = require("./showcase");
 const { getGitChangedPaths, graphToMermaid, readGraphCache, scanRepository, writeGraphCache } = require("./scanner");
 const { summarizeCacheResult } = require("./graph-cache");
+const { cacheHygiene, pruneArtifactCache } = require("./artifact-cache");
 const { readGraphDelta, readLatestGraphDelta } = require("./graph-state");
+const { discoverRepository } = require("./repository-discovery");
 const { activateOnWorkspaceHub, startWorkspaceServer } = require("./workspace-server");
 
 function parseArgs(argv) {
-  const result = { command: "serve", evaluation: null, showcaseAction: "run", root: process.cwd(), port: 4780, portFallback: true, global: false, workspaceId: null, serviceLabel: null, open: true, cache: true, format: "summary", changed: [], base: null, commit: "HEAD", from: "HEAD~1", to: "HEAD", fromVersion: null, toVersion: null, force: false, iterations: 3, platforms: [], dryRun: false, strict: false, casesFile: null, runsFile: null, condition: "both", keepWorkspace: false };
+  const result = { command: "serve", evaluation: null, cacheAction: "status", showcaseAction: "run", workAction: "list", continueAction: "list", planAction: "list", reconcileAction: "list", recordId: null, checkpointId: null, overlayId: null, reconciliationId: null, planRef: null, contextRef: null, inputFile: null, root: process.cwd(), port: 4780, portFallback: true, global: false, workspaceId: null, serviceLabel: null, open: true, cache: true, format: "summary", changed: [], base: null, commit: "HEAD", from: "HEAD~1", to: "HEAD", fromVersion: null, toVersion: null, force: false, limit: null, iterations: 3, platforms: [], dryRun: false, strict: false, casesFile: null, runsFile: null, condition: "both", keepWorkspace: false, timeBudgetMs: null, maxFiles: null, maxBytes: null, packagePath: null, mode: "overview", scope: "application", level: "feature", focus: null, maxNodes: null, maxEdges: null };
   const values = [...argv];
-  if (["scan", "impact", "snapshot", "history", "delta", "benchmark", "proof", "evaluate", "showcase", "bootstrap", "install", "uninstall", "doctor", "serve", "mcp", "help", "version", "--help", "-h", "--version", "-v"].includes(values[0])) result.command = values.shift().replace(/^--?/, "") || "help";
+  if (["discover", "scan", "view", "impact", "snapshot", "history", "git-evidence", "git-continuity", "delta", "benchmark", "proof", "evaluate", "cache", "showcase", "work", "continue", "bootstrap", "install", "uninstall", "doctor", "serve", "mcp", "help", "version", "--help", "-h", "--version", "-v"].includes(values[0])) result.command = values.shift().replace(/^--?/, "") || "help";
+  if (result.command === "cache" && ["status", "prune"].includes(values[0])) result.cacheAction = values.shift();
   if (result.command === "evaluate" && ["orientation", "agent-comparison"].includes(values[0])) result.evaluation = values.shift();
   if (result.command === "showcase" && ["apply", "reset", "status"].includes(values[0])) result.showcaseAction = values.shift();
+  if (result.command === "work" && ["list", "timeline", "workflows", "dependencies"].includes(values[0])) result.workAction = values.shift();
+  if (result.command === "continue" && values[0] === "plan") {
+    result.continueAction = values.shift();
+    if (["list", "show", "create", "resolve"].includes(values[0])) result.planAction = values.shift();
+  } else if (result.command === "continue" && values[0] === "reconcile") {
+    result.continueAction = values.shift();
+    if (["list", "show", "record"].includes(values[0])) result.reconcileAction = values.shift();
+  } else if (result.command === "continue" && ["list", "show", "checkpoint"].includes(values[0])) result.continueAction = values.shift();
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     if (value === "--port") result.port = Number(values[++index] || result.port);
@@ -45,6 +59,8 @@ function parseArgs(argv) {
     else if (value === "--to-version") result.toVersion = Number(values[++index]);
     else if (value === "--force") result.force = true;
     else if (value === "--iterations") result.iterations = Number(values[++index] || result.iterations);
+    else if (value === "--limit") result.limit = Number(values[++index]);
+    else if (value === "--keep-records") result.limit = Number(values[++index]);
     else if (value === "--platform") result.platforms.push(...String(values[++index] || "").split(",").map((item) => item.trim()).filter(Boolean));
     else if (value === "--dry-run") result.dryRun = true;
     else if (value === "--strict") result.strict = true;
@@ -52,6 +68,23 @@ function parseArgs(argv) {
     else if (value === "--cases") result.casesFile = path.resolve(values[++index] || "");
     else if (value === "--runs") result.runsFile = path.resolve(values[++index] || "");
     else if (value === "--condition") result.condition = values[++index] || result.condition;
+    else if (value === "--budget-ms") result.timeBudgetMs = Number(values[++index]);
+    else if (value === "--max-files") result.maxFiles = Number(values[++index]);
+    else if (value === "--max-bytes") result.maxBytes = Number(values[++index]);
+    else if (value === "--package") result.packagePath = values[++index] || null;
+    else if (value === "--mode") result.mode = values[++index] || "overview";
+    else if (value === "--scope") result.scope = values[++index] || "application";
+    else if (value === "--level") result.level = values[++index] || result.level;
+    else if (value === "--focus") result.focus = values[++index] || null;
+    else if (value === "--max-nodes") result.maxNodes = Number(values[++index]);
+    else if (value === "--max-edges") result.maxEdges = Number(values[++index]);
+    else if (value === "--record") result.recordId = values[++index] || null;
+    else if (value === "--checkpoint") result.checkpointId = values[++index] || null;
+    else if (value === "--overlay") result.overlayId = values[++index] || null;
+    else if (value === "--reconciliation") result.reconciliationId = values[++index] || null;
+    else if (value === "--plan-ref") result.planRef = values[++index] || null;
+    else if (value === "--context-ref") result.contextRef = values[++index] || null;
+    else if (value === "--input") result.inputFile = path.resolve(values[++index] || "");
     else if (!value.startsWith("-")) result.root = path.resolve(value);
   }
   return result;
@@ -70,7 +103,7 @@ Package identity:
   flowpeek --version
 
 Agent tools (MCP over stdio):
-  flowpeek mcp [repository]
+  flowpeek mcp [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [--no-cache]
   flowpeek bootstrap [repository] [--format summary|json]
 
 Agent host integration (project-local and non-destructive):
@@ -79,13 +112,22 @@ Agent host integration (project-local and non-destructive):
   flowpeek uninstall [repository] [--platform auto|codex|claude|cursor|gemini|all] [--dry-run] [--format summary|json]
 
 Graph workflow:
-  flowpeek scan [repository] [--format summary|json|mermaid] [--no-cache]
+  flowpeek discover [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [--format summary|json]
+  flowpeek scan [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [--format summary|json|mermaid] [--no-cache]
+  flowpeek view [repository] [--mode overview|requests|dependencies] [--scope application|runtime|framework|devtool|all] [--level domain|feature|component|symbol] [--focus node-id] [--max-nodes number] [--max-edges number] [--format summary|json] [--no-cache]
   flowpeek impact [repository] [--changed path[,path] | --base git-ref] [--format summary|json]
   flowpeek snapshot [repository] [--commit git-ref] [--force] [--format summary|json]
   flowpeek history [repository] [--from git-ref] [--to git-ref] [--format summary|json]
+  flowpeek git-evidence [repository] --context-ref fp://local/... [--limit 12] [--format summary|json]
+  flowpeek git-continuity [repository] --context-ref fp://local/... [--from git-ref] [--to git-ref] [--format summary|json]
   flowpeek delta [repository] [--from-version number --to-version number] [--format summary|json]
   flowpeek benchmark [repository] [--iterations 3] [--format summary|json]
   flowpeek proof [repository] [--iterations 3] [--format summary|json]
+  flowpeek cache status|prune [repository] [--keep-records number] [--dry-run] [--format summary|json]
+  flowpeek work list|timeline|workflows|dependencies [repository] [--record work-record-id] [--format summary|json]
+  flowpeek continue list|show|checkpoint [repository] [--checkpoint checkpoint-id] [--input checkpoint.json] [--format summary|json]
+  flowpeek continue plan list|show|create|resolve [repository] [--overlay overlay-id] [--plan-ref fpp://local/...] [--input planned-overlay.json] [--format summary|json]
+  flowpeek continue reconcile list|show|record [repository] [--reconciliation reconciliation-id] [--plan-ref fpp://local/...] [--input reconciliation.json] [--format summary|json]
   flowpeek evaluate orientation [suite-root] --cases <file> [--condition baseline|flowpeek|both] [--format summary|json]
   flowpeek evaluate agent-comparison [suite-root] --cases <file> --runs <file> [--format summary|json]
 
@@ -94,7 +136,7 @@ Guided product demonstration:
   flowpeek showcase apply|reset|status <temporary-workspace> [--format summary|json]
 
 Optional compact local viewer:
-  flowpeek serve [repository] [-g|--global] [--port 4780] [--strict-port] [--workspace id] [--service-label name] [--no-open]
+  flowpeek serve [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [-g|--global] [--port 4780] [--strict-port] [--workspace id] [--service-label name] [--no-open]
 
 Global mode activates projects behind one workspace hub/web port. A later command
 using the same hub port adds or selects its project without stopping the hub.
@@ -103,12 +145,12 @@ Per-project mode remains available; occupied ports advance unless --strict-port.
 For compatibility, a repository path without a command starts the viewer.`);
 }
 
-function printSummary(graph, cacheWritten = true) {
+function printSummary(graph, cacheWritten = true, cacheMessage = null) {
   const { stats, project } = graph;
   console.log(`${project.name} (${project.git.branch})`);
   console.log(`${stats.scannedFiles} files / ${stats.nodes} nodes / ${stats.edges} edges`);
-  console.log(`${stats.endpoints} endpoints / ${stats.services} services / ${stats.calls || 0} direct calls / ${stats.tests} tests`);
-  console.log(cacheWritten ? `Cache: ${path.join(project.root, ".flowpeek", "graph.json")}` : "Cache: not written (--no-cache)");
+  console.log(`${stats.endpoints} HTTP entries / ${stats.commandEntries || 0} command entries / ${stats.scheduledEntries || 0} scheduled entries / ${stats.services} services / ${stats.calls || 0} direct calls / ${stats.tests} tests`);
+  console.log(cacheWritten ? `Cache: ${path.join(project.root, ".flowpeek", "graph.json")}` : cacheMessage || "Cache: not written (--no-cache)");
 }
 
 function printImpact(impact) {
@@ -142,10 +184,51 @@ function printHistory(history) {
   console.log(`${history.flows.summary.addedFlows} added flows / ${history.flows.summary.removedFlows} removed flows / ${history.flows.summary.changedFlows} changed flows`);
 }
 
+function printActiveBranchGitEvidence(result) {
+  if (result.status !== "available") {
+    console.log(`Git evidence unavailable: ${result.reason}`);
+    return;
+  }
+  console.log(`${result.branch.name} @ ${result.branch.shortHeadRevision}`);
+  console.log(`${result.retrieval.returnedCommits} path-touch commits across ${result.retrieval.returnedPaths} Context Card paths`);
+  if (result.retrieval.truncated) console.log(`Limited to ${result.retrieval.perPathCommitLimit} commits per path.`);
+}
+
+function printGitContextContinuity(result) {
+  if (result.status !== "available") {
+    console.log(`Git continuity unavailable: ${result.reason}`);
+    return;
+  }
+  console.log(`${result.snapshots.before.commit.shortRevision} → ${result.snapshots.after.commit.shortRevision}`);
+  console.log(`Before: ${result.snapshots.before.match.status}`);
+  console.log(`After: ${result.snapshots.after.match.status}`);
+}
+
 function printDelta(delta) {
   console.log(`Graph v${delta.fromGraphVersion} → v${delta.toGraphVersion} (${delta.reason})`);
   console.log(`${delta.changedPaths.length} changed paths / ${delta.summary.addedNodes} added nodes / ${delta.summary.removedNodes} removed nodes / ${delta.summary.changedNodes} changed nodes`);
   console.log(delta.topologyChanged ? "Static topology changed." : "Source changed without a static topology change.");
+}
+
+function printDiscovery(result) {
+  console.log(`${result.project.name}: ${result.status}`);
+  console.log(`${result.inventory.candidateFiles} candidate files / ${result.inventory.candidateBytes} bytes / ${result.inventory.visitedDirectories} visited directories`);
+  console.log(`${result.workspace.packages.length} packages / ${result.workspace.manifests.length} total manifests (package manifests included)`);
+  if (result.selection?.status === "selected") console.log(`Static package scope: ${result.selection.path} (session-only; repository cache unchanged)`);
+  if (result.adapters.length) console.log(`Adapters: ${result.adapters.map((adapter) => `${adapter.id} (${adapter.files})`).join(", ")}`);
+  if (result.reasons.length) console.log(`Bounds: ${result.reasons.join(", ")}`);
+  console.log(result.decision.safeToStartFullScan ? "Full scan preflight: ready" : "Full scan preflight: blocked by declared bounds");
+}
+
+function printBoundedScan(result, cacheWritten = false) {
+  console.log(`Bounded scan: ${result.status}`);
+  if (result.reason) console.log(`Reason: ${result.reason}`);
+  if (result.graph) {
+    const packageScoped = result.discovery?.selection?.status === "selected";
+    printSummary(result.graph, cacheWritten, packageScoped ? "Cache: not written (package-scoped session)" : null);
+    if (packageScoped) console.log(`Static package scope: ${result.discovery.selection.path}`);
+  }
+  else console.log(`${result.discovery.inventory.candidateFiles} discovered candidate files; no partial graph was promoted.`);
 }
 
 function printIntegration(result) {
@@ -167,11 +250,58 @@ function printBootstrap(result) {
   console.log("Start with get_handoff_context for a known task, then inspect raw node or Flow Lens evidence before editing source.");
 }
 
+function readJsonInput(inputFile, description = "Continuation checkpoint creation") {
+  if (!inputFile) throw new Error(`${description} requires --input <json-file>.`);
+  let value;
+  try { value = JSON.parse(fs.readFileSync(inputFile, "utf8")); } catch (error) { throw new Error(`Unable to read continuation checkpoint input (${error.message}).`); }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Continuation checkpoint input must be a JSON object.");
+  return value;
+}
+
+function printContinuation(result, action) {
+  if (action === "list") {
+    const freshness = result.records.reduce((counts, record) => ({ ...counts, [record.freshnessStatus]: (counts[record.freshnessStatus] || 0) + 1 }), {});
+    console.log(`${result.records.length} local continuation checkpoints (${freshness.current || 0} current / ${freshness.stale || 0} stale / ${freshness.future || 0} future)`);
+  } else if (action === "show") {
+    console.log(`${result.checkpoint.id}: ${result.checkpoint.lifecycleStatus} / ${result.checkpoint.freshnessStatus}`);
+  } else {
+    console.log(`${result.created ? "Created" : "Reused"} continuation checkpoint ${result.checkpoint.id} at graph v${result.checkpoint.baseline.graphVersion}.`);
+  }
+  console.log(result.limitation || "Continuation checkpoint metadata remains separate from parser facts and runtime proof.");
+}
+
+function printPlannedOverlay(result, action) {
+  if (action === "list") {
+    const freshness = result.records.reduce((counts, record) => ({ ...counts, [record.checkpointFreshnessStatus]: (counts[record.checkpointFreshnessStatus] || 0) + 1 }), {});
+    console.log(`${result.records.length} local planned overlays (${freshness.current || 0} current-anchor / ${freshness.stale || 0} stale-anchor / ${freshness.future || 0} future-anchor)`);
+  } else if (action === "show") {
+    console.log(`${result.overlay.id}: checkpoint ${result.overlay.checkpointId} / ${result.overlay.checkpointFreshnessStatus} / ${result.overlay.nodes.length} planned nodes`);
+  } else if (action === "resolve") {
+    console.log(`${result.status}: ${result.resolvedRef || "no resolved Plan Ref"}`);
+  } else {
+    console.log(`${result.created ? "Created" : "Reused"} planned overlay ${result.overlay.id} at checkpoint ${result.overlay.checkpointId} v${result.overlay.overlayVersion}.`);
+  }
+  console.log(result.limitation || "Planned-overlay metadata remains separate from parser facts, Flow Lens, impact, and runtime proof.");
+}
+
+function printPlanReconciliation(result, action) {
+  if (action === "list") {
+    const outcomes = result.records.reduce((counts, record) => ({ ...counts, [record.outcome]: (counts[record.outcome] || 0) + 1 }), {});
+    console.log(`${result.records.length} local plan reconciliations (${outcomes["confirmed-implemented"] || 0} confirmed / ${outcomes["partially-implemented"] || 0} partial / ${outcomes["implemented-differently"] || 0} different)`);
+  } else if (action === "show") {
+    console.log(`${result.reconciliation.id}: ${result.reconciliation.outcome} / ${result.reconciliation.actorKind} / ${result.reconciliation.actualContextRefs.length} actual Context Refs`);
+  } else {
+    console.log(`${result.created ? "Recorded" : "Reused"} plan reconciliation ${result.reconciliation.id}: ${result.reconciliation.outcome}.`);
+  }
+  console.log(result.limitation || "Plan-reconciliation metadata remains separate from parser facts, Flow Lens, impact, test proof, runtime proof, and approval authority.");
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.command === "help" || options.command === "h") return printHelp();
   if (options.command === "version" || options.command === "v") return console.log(packageInfo.version);
   if (options.command === "mcp") return runMcpServer(options);
+  if (options.packagePath && !["discover", "scan", "serve", "mcp"].includes(options.command)) throw new Error("--package is currently supported only by discover, scan, serve, and mcp.");
   if (options.command === "showcase") {
     if (options.showcaseAction !== "run") {
       const result = options.showcaseAction === "apply"
@@ -241,7 +371,65 @@ async function main() {
     else throw new Error("Bootstrap output supports summary or json formats.");
     return;
   }
+  if (options.command === "discover") {
+    const result = discoverRepository(options.root, {
+      timeBudgetMs: options.timeBudgetMs,
+      maxFiles: options.maxFiles,
+      maxBytes: options.maxBytes,
+      packagePath: options.packagePath,
+    });
+    if (options.format === "json") console.log(JSON.stringify(result, null, 2));
+    else if (options.format === "summary") printDiscovery(result);
+    else throw new Error("Discovery output supports summary or json formats.");
+    if (!result.decision.safeToStartFullScan) process.exitCode = 2;
+    return;
+  }
   if (options.command === "scan") {
+    const bounded = options.timeBudgetMs !== null || options.maxFiles !== null || options.maxBytes !== null || Boolean(options.packagePath);
+    if (bounded) {
+      const controller = new AbortController();
+      const cancel = () => controller.abort();
+      process.once("SIGINT", cancel);
+      process.once("SIGTERM", cancel);
+      let result;
+      try {
+        const coordinator = createScanCoordinator(options.root, {
+          cache: options.cache,
+          timeBudgetMs: options.timeBudgetMs,
+          maxFiles: options.maxFiles,
+          maxBytes: options.maxBytes,
+          packagePath: options.packagePath,
+        });
+        const coordinated = await coordinator.refresh(null, "cli-bounded-scan", controller.signal);
+        result = coordinated.boundedResult || {
+          schemaVersion: "flowpeek-bounded-scan-result/v1",
+          status: coordinated.outcome.status,
+          generatedAt: coordinated.outcome.completedAt,
+          durationMs: coordinated.outcome.durationMs,
+          discovery: coordinated.outcome.discovery,
+          graph: coordinated.graph,
+          reason: coordinated.outcome.reason,
+          failure: coordinated.outcome.failure,
+          cachePromotion: {
+            allowed: coordinated.outcome.cachePromotion.allowed,
+            reason: "The shared scan coordinator allows canonical cache promotion only for a complete result.",
+          },
+          limitations: coordinated.outcome.limitations,
+        };
+        result.scanOutcome = coordinated.outcome;
+      } finally {
+        process.removeListener("SIGINT", cancel);
+        process.removeListener("SIGTERM", cancel);
+      }
+      if (options.format === "json") console.log(JSON.stringify(result, null, 2));
+      else if (options.format === "mermaid" && result.graph) console.log(graphToMermaid(result.graph));
+      else if (options.format === "summary") printBoundedScan(result, result.cachePromotion?.allowed === true && result.status === "complete");
+      else if (options.format === "mermaid") throw new Error("A bounded scan that produced no complete graph cannot be rendered as Mermaid.");
+      else throw new Error("--format must be summary, json, or mermaid.");
+      if (result.status === "partial-by-budget" || result.status === "cancelled") process.exitCode = 2;
+      else if (result.status === "failed") process.exitCode = 1;
+      return;
+    }
     // `--no-cache` is the safe inspection mode: it must not leave Flowpeek
     // metadata behind merely to obtain a generated project identity.
     const graph = scanRepository(options.root, { persistIdentity: options.cache });
@@ -254,9 +442,21 @@ async function main() {
     else throw new Error("--format must be summary, json, or mermaid.");
     return;
   }
+  if (options.command === "view") {
+    const graph = scanRepository(options.root, { persistIdentity: options.cache });
+    const result = projectView(graph, { mode: options.mode, scope: options.scope, level: options.level, focus: options.focus, maxNodes: options.maxNodes, maxEdges: options.maxEdges });
+    if (options.format === "json") console.log(JSON.stringify(result, null, 2));
+    else if (options.format === "summary") {
+      console.log(`${result.view.mode} / ${result.view.scope}: ${result.display.catalog.nodes.returned}/${result.display.catalog.nodes.total} nodes, ${result.display.catalog.edges.returned}/${result.display.catalog.edges.total} edges`);
+      if (result.display.catalog.warning) console.log(result.display.catalog.warning);
+    } else throw new Error("View output supports summary or json formats.");
+    return;
+  }
   if (options.command === "impact") {
     const graph = scanRepository(options.root, { persistIdentity: options.cache });
-    const previousGraph = readGraphCache(options.root, { expectedProjectId: graph.project.projectId });
+    const previousGraph = readGraphCache(options.root, {
+      expectedProjectId: graph.project.identity?.canonicalProjectId || graph.project.projectId,
+    });
     const changedPaths = options.changed.length ? options.changed : getGitChangedPaths(graph.project.root, options.base);
     graph.analysis.cacheState = options.cache
       ? summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-impact", changedPaths }))
@@ -298,6 +498,30 @@ async function main() {
     else throw new Error("Benchmark output supports summary or json formats.");
     return;
   }
+  if (options.command === "git-evidence") {
+    if (!options.contextRef) throw new Error("Git evidence requires --context-ref <fp://local/...>.");
+    const graph = scanRepository(options.root, { persistIdentity: true });
+    graph.analysis.cacheState = options.cache
+      ? summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-active-branch-git-evidence" }))
+      : { status: "disabled", path: path.join(graph.project.root, ".flowpeek", "graph.json"), diagnostics: [], contract: null, migrated: false };
+    const result = getActiveBranchGitEvidence(graph, options.contextRef, { limit: options.limit });
+    if (options.format === "json") console.log(JSON.stringify(result, null, 2));
+    else if (options.format === "summary") printActiveBranchGitEvidence(result);
+    else throw new Error("Git evidence output supports summary or json formats.");
+    return;
+  }
+  if (options.command === "git-continuity") {
+    if (!options.contextRef) throw new Error("Git continuity requires --context-ref <fp://local/...>.");
+    const graph = scanRepository(options.root, { persistIdentity: true });
+    graph.analysis.cacheState = options.cache
+      ? summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-git-context-continuity" }))
+      : { status: "disabled", path: path.join(graph.project.root, ".flowpeek", "graph.json"), diagnostics: [], contract: null, migrated: false };
+    const result = getGitContextContinuity(graph, options.contextRef, { from: options.from, to: options.to });
+    if (options.format === "json") console.log(JSON.stringify(result, null, 2));
+    else if (options.format === "summary") printGitContextContinuity(result);
+    else throw new Error("Git continuity output supports summary or json formats.");
+    return;
+  }
   if (options.command === "proof") {
     const graph = scanRepository(options.root, { persistIdentity: false });
     const result = createProductProof(graph, { localBenchmark: benchmarkRepository(options.root, { iterations: options.iterations }) });
@@ -306,13 +530,99 @@ async function main() {
     else throw new Error("Proof output supports summary or json formats.");
     return;
   }
+  if (options.command === "cache") {
+    const result = options.cacheAction === "prune"
+      ? pruneArtifactCache(options.root, { keepRecords: options.limit || 4, dryRun: options.dryRun })
+      : cacheHygiene(options.root);
+    if (options.format === "json") console.log(JSON.stringify(result, null, 2));
+    else if (options.format === "summary") {
+      if (options.cacheAction === "prune") console.log(`${result.dryRun ? "Would prune" : "Pruned"} ${result.pruned.length} derived artifacts / ${result.reclaimedBytes} bytes reclaimed`);
+      else console.log(`${result.storage.total.files} Flowpeek cache files / ${result.storage.total.bytes} bytes / ${result.storage.derivedArtifacts.records} registered derived artifacts`);
+      console.log(result.limitation || result.retention?.destructiveScope || "Cache metadata only.");
+    } else throw new Error("Cache output supports summary or json formats.");
+    return;
+  }
+  if (options.command === "work") {
+    const graph = options.workAction === "workflows" ? null : scanRepository(options.root, { persistIdentity: true });
+    const result = options.workAction === "workflows"
+      ? listStoredWorkflows(path.resolve(options.root))
+      : options.workAction === "timeline"
+        ? getWorkTimeline(graph, options.recordId)
+        : options.workAction === "dependencies"
+          ? (() => {
+            if (!options.recordId) throw new Error("Dependency status requires --record <work-record-id>.");
+            return getWorkDependencyStatus(graph, options.recordId);
+          })()
+        : listWorkRecords(graph, { limit: 50 });
+    if (options.format === "json") console.log(JSON.stringify(result, null, 2));
+    else if (options.format === "summary") {
+      if (options.workAction === "workflows") console.log(`${result.workflows.length} available local workflows`);
+      else if (options.workAction === "timeline") console.log(`${result.records.length} planned records / ${result.actualEvents.length} append-only actual events`);
+      else if (options.workAction === "dependencies") console.log(`${result.summary.ready} ready / ${result.summary.blocking} blocking / ${result.summary.unresolved} unresolved / ${result.summary.unknown} unknown declared dependencies`);
+      else console.log(`${result.totalMatched} local work records / ${result.events.length} recent actual events`);
+      console.log(result.limitation || "Delivery metadata remains separate from parser facts and runtime proof.");
+    } else throw new Error("Work output supports summary or json formats.");
+    return;
+  }
+  if (options.command === "continue") {
+    if (!options.cache) throw new Error("Continuation checkpoint commands require persistent graph identity; omit --no-cache.");
+    const graph = scanRepository(options.root, { persistIdentity: true });
+    graph.analysis.cacheState = summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-continuation" }));
+    const result = options.continueAction === "plan"
+      ? options.planAction === "create"
+        ? createPlannedOverlay(graph, readJsonInput(options.inputFile, "Planned-overlay creation"))
+        : options.planAction === "show"
+          ? (() => {
+            if (!options.overlayId) throw new Error("Planned-overlay display requires --overlay <overlay-id>.");
+            return getPlannedOverlay(graph, options.overlayId);
+          })()
+          : options.planAction === "resolve"
+            ? (() => {
+              if (!options.planRef) throw new Error("Plan Ref resolution requires --plan-ref <fpp://local/...>.");
+              return resolvePlanRef(graph, options.planRef);
+            })()
+            : listPlannedOverlays(graph)
+      : options.continueAction === "reconcile"
+        ? options.reconcileAction === "record"
+          ? recordPlanReconciliation(graph, readJsonInput(options.inputFile, "Plan-reconciliation recording"))
+          : options.reconcileAction === "show"
+            ? (() => {
+              if (!options.reconciliationId) throw new Error("Plan-reconciliation display requires --reconciliation <id>.");
+              return getPlanReconciliation(graph, options.reconciliationId);
+            })()
+            : listPlanReconciliations(graph, { planRef: options.planRef || null })
+        : options.continueAction === "checkpoint"
+      ? createContinuationCheckpoint(graph, readJsonInput(options.inputFile))
+      : options.continueAction === "show"
+        ? (() => {
+          if (!options.checkpointId) throw new Error("Continuation checkpoint display requires --checkpoint <id>.");
+          return getContinuationCheckpoint(graph, options.checkpointId);
+        })()
+        : listContinuationCheckpoints(graph);
+    if (options.format === "json") console.log(JSON.stringify(result, null, 2));
+    else if (options.format === "summary") {
+      if (options.continueAction === "plan") printPlannedOverlay(result, options.planAction);
+      else if (options.continueAction === "reconcile") printPlanReconciliation(result, options.reconcileAction);
+      else printContinuation(result, options.continueAction);
+    } else throw new Error("Continuation output supports summary or json formats.");
+    return;
+  }
   if (options.command !== "serve") throw new Error(`Unknown command: ${options.command}`);
   if (!Number.isInteger(options.port) || options.port < 1 || options.port > 65535) throw new Error("--port must be a valid TCP port.");
 
   if (options.global) {
+    if (options.packagePath) throw new Error("Package-scoped scans cannot join a global workspace yet. Start a per-project server instead.");
     let activated = null;
     try {
-      activated = await activateOnWorkspaceHub({ port: options.port, workspaceId: options.workspaceId, root: options.root, serviceLabel: options.serviceLabel });
+      activated = await activateOnWorkspaceHub({
+        port: options.port,
+        workspaceId: options.workspaceId,
+        root: options.root,
+        serviceLabel: options.serviceLabel,
+        timeBudgetMs: options.timeBudgetMs,
+        maxFiles: options.maxFiles,
+        maxBytes: options.maxBytes,
+      });
     } catch (error) {
       if (error?.name !== "TimeoutError" && error?.cause?.code !== "ECONNREFUSED" && error?.code !== "ECONNREFUSED") throw error;
     }
@@ -327,7 +637,13 @@ async function main() {
       port: options.port,
       portFallback: options.portFallback,
       workspaceId: options.workspaceId,
-      projects: [{ root: options.root, serviceLabel: options.serviceLabel }],
+      projects: [{
+        root: options.root,
+        serviceLabel: options.serviceLabel,
+        timeBudgetMs: options.timeBudgetMs,
+        maxFiles: options.maxFiles,
+        maxBytes: options.maxBytes,
+      }],
     });
     const hubUrl = `http://127.0.0.1:${hub.port}`;
     console.log(`Flowpeek workspace hub: ${hubUrl}`);

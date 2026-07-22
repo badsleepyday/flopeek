@@ -15,7 +15,9 @@ test("agent bootstrap exposes a bounded evidence workflow without source content
   assert.equal(bootstrap.policy.staticIsRuntimeTruth, false);
   assert.equal(bootstrap.policy.agentProposalCreatesParserFact, false);
   assert.ok(bootstrap.workflow.some((step) => step.tools.includes("refresh_graph")));
+  assert.ok(bootstrap.workflow.some((step) => step.tools.includes("get_scan_status")));
   assert.ok(bootstrap.workflow.some((step) => step.tools.includes("get_handoff_context")));
+  assert.ok(bootstrap.workflow.some((step) => step.tools.includes("get_work_dependency_status")));
   assert.ok(bootstrap.graph.inventory.applicationFlows > 0);
   assert.equal(serialized.includes(root), false);
   assert.equal(serialized.includes("export class"), false);
@@ -34,4 +36,22 @@ test("agent bootstrap explicitly requires source fallback when no application fl
   assert.equal(bootstrap.readiness.applicationFlowsAvailable, false);
   assert.equal(bootstrap.readiness.sourceFallbackRequired, true);
   assert.match(bootstrap.limitations.join(" "), /runtime order/);
+});
+
+test("agent bootstrap preserves an explicit static package-scope boundary", () => {
+  const graph = {
+    schemaVersion: 5,
+    generatedAt: new Date().toISOString(),
+    project: { projectId: "fixture", name: "fixture", git: {} },
+    state: { graphVersion: 1, status: "current", updatedAt: new Date().toISOString() },
+    analysis: {
+      coverage: {},
+      cacheState: { status: "disabled", diagnostics: [] },
+      packageSelection: { kind: "static-package-path", status: "selected", path: "apps/api", manifest: "apps/api/package.json", packageName: "@fixture/api" },
+    },
+    stats: {}, nodes: [], edges: [], flows: [],
+  };
+  const bootstrap = createAgentBootstrap(graph);
+  assert.equal(bootstrap.graph.packageSelection.path, "apps/api");
+  assert.match(bootstrap.limitations.join(" "), /selected static package subtree/);
 });

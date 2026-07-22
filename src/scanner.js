@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
-const { createHash } = require("node:crypto");
+const { createHash, randomUUID } = require("node:crypto");
 const { createRequire } = require("node:module");
 const ts = require("typescript");
 const { goFacts } = require("./go-adapter");
@@ -15,7 +15,9 @@ const { CONFIG_FILENAME, classifyRepositoryPath, readRepositoryScope, scopeSigna
 const { GRAPH_SCHEMA_VERSION } = require("./graph-schema");
 const { readGraphCache } = require("./graph-cache");
 const { persistGraphState } = require("./graph-state");
+const { advanceSessionGraph } = require("./session-graph-state");
 const { resolveProjectIdentity } = require("./project-identity");
+const { createDjangoManagementCommandFlowEntry, createHttpFlowEntry, createNodeCronScheduleFlowEntry, createPackageScriptFlowEntry, isSupportedFlowEntryNode } = require("./flow-entry");
 
 const CODE_EXTENSIONS = new Set([
   ".js", ".cjs", ".mjs", ".jsx", ".ts", ".tsx", ".svelte", ".vue", ".astro",
@@ -38,6 +40,8 @@ const RUNTIME_FACTORIES = {
 };
 const DATABASE_OPERATION_NAMES = new Set(["find", "findFirst", "findMany", "findUnique", "create", "createMany", "update", "updateMany", "delete", "deleteMany", "upsert", "query", "execute", "select", "insert", "transaction", "getRepository"]);
 const QUEUE_OPERATION_NAMES = new Set(["add", "addBulk", "close", "pause", "resume", "obliterate"]);
+const DIRECT_SCRIPT_RUNNERS = new Set(["node", "nodejs", "tsx", "ts-node", "bun", "python", "python3", "php"]);
+const SCRIPT_SHELL_SYNTAX = new Set(["|", "&", ";", "<", ">", "$", "`", "\"", "'", "\\", "\r", "\n"]);
 let phpParser;
 let pythonParser;
 let javaTreeParser;
@@ -334,6 +338,64 @@ function nestEndpoints(sourceFile, relativePath) {
   return endpoints;
 }
 
+function nodeCronDefaultBindings(sourceFile) {
+  const bindings = new Set();
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) || statement.moduleSpecifier.text !== "node-cron") continue;
+    if (statement.importClause?.name) bindings.add(statement.importClause.name.text);
+  }
+  return bindings;
+}
+
+function literalCronExpression(node) {
+  const value = stringLiteralValue(node);
+  if (!value || value.length > 128) return null;
+  const fields = value.trim().split(/\s+/);
+  if (![5, 6].includes(fields.length)) return null;
+  if (fields.some((field) => !/^[0-9A-Z*/?,\-]+$/i.test(field))) return null;
+  return value;
+}
+
+function isModuleScope(node, sourceFile) {
+  for (let current = node.parent; current && current !== sourceFile; current = current.parent) {
+    if (ts.isFunctionLike(current) || ts.isClassDeclaration(current) || ts.isClassExpression(current) || ts.isModuleDeclaration(current)) return false;
+  }
+  return true;
+}
+
+function nodeCronSchedules(sourceFile, relativePath) {
+  const receivers = nodeCronDefaultBindings(sourceFile);
+  if (!receivers.size) return { schedules: [], unsupportedSchedules: [] };
+  const schedules = [];
+  const unsupportedSchedules = [];
+  const visit = (node) => {
+    if (ts.isCallExpression(node)
+      && ts.isPropertyAccessExpression(node.expression)
+      && node.expression.name.text === "schedule"
+      && ts.isIdentifier(node.expression.expression)
+      && receivers.has(node.expression.expression.text)
+      && !callNameIsShadowed(node, node.expression.expression.text, sourceFile)) {
+      const expression = literalCronExpression(node.arguments[0]);
+      const task = node.arguments[1];
+      const taskName = ts.isIdentifier(task) && !callNameIsShadowed(node, task.text, sourceFile) ? task.text : null;
+      if (!isModuleScope(node, sourceFile)) {
+        unsupportedSchedules.push({ path: relativePath, reason: "registration-is-not-module-scope" });
+      } else if (expression && taskName) {
+        schedules.push({ expression, taskName, evidence: evidenceFor(sourceFile, node, relativePath, "typescript-ast") });
+      } else {
+        unsupportedSchedules.push({
+          path: relativePath,
+          reason: !expression ? "non-literal-or-unsupported-cron-expression" : "task-is-not-an-unshadowed-identifier",
+          evidence: evidenceFor(sourceFile, node, relativePath, "typescript-ast"),
+        });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return { schedules, unsupportedSchedules };
+}
+
 function fastifyReceivers(sourceFile) {
   const factories = new Set();
   const receivers = new Set();
@@ -526,6 +588,7 @@ function analyzeJavaScriptTypeScript(content, extension, relativePath, routeInfo
   const methods = [];
   const symbols = [];
   const runtime = runtimeIntegrationFacts(sourceFile, relativePath);
+  const schedules = nodeCronSchedules(sourceFile, relativePath);
   const fastifyInstances = fastifyReceivers(sourceFile);
   const importedBindings = namedImportReferences(sourceFile);
   const nextContracts = nextRouteHandlerContracts(sourceFile, relativePath, routeInfo);
@@ -579,6 +642,8 @@ function analyzeJavaScriptTypeScript(content, extension, relativePath, routeInfo
     calls,
     integrations: runtime.integrations,
     runtimeActions: runtime.runtimeActions,
+    schedules: schedules.schedules,
+    unsupportedSchedules: schedules.unsupportedSchedules,
     methods: [...new Set(methods)].slice(0, 12),
     symbols,
     analysis: { parser: "typescript-ast", status: sourceFile.parseDiagnostics.length ? "parsed-with-diagnostics" : "parsed", confidence: "exact", diagnostics: sourceFile.parseDiagnostics.length },
@@ -1236,6 +1301,55 @@ function pythonCallNameIsShadowed(node, name, content, bindingCache) {
   return false;
 }
 
+function pythonDjangoManagementCommandFacts(root, content, relativePath, importedBindings) {
+  const segments = toPosix(relativePath).split("/");
+  const filename = segments.at(-1) || "";
+  if (segments.length < 3 || segments.at(-3) !== "management" || segments.at(-2) !== "commands" || !filename.endsWith(".py")) {
+    return { commands: [], unsupported: [] };
+  }
+  const commandName = filename.slice(0, -3);
+  if (!commandName || commandName.startsWith("_")) {
+    return { commands: [], unsupported: [{ path: relativePath, commandName, reason: "private-or-initializer-command-module" }] };
+  }
+  const declarations = syntaxTreeChildren(root)
+    .map((statement) => statement.name === "DecoratedStatement"
+      ? syntaxTreeChildren(statement).find((child) => child.name === "ClassDefinition")
+      : statement)
+    .filter((statement) => statement?.name === "ClassDefinition" && pythonDeclarationName(statement, content) === "Command");
+  if (declarations.length !== 1) {
+    return { commands: [], unsupported: [{ path: relativePath, commandName, reason: declarations.length ? "ambiguous-command-class" : "missing-top-level-command-class" }] };
+  }
+  const declaration = declarations[0];
+  const argumentList = syntaxTreeChildren(declaration).find((child) => child.name === "ArgList");
+  const baseNames = (argumentList ? syntaxTreeChildren(argumentList) : [])
+    .filter((child) => child.name === "VariableName")
+    .map((child) => content.slice(child.from, child.to));
+  const exactBase = baseNames.find((baseName) => {
+    const binding = importedBindings.get(baseName);
+    return binding?.specifier === "django.core.management.base" && binding?.exportedName === "BaseCommand";
+  });
+  if (!exactBase) {
+    return { commands: [], unsupported: [{ path: relativePath, commandName, reason: "command-class-does-not-directly-extend-imported-base-command" }] };
+  }
+  const body = syntaxTreeChildren(declaration).find((child) => child.name === "Body");
+  const handleMethods = (body ? syntaxTreeChildren(body) : [])
+    .filter((child) => child.name === "FunctionDefinition" && pythonDeclarationName(child, content) === "handle");
+  if (handleMethods.length !== 1) {
+    return { commands: [], unsupported: [{ path: relativePath, commandName, reason: handleMethods.length ? "ambiguous-direct-handle-method" : "missing-direct-handle-method" }] };
+  }
+  return {
+    commands: [{
+      adapter: "django",
+      commandName,
+      targetName: "Command",
+      targetType: "class",
+      path: relativePath,
+      evidence: pythonEvidence(content, declaration, relativePath),
+    }],
+    unsupported: [],
+  };
+}
+
 function analyzePython(content, relativePath) {
   try {
     const tree = getPythonParser().parse(content);
@@ -1279,6 +1393,7 @@ function analyzePython(content, relativePath) {
       const symbol = declaration && pythonSymbol(declaration, content, relativePath);
       if (symbol) symbols.push(symbol);
     }
+    const frameworkCommandFacts = pythonDjangoManagementCommandFacts(tree.topNode, content, relativePath, importedBindings);
     return {
       imports,
       endpoints,
@@ -1286,10 +1401,12 @@ function analyzePython(content, relativePath) {
       calls,
       methods: [...new Set(methods)].slice(0, 12),
       symbols,
+      frameworkCommands: frameworkCommandFacts.commands,
+      unsupportedFrameworkCommands: frameworkCommandFacts.unsupported,
       analysis: { parser: "python-lezer", status: diagnostics ? "parsed-with-diagnostics" : "parsed", confidence: "exact", diagnostics },
     };
   } catch (error) {
-    return { imports: [], endpoints: [], requests: [], calls: [], methods: [], symbols: [], analysis: { parser: "python-lezer", status: "parse-failed", confidence: "not-analyzed", reason: error.message } };
+    return { imports: [], endpoints: [], requests: [], calls: [], methods: [], symbols: [], frameworkCommands: [], unsupportedFrameworkCommands: [], analysis: { parser: "python-lezer", status: "parse-failed", confidence: "not-analyzed", reason: error.message } };
   }
 }
 
@@ -1522,13 +1639,16 @@ function readGoModulePath(goModPath) {
   return null;
 }
 
-function createGoModuleResolver(root) {
+function createGoModuleResolver(root, sourcePaths = null) {
   const modules = repositoryFilesNamed("go.mod", root)
     .map((goModPath) => ({ modulePath: readGoModulePath(goModPath), directory: path.dirname(goModPath) }))
     .filter((entry) => entry.modulePath)
     .sort((left, right) => right.modulePath.length - left.modulePath.length || left.modulePath.localeCompare(right.modulePath));
   const packageFiles = new Map();
-  for (const absolutePath of walk(root).filter((candidate) => extensionOf(candidate) === ".go")) {
+  const goFiles = sourcePaths
+    ? sourcePaths.map((relativePath) => path.resolve(root, relativePath)).filter((candidate) => extensionOf(candidate) === ".go")
+    : walk(root).filter((candidate) => extensionOf(candidate) === ".go");
+  for (const absolutePath of goFiles) {
     const relativePath = toPosix(path.relative(root, absolutePath));
     if (isTestPath(relativePath)) continue;
     const directory = path.dirname(absolutePath);
@@ -2144,6 +2264,218 @@ function createExternalNode(specifier, devPackages) {
   };
 }
 
+function literalScriptTokens(value) {
+  if (typeof value !== "string" || !value.trim()) return { status: "unsupported", reason: "script-is-not-a-nonempty-string", tokens: [] };
+  const tokens = [];
+  let current = "";
+  for (const character of value.trim()) {
+    if (SCRIPT_SHELL_SYNTAX.has(character)) return { status: "unsupported", reason: "shell-syntax-or-quoting", tokens: [] };
+    if (character === " " || character === "\t") {
+      if (current) tokens.push(current);
+      current = "";
+      continue;
+    }
+    current += character;
+  }
+  if (current) tokens.push(current);
+  if (tokens.length !== 2) return { status: "unsupported", reason: "not-a-direct-runner-and-source-target", tokens };
+  if (!DIRECT_SCRIPT_RUNNERS.has(tokens[0])) return { status: "unsupported", reason: "unsupported-direct-runner", tokens };
+  if (!tokens[1] || tokens[1].startsWith("-")) return { status: "unsupported", reason: "missing-literal-source-target", tokens };
+  return { status: "supported", runner: tokens[0], target: tokens[1], tokens };
+}
+
+function localPackageManifestPaths(root, records) {
+  const manifests = new Set();
+  for (const record of records) {
+    for (let directory = path.dirname(record.absolutePath); ; directory = path.dirname(directory)) {
+      const manifest = path.join(directory, "package.json");
+      try {
+        const stat = fs.lstatSync(manifest);
+        if (stat.isFile() && !stat.isSymbolicLink()) manifests.add(manifest);
+      } catch {}
+      if (directory === root || path.dirname(directory) === directory) break;
+    }
+  }
+  return [...manifests].sort((left, right) => left.localeCompare(right));
+}
+
+function packageScriptEntries(root, records, byRelativePath, descriptions) {
+  const supported = [];
+  const unsupported = [];
+  const nodes = [];
+  const edges = [];
+  for (const manifestPath of localPackageManifestPaths(root, records)) {
+    const manifest = safelyReadJson(manifestPath, null);
+    const manifestRelativePath = toPosix(path.relative(root, manifestPath));
+    if (!manifest || typeof manifest.scripts !== "object" || Array.isArray(manifest.scripts) || manifest.scripts === null) continue;
+    for (const scriptName of Object.keys(manifest.scripts).sort((left, right) => left.localeCompare(right))) {
+      const command = literalScriptTokens(manifest.scripts[scriptName]);
+      if (command.status !== "supported") {
+        unsupported.push({ manifest: manifestRelativePath, scriptName, reason: command.reason });
+        continue;
+      }
+      const absoluteTarget = path.resolve(path.dirname(manifestPath), command.target);
+      const relativeTarget = path.relative(root, absoluteTarget);
+      if (!relativeTarget || relativeTarget.startsWith("..") || path.isAbsolute(relativeTarget)) {
+        unsupported.push({ manifest: manifestRelativePath, scriptName, reason: "target-outside-repository" });
+        continue;
+      }
+      const targetPath = toPosix(relativeTarget);
+      const target = byRelativePath.get(targetPath);
+      if (!target) {
+        unsupported.push({ manifest: manifestRelativePath, scriptName, reason: "target-not-in-static-source-set", targetPath });
+        continue;
+      }
+      const id = `command:${manifestRelativePath}:${scriptName}`;
+      const evidence = {
+        parser: "package-json",
+        file: manifestRelativePath,
+        kind: "literal-direct-runner-script",
+        scriptName,
+        runner: command.runner,
+        targetPath,
+      };
+      const node = {
+        id,
+        kind: "command",
+        type: "command",
+        entryKind: "package-script",
+        label: `npm run ${scriptName}`,
+        path: manifestRelativePath,
+        manifest: manifestRelativePath,
+        scriptName,
+        runner: command.runner,
+        targetPath,
+        domain: target.domain,
+        feature: target.feature,
+        // A command declaration shares the target's static source layer so
+        // scope filtering cannot surface a command Flow Lens while hiding its
+        // declaration from the matching Viewer/agent projection.
+        layer: target.layer || "application",
+        sourceScope: target.sourceScope,
+        detectedResponsibility: "Literal package script declaration targeting one statically scanned source file.",
+        methods: [],
+        language: "json",
+        analysis: { parser: "package-json", status: "literal-direct-runner", confidence: "exact" },
+        evidence,
+        manualDescription: descriptions[id] || "",
+      };
+      nodes.push(node);
+      edges.push({ source: id, target: target.id, type: "declares-command-target", confidence: "exact", evidence });
+      supported.push({ id, manifest: manifestRelativePath, scriptName, runner: command.runner, targetPath, targetId: target.id });
+    }
+  }
+  return { nodes, edges, supported, unsupported };
+}
+
+function nodeCronScheduleEntries(records, findSymbol, descriptions) {
+  const supported = [];
+  const unsupported = [];
+  const nodes = [];
+  const edges = [];
+  for (const record of records) {
+    for (const candidate of record.result.unsupportedSchedules || []) {
+      unsupported.push({ path: candidate.path || record.relativePath, reason: candidate.reason });
+    }
+    for (const candidate of record.result.schedules || []) {
+      const target = findSymbol(record.relativePath, "function", candidate.taskName);
+      if (!target) {
+        unsupported.push({ path: record.relativePath, taskName: candidate.taskName, reason: "task-is-not-an-exact-local-top-level-function" });
+        continue;
+      }
+      const start = candidate.evidence?.range?.start || { line: 0, column: 0 };
+      const id = `schedule:${record.relativePath}:${candidate.taskName}:${start.line}:${start.column}`;
+      const evidence = {
+        ...candidate.evidence,
+        kind: "node-cron-literal-schedule",
+        adapter: "node-cron",
+        expression: candidate.expression,
+        taskName: candidate.taskName,
+        targetId: target.id,
+      };
+      const node = {
+        id,
+        kind: "schedule",
+        type: "schedule",
+        entryKind: "node-cron-schedule",
+        label: `node-cron ${candidate.expression} → ${candidate.taskName}`,
+        path: record.relativePath,
+        scheduleExpression: candidate.expression,
+        taskName: candidate.taskName,
+        targetPath: target.path,
+        targetId: target.id,
+        adapter: "node-cron",
+        domain: record.node.domain,
+        feature: record.node.feature,
+        layer: record.node.layer || "application",
+        sourceScope: record.node.sourceScope,
+        detectedResponsibility: "Literal node-cron registration targeting one statically local top-level function.",
+        methods: [],
+        language: record.node.language,
+        analysis: { parser: "typescript-ast", status: "literal-node-cron-schedule", confidence: "exact" },
+        evidence,
+        manualDescription: descriptions[id] || "",
+      };
+      nodes.push(node);
+      edges.push({ source: id, target: target.id, type: "schedules", confidence: "exact", evidence });
+      supported.push({ id, path: record.relativePath, expression: candidate.expression, taskName: candidate.taskName, targetPath: target.path, targetId: target.id });
+    }
+  }
+  return { nodes, edges, supported, unsupported };
+}
+
+function djangoManagementCommandEntries(records, findSymbol, descriptions) {
+  const supported = [];
+  const unsupported = [];
+  const nodes = [];
+  const edges = [];
+  for (const record of records) {
+    for (const candidate of record.result.unsupportedFrameworkCommands || []) unsupported.push(candidate);
+    for (const candidate of record.result.frameworkCommands || []) {
+      if (candidate.adapter !== "django") continue;
+      const target = findSymbol(record.relativePath, candidate.targetType, candidate.targetName);
+      if (!target) {
+        unsupported.push({ path: record.relativePath, commandName: candidate.commandName, reason: "exact-command-class-symbol-not-found" });
+        continue;
+      }
+      const id = `command:${record.relativePath}:django:${candidate.commandName}`;
+      const evidence = {
+        ...candidate.evidence,
+        kind: "django-management-command",
+        adapter: "django",
+        commandName: candidate.commandName,
+        targetId: target.id,
+      };
+      const node = {
+        id,
+        kind: "command",
+        type: "command",
+        entryKind: "django-management-command",
+        label: `python manage.py ${candidate.commandName}`,
+        path: record.relativePath,
+        commandName: candidate.commandName,
+        targetPath: target.path,
+        targetId: target.id,
+        adapter: "django",
+        domain: record.node.domain,
+        feature: record.node.feature,
+        layer: record.node.layer || "application",
+        sourceScope: record.node.sourceScope,
+        detectedResponsibility: "Exact Django management command declaration targeting one top-level Command class with a direct handle method.",
+        methods: [],
+        language: record.node.language,
+        analysis: { parser: "python-lezer", status: "django-management-command", confidence: "exact" },
+        evidence,
+        manualDescription: descriptions[id] || "",
+      };
+      nodes.push(node);
+      edges.push({ source: id, target: target.id, type: "declares-command-target", confidence: "exact", evidence });
+      supported.push({ id, path: record.relativePath, commandName: candidate.commandName, targetPath: target.path, targetId: target.id });
+    }
+  }
+  return { nodes, edges, supported, unsupported };
+}
+
 function buildFlows(nodes, edges, flowEntries = {}) {
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const outgoing = new Map();
@@ -2152,24 +2484,25 @@ function buildFlows(nodes, edges, flowEntries = {}) {
     outgoing.get(edge.source).push(edge);
   }
   const includesEntry = (node) => {
-    if (node.kind !== "endpoint") return false;
+    if (!isSupportedFlowEntryNode(node)) return false;
     if (node.sourceScope === "test") return flowEntries.tests === true;
     if (node.sourceScope === "fixture") return flowEntries.fixtures === true;
     return node.sourceScope === "application" || !node.sourceScope;
   };
   const includesStep = (node) => !["test", "fixture", "generated"].includes(node.sourceScope);
   const entries = nodes.filter(includesEntry);
-  // Structural file/symbol edges describe containment, not execution. Traversing
-  // them from an HTTP handler would pull sibling handlers from route.ts into the
-  // same Flow Lens. Start at the exact `handles` edge and only follow behavioral
-  // relationships after that.
-  const flowTargets = (current, edge) => {
-    if (current.depth === 0) return edge.type === "handles";
+  // Structural file/symbol edges describe containment, not execution. Entry
+  // families declare their exact first static relationship, then projections
+  // follow non-containment technical relationships only.
+  const flowTargets = (entry, current, edge) => {
+    if (current.depth === 0 && entry.kind === "endpoint") return edge.type === "handles";
+    if (current.depth === 0 && entry.kind === "command") return edge.type === "declares-command-target";
+    if (current.depth === 0 && entry.kind === "schedule") return edge.type === "schedules";
     return !["contains", "declares"].includes(edge.type);
   };
-  // A route/controller is not necessarily an HTTP/request entry. Do not create a
-  // Flow Lens from that fallback: callers may inspect its technical dependencies,
-  // but the HTTP/request-oriented contract requires an extracted endpoint fact.
+  // A route/controller, arbitrary script, or unqualified scheduler call is not
+  // automatically a static entry. Only registered supported entry facts may
+  // initiate a Flow Lens.
   return entries.map((entry) => {
     const queue = [{ id: entry.id, depth: 0 }];
     const visited = new Set();
@@ -2182,10 +2515,17 @@ function buildFlows(nodes, edges, flowEntries = {}) {
       if (!node || !includesStep(node)) continue;
       steps.push({ id: node.id, label: node.label, type: node.type, depth: current.depth });
       for (const edge of outgoing.get(current.id) || []) {
-        if (flowTargets(current, edge)) queue.push({ id: edge.target, depth: current.depth + 1 });
+        if (flowTargets(entry, current, edge)) queue.push({ id: edge.target, depth: current.depth + 1 });
       }
     }
-    return { id: `flow:${entry.id}`, title: entry.label, entryId: entry.id, steps };
+    const entryContract = entry.kind === "endpoint"
+      ? createHttpFlowEntry(entry)
+      : entry.kind === "schedule"
+        ? createNodeCronScheduleFlowEntry(entry)
+        : entry.entryKind === "django-management-command"
+          ? createDjangoManagementCommandFlowEntry(entry)
+          : createPackageScriptFlowEntry(entry);
+    return { id: `flow:${entry.id}`, title: entry.label, entryId: entry.id, entry: entryContract, steps };
   });
 }
 
@@ -2274,14 +2614,14 @@ function createGoPackageNode(packagePath, files, descriptions) {
   };
 }
 
-function createGraphContext(root) {
+function createGraphContext(root, options = {}) {
   const packageJson = safelyReadJson(path.join(root, "package.json"), {});
   const resolveConfiguredImport = createConfiguredResolver(root);
   const resolveBundlerAlias = createBundlerAliasResolver(root);
   const resolveWorkspaceImport = createWorkspaceResolver(root, packageJson);
   const resolveYarnPnpImport = createYarnPnpResolver(root);
   const resolvePackageImport = createPackageImportsResolver(root);
-  const resolveGoModuleImport = createGoModuleResolver(root);
+  const resolveGoModuleImport = createGoModuleResolver(root, options.sourcePaths || null);
   const resolvedImports = new Map();
   const resolveImportedPath = (record, imported) => {
     const key = `${record.extension}\u0000${record.relativePath}\u0000${imported.specifier}`;
@@ -2470,6 +2810,16 @@ function buildGraphFromRecords(root, sourceRecords, refresh = null, graphContext
     }
   }
 
+  const commandEntries = packageScriptEntries(root, records, byRelativePath, descriptions);
+  nodes.push(...commandEntries.nodes);
+  edges.push(...commandEntries.edges);
+  const djangoCommandEntries = djangoManagementCommandEntries(records, findSymbol, descriptions);
+  nodes.push(...djangoCommandEntries.nodes);
+  edges.push(...djangoCommandEntries.edges);
+  const scheduleEntries = nodeCronScheduleEntries(records, findSymbol, descriptions);
+  nodes.push(...scheduleEntries.nodes);
+  edges.push(...scheduleEntries.edges);
+
   const uniqueEdges = [...new Map(edges.map((edge) => [`${edge.source}|${edge.target}|${edge.type}`, edge])).values()];
   const sortedNodes = nodes.sort((left, right) => left.label.localeCompare(right.label));
   const coverage = summarizeFileCoverage(records);
@@ -2521,6 +2871,27 @@ function buildGraphFromRecords(root, sourceRecords, refresh = null, graphContext
         supported: ["direct identifier calls to top-level local functions", "direct identifier calls to named ES/CommonJS imports resolved inside the repository", "direct identifier calls to top-level local Python functions and named Python imports resolved inside the repository", "direct local Go function calls and aliased Go package selectors resolved inside the repository", "direct local PHP function calls", "direct local Rust functions and named crate/self/super imports", "direct unqualified unique local static Java method calls"],
         limitations: "Java instance/qualified/overloaded method dispatch, Rust macros, qualified module calls, trait dispatch, custom Cargo targets, and #[path] modules, default and namespace imports, PHP Composer/autoloaded functions, Python attribute calls, Go function values, ambiguous package functions, and unaliased package-name mismatches, dependency injection, callbacks, reflection, dynamic loading, and non-literal CommonJS requires are not resolved as call edges.",
       },
+      entryPoints: {
+        schemaVersion: "flowpeek-static-entry-inventory/v1",
+        supported: {
+          packageScripts: commandEntries.supported,
+          djangoManagementCommands: djangoCommandEntries.supported,
+          nodeCronSchedules: scheduleEntries.supported,
+          limitation: "Only an explicitly supported exact static subset becomes a Flow Lens entry: a direct package runner target, a Django management command declaration, or a literal node-cron registration.",
+        },
+        unsupported: {
+          packageScripts: commandEntries.unsupported,
+          djangoManagementCommands: djangoCommandEntries.unsupported,
+          nodeCronSchedules: scheduleEntries.unsupported,
+          limitation: "Unsupported scripts, framework commands, and schedule registrations are static inventory only. Their absence from Flow Lenses does not prove they cannot run or have no behavior.",
+        },
+        limitations: [
+          "Package scripts are not executed during discovery or scanning.",
+          "Shell composition, quoting, environment expansion, package-manager indirection, runner flags, computed configuration, and runtime module loading are not command-entry facts in this version.",
+          "Django discovery does not execute settings or app registration. Only a non-private management/commands module with one top-level Command class directly extending the imported BaseCommand binding and one direct handle method is projected.",
+          "Scheduler registration is not executed during discovery or scanning. Only the narrow node-cron default-import, literal-expression, exact-local-function subset is projected; scheduler initialization, task timing, callbacks, dynamic expressions, and other scheduler APIs remain unsupported.",
+        ],
+      },
       adapterCapabilities: getAdapterRegistry(),
       capabilities: getAdapterRegistry().adapters,
     },
@@ -2533,6 +2904,8 @@ function buildGraphFromRecords(root, sourceRecords, refresh = null, graphContext
       functions: sortedNodes.filter((node) => node.kind === "symbol" && node.type === "function").length,
       calls: uniqueEdges.filter((edge) => edge.type === "calls").length,
       endpoints: sortedNodes.filter((node) => node.kind === "endpoint").length,
+      commandEntries: sortedNodes.filter((node) => node.kind === "command" && ["package-script", "django-management-command"].includes(node.entryKind)).length,
+      scheduledEntries: sortedNodes.filter((node) => node.kind === "schedule" && node.entryKind === "node-cron-schedule").length,
       tests: sortedNodes.filter((node) => node.type === "test").length,
       runtimeDependencies: sortedNodes.filter((node) => node.layer === "runtime").length,
       parsedFiles: coverage.summary.parsedFiles,
@@ -2575,6 +2948,8 @@ function graphContextMayHaveChanged(root, relativePath) {
 
 function createRepositoryScanner(inputRoot, options = {}) {
   const root = fs.realpathSync(inputRoot);
+  const persistIdentity = options.persistIdentity !== false;
+  const sessionProjectId = persistIdentity ? null : options.sessionProjectId || `session:${randomUUID()}`;
   const records = new Map();
   let initialized = false;
   let graphContext = null;
@@ -2582,6 +2957,19 @@ function createRepositoryScanner(inputRoot, options = {}) {
   let repositoryScopeSignature = null;
   let excludedPaths = new Set();
   let projectIdentity = null;
+  let sessionGraph = null;
+  const initialFilePlan = Array.isArray(options.initialFilePlan)
+    ? options.initialFilePlan.map((entry) => {
+      const relativePath = typeof entry === "string" ? entry : entry?.path;
+      const absolutePath = typeof relativePath === "string" ? path.resolve(root, relativePath) : null;
+      const rootRelativePath = absolutePath ? path.relative(root, absolutePath) : null;
+      if (typeof relativePath !== "string" || !relativePath || path.isAbsolute(relativePath)
+        || !rootRelativePath || rootRelativePath.startsWith("..") || path.isAbsolute(rootRelativePath)) {
+        throw new Error("initialFilePlan must contain repository-relative source paths.");
+      }
+      return absolutePath;
+    })
+    : null;
 
   const timed = (phase, operation) => {
     if (typeof options.onProfile !== "function") return operation();
@@ -2597,6 +2985,7 @@ function createRepositoryScanner(inputRoot, options = {}) {
     for (const candidate of [...records.keys()]) {
       if (candidate === relativePath || candidate.startsWith(`${relativePath}/`)) {
         records.delete(candidate);
+        refresh.removedPaths.add(candidate);
         refresh.removedFiles += 1;
         removed = true;
       }
@@ -2655,6 +3044,7 @@ function createRepositoryScanner(inputRoot, options = {}) {
     for (const candidate of [...records.keys()]) {
       if (candidate.startsWith(`${relativePath}/`) && !present.has(candidate)) {
         records.delete(candidate);
+        refresh.removedPaths.add(candidate);
         refresh.removedFiles += 1;
       }
     }
@@ -2666,7 +3056,9 @@ function createRepositoryScanner(inputRoot, options = {}) {
   const reconcileAll = (refresh) => {
     excludedPaths = new Set();
     const present = new Set();
-    const absolutePaths = walk(root);
+    const absolutePaths = !initialized && initialFilePlan
+      ? initialFilePlan.filter((absolutePath) => fs.existsSync(absolutePath) && isScannableFile(absolutePath))
+      : walk(root);
     for (const absolutePath of absolutePaths) {
       const relativePath = toPosix(path.relative(root, absolutePath));
       if (classifyRepositoryPath(relativePath, repositoryScope) === "excluded") excludedPaths.add(relativePath);
@@ -2708,7 +3100,19 @@ function createRepositoryScanner(inputRoot, options = {}) {
     timed("scope-and-identity", () => {
       nextScope = readRepositoryScope(root);
       nextScopeSignature = scopeSignature(nextScope);
-      projectIdentity = resolveProjectIdentity(root, nextScope.projectId, { persist: options.persistIdentity !== false });
+      if (!projectIdentity || repositoryScope?.projectId !== nextScope.projectId) {
+        const canonicalIdentity = resolveProjectIdentity(root, nextScope.projectId, { persist: persistIdentity });
+        projectIdentity = persistIdentity
+          ? canonicalIdentity
+          : {
+            projectId: sessionProjectId,
+            canonicalProjectId: canonicalIdentity.projectId,
+            source: "session",
+            status: "session-only",
+            originRemote: canonicalIdentity.originRemote,
+            limitation: "This cache-disabled scanner uses a process-local project identity and monotonic graph versions. Context Refs are valid only inside this scanner session and cannot be reused as durable project context.",
+          };
+      }
     });
     const scopeChanged = repositoryScopeSignature !== null && repositoryScopeSignature !== nextScopeSignature;
     repositoryScope = nextScope;
@@ -2723,6 +3127,7 @@ function createRepositoryScanner(inputRoot, options = {}) {
     };
     if (scopeChanged) refresh.scopeChanged = true;
     Object.defineProperty(refresh, "analyzedPaths", { value: new Set(), enumerable: false });
+    Object.defineProperty(refresh, "removedPaths", { value: new Set(), enumerable: false });
     let contextChanged = !initialized || changedPaths === null || scopeChanged;
     if (scopeChanged) {
       records.clear();
@@ -2735,32 +3140,69 @@ function createRepositoryScanner(inputRoot, options = {}) {
         initialized = true;
       } else {
         const uniquePaths = new Set();
+        const directoryPaths = new Set();
         let ambiguousChange = false;
         for (const changedPath of changedPaths) {
           const relativePath = relativeChangedPath(root, String(changedPath || ""));
           if (relativePath) {
+            let isDirectory = false;
+            try {
+              isDirectory = fs.statSync(path.resolve(root, relativePath)).isDirectory();
+            } catch {
+              // A removal can no longer be stat'ed. The reconciler below records any removed source paths.
+            }
+            if (isDirectory) {
+              directoryPaths.add(relativePath);
+              contextChanged = true;
+              continue;
+            }
             uniquePaths.add(relativePath);
             if (graphContextMayHaveChanged(root, relativePath)) contextChanged = true;
           }
           else ambiguousChange = true;
         }
-        refresh.changedPaths = [...uniquePaths].sort();
         if (ambiguousChange) {
           refresh.mode = "reconciled";
           contextChanged = true;
           reconcileAll(refresh);
         } else {
+          for (const relativePath of directoryPaths) {
+            if (reconcileChangedPath(relativePath, refresh)) contextChanged = true;
+          }
           for (const relativePath of uniquePaths) {
             if (reconcileChangedPath(relativePath, refresh)) contextChanged = true;
           }
         }
+        const sourceChangedPaths = new Set(
+          [...uniquePaths].filter((relativePath) => CODE_EXTENSIONS.has(extensionOf(relativePath)) || graphContextMayHaveChanged(root, relativePath)),
+        );
+        for (const relativePath of refresh.analyzedPaths) sourceChangedPaths.add(relativePath);
+        for (const relativePath of refresh.removedPaths) sourceChangedPaths.add(relativePath);
+        refresh.changedPaths = [...sourceChangedPaths].sort();
       }
     });
     if (refresh.mode === "incremental") refresh.reusedFiles = Math.max(refresh.reusedFiles, records.size - refresh.analyzedFiles);
     timed("resolver-context", () => {
-      if (contextChanged || !graphContext) graphContext = createGraphContext(root);
+      if (contextChanged || !graphContext) graphContext = createGraphContext(root, {
+        sourcePaths: initialFilePlan
+          ? initialFilePlan.map((absolutePath) => toPosix(path.relative(root, absolutePath)))
+          : null,
+      });
     });
-    return timed("graph-assembly", () => buildGraphFromRecords(root, [...records.values()], refresh, graphContext, repositoryScope, [...excludedPaths].sort(), projectIdentity));
+    return timed("graph-assembly", () => {
+      const graph = buildGraphFromRecords(root, [...records.values()], refresh, graphContext, repositoryScope, [...excludedPaths].sort(), projectIdentity);
+      if (persistIdentity) return graph;
+      graph.analysis.cacheState = {
+        status: "disabled",
+        path: path.join(root, ".flowpeek", "graph.json"),
+        diagnostics: [],
+        contract: null,
+        migrated: false,
+      };
+      advanceSessionGraph(graph, sessionGraph, { changedPaths: refresh.changedPaths });
+      sessionGraph = graph;
+      return graph;
+    });
   };
 
   return { root, scan };
@@ -2783,7 +3225,7 @@ function graphToMermaid(graph, limit = 100) {
   }).join("");
   const label = (value) => value.split("").filter((character) => !["\"", "[", "]"].includes(character)).join("");
   const visibleNodes = graph.nodes
-    .filter((node) => node.layer === "application" && (node.kind === "endpoint" || ["route", "controller", "service", "repository", "database", "queue"].includes(node.type)))
+    .filter((node) => node.layer === "application" && (isSupportedFlowEntryNode(node) || ["route", "controller", "service", "repository", "database", "queue"].includes(node.type)))
     .slice(0, limit);
   const visibleIds = new Set(visibleNodes.map((node) => node.id));
   const nodeLines = visibleNodes.map((node) => `  ${validId(node.id)}["${label(node.label)}"]`);

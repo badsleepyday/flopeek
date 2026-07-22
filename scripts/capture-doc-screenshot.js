@@ -112,6 +112,10 @@ async function main() {
   const url = loopbackUrl(argument("--url"));
   const output = safeOutput(argument("--output"));
   const click = argument("--click");
+  const level = argument("--level");
+  const keyboardFlow = process.argv.includes("--keyboard-flow");
+  const viewportWidth = Number(argument("--width") || 1600);
+  const viewportHeight = Number(argument("--height") || 1000);
   const flowId = argument("--flow-id");
   const fromVersion = Number(argument("--from-version"));
   const toVersion = Number(argument("--to-version"));
@@ -134,6 +138,8 @@ async function main() {
   let client;
   let browserClient;
   try {
+    if (level && !["domain", "feature", "component", "symbol"].includes(level)) throw new Error("--level must be domain, feature, component, or symbol.");
+    if (!Number.isInteger(viewportWidth) || !Number.isInteger(viewportHeight) || viewportWidth < 320 || viewportWidth > 3200 || viewportHeight < 320 || viewportHeight > 2400) throw new Error("--width and --height must be integers from 320 through 3200 and 2400 respectively.");
     await waitForFile(activePortFile);
     const [port, browserPathname] = fs.readFileSync(activePortFile, "utf8").trim().split(/\r?\n/u);
     browserClient = new CdpClient(`ws://127.0.0.1:${port}${browserPathname}`);
@@ -145,12 +151,32 @@ async function main() {
     await client.connect();
     await client.send("Page.enable");
     await client.send("Runtime.enable");
-    await client.send("Emulation.setDeviceMetricsOverride", { width: 1600, height: 1000, deviceScaleFactor: 1, mobile: false });
+    await client.send("Emulation.setDeviceMetricsOverride", { width: viewportWidth, height: viewportHeight, deviceScaleFactor: 1, mobile: false });
     const loaded = client.once("Page.loadEventFired");
     await client.send("Page.navigate", { url });
     await loaded;
     await delay(1800);
     await client.send("Runtime.evaluate", { expression: `(() => { const root = document.querySelector("#root-input"); if (root) root.value = "D:\\\\work\\\\example-project"; return true; })()` });
+    if (level) {
+      const result = await client.send("Runtime.evaluate", {
+        expression: `(() => { const select = document.querySelector("#level-filter"); if (!select) throw new Error("Level selector not found"); select.value = ${JSON.stringify(level)}; select.dispatchEvent(new Event("change", { bubbles: true })); return true; })()`,
+        returnByValue: true,
+      });
+      if (result.exceptionDetails) throw new Error(`Unable to set capture level ${level}.`);
+      await delay(1800);
+    }
+    if (keyboardFlow) {
+      const focusResult = await client.send("Runtime.evaluate", {
+        expression: `(() => { const flow = document.querySelector("#flow-list button"); if (!flow) throw new Error("Flow button not found"); flow.focus(); return document.activeElement === flow; })()`,
+        returnByValue: true,
+      });
+      if (!focusResult.result?.value) throw new Error("Unable to focus a static flow button for keyboard capture.");
+      await client.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+      await client.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+      await delay(1200);
+      const activated = await client.send("Runtime.evaluate", { expression: "Boolean(document.querySelector('#inspector .flow-lens-steps'))", returnByValue: true });
+      if (!activated.result?.value) throw new Error("Keyboard activation did not open the selected Flow Lens.");
+    }
     if (click) {
       const expression = `(() => { const target = document.querySelector(${JSON.stringify(click)}); if (!target) throw new Error("Capture target not found"); target.click(); return true; })()`;
       const result = await client.send("Runtime.evaluate", { expression, returnByValue: true });

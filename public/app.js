@@ -1,7 +1,12 @@
-const state = { graph: null, workspace: null, selectedId: null, focusId: null, mode: "overview", scope: "application", cy: null, searchTimer: null, statusTimer: null, liveReloading: false, liveReloadQueued: false, events: null, liveNewFiles: [], liveNewFileCount: 0, liveNewFilesTruncated: false, liveDelta: null, liveContexts: null, contextResolution: null, flowLens: null, flowComparison: null, projectHome: null, productProof: null, benchmark: null, benchmarking: false };
+const state = { graph: null, workspace: null, scanOutcome: null, candidateRepositoryCheck: null, selectedId: null, selectedPlannedNodeId: null, focusId: null, mode: "overview", scope: "application", level: "feature", continueMode: false, plannedOverlays: null, plannedOverlayId: null, cy: null, cyRenderer: null, renderViewKey: null, renderer: "canvas", rendererMetrics: null, searchTimer: null, statusTimer: null, liveReloading: false, liveReloadQueued: false, events: null, liveNewFiles: [], liveNewFileCount: 0, liveNewFilesTruncated: false, liveDelta: null, liveContexts: null, contextResolution: null, flowLens: null, flowComparison: null, projectHome: null, productProof: null, benchmark: null, benchmarking: false, initialFlowOpened: false };
 const $ = (selector) => document.querySelector(selector);
-const colorByType = { endpoint: "#7632ba", route: "#3856c9", controller: "#3856c9", service: "#0b7a67", class: "#0b7a67", function: "#1371a4", repository: "#b45b1a", database: "#9b6611", queue: "#a43470", external: "#586578", feature: "#3457d5", module: "#61708b", config: "#7282a1", declaration: "#7282a1" };
-const modeTitles = { overview: "Feature overview", requests: "Request map", dependencies: "Direct dependencies" };
+const colorByType = { endpoint: "#7632ba", command: "#146c94", schedule: "#9a4d00", route: "#3856c9", controller: "#3856c9", service: "#0b7a67", class: "#0b7a67", function: "#1371a4", repository: "#b45b1a", database: "#9b6611", queue: "#a43470", external: "#586578", feature: "#3457d5", module: "#61708b", config: "#7282a1", declaration: "#7282a1" };
+const modeTitles = { overview: "Feature overview", requests: "Entry map", dependencies: "Direct dependencies" };
+
+function mapTitle(view) {
+  if (view.mode !== "overview") return modeTitles[view.mode];
+  return ({ domain: "Domain overview", feature: "Feature overview", component: "Component overview", symbol: "Symbol overview" })[view.level] || modeTitles.overview;
+}
 
 function escapeHtml(value = "") { return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]); }
 function toast(message) { const node = $("#toast-template").content.firstElementChild.cloneNode(true); node.textContent = message; document.body.append(node); setTimeout(() => node.remove(), 2600); }
@@ -19,14 +24,48 @@ async function copyText(value, message) {
 async function request(url, options) {
   const response = await fetch(url, options);
   const payload = await response.json();
-  if (!response.ok) throw new Error(payload.error || "Request failed.");
+  if (!response.ok) {
+    const error = new Error(payload.error || "Request failed.");
+    error.payload = payload;
+    throw error;
+  }
   return payload;
 }
 
 function activeViewQuery() {
-  const query = new URLSearchParams({ mode: state.mode, scope: state.scope });
+  const query = new URLSearchParams({ mode: state.mode, scope: state.scope, level: state.level });
   if (state.focusId) query.set("focus", state.focusId);
   return query;
+}
+
+function currentPackageSelection() {
+  return state.scanOutcome?.discovery?.selection || state.graph?.aiContext?.packageSelection || null;
+}
+
+function renderPackageScope() {
+  const badge = $("#package-scope-badge");
+  const boundary = $("#package-scope-boundary");
+  if (!badge || !boundary) return;
+  const selection = currentPackageSelection();
+  if (selection?.status !== "selected") {
+    badge.hidden = true;
+    badge.textContent = "";
+    badge.title = "";
+    badge.removeAttribute("aria-describedby");
+    boundary.hidden = true;
+    boundary.textContent = "";
+    return;
+  }
+  badge.hidden = false;
+  badge.textContent = `Package: ${selection.path}`;
+  badge.setAttribute("aria-describedby", "package-scope-boundary");
+  boundary.hidden = false;
+  boundary.textContent = "Session only · repository cache unchanged";
+  badge.title = [
+    "Static package subtree only.",
+    "This does not prove workspace membership, dependency ownership, build activation, or runtime topology.",
+    "The scan uses an ephemeral session graph and does not replace the repository-wide cache.",
+  ].join("\n");
 }
 
 async function loadWorkspace() {
@@ -44,20 +83,125 @@ async function loadWorkspace() {
 
 async function loadView() {
   $("#status").textContent = "Scanning technical structure...";
-  state.graph = await request(`/api/view?${activeViewQuery().toString()}`);
+  [state.graph, state.scanOutcome, state.plannedOverlays] = await Promise.all([
+    request(`/api/view?${activeViewQuery().toString()}`),
+    request("/api/scan-status"),
+    request("/api/planned-overlays"),
+  ]);
   $("#status").textContent = "";
   $("#root-input").value = state.graph.project.root;
   $("#project-name").textContent = state.graph.project.name;
+  renderPackageScope();
   $("#project-id-badge").textContent = state.graph.project.projectId ? state.graph.project.projectId.slice(0, 20) : "identity unavailable";
   $("#graph-version-badge").textContent = Number.isInteger(state.graph.aiContext?.graphState?.graphVersion) ? `v${state.graph.aiContext.graphState.graphVersion}` : "unversioned";
   $("#branch-badge").textContent = state.graph.project.git.branch;
   $("#revision-badge").textContent = state.graph.project.git.revision ? `@ ${state.graph.project.git.revision.slice(0, 12)}` : "";
-  $("#stats").textContent = `${state.graph.stats.scannedFiles} files · ${state.graph.stats.classes} classes · ${state.graph.stats.functions} functions · ${state.graph.stats.calls || 0} direct calls · ${state.graph.stats.services} services · ${state.graph.stats.endpoints} endpoints · ${state.graph.stats.tests} tests`;
+  $("#stats").textContent = `${state.graph.stats.scannedFiles} files · ${state.graph.stats.classes} classes · ${state.graph.stats.functions} functions · ${state.graph.stats.calls || 0} direct calls · ${state.graph.stats.services} services · ${state.graph.stats.endpoints} HTTP entries · ${state.graph.stats.commandEntries || 0} command entries · ${state.graph.stats.scheduledEntries || 0} scheduled entries · ${state.graph.stats.tests} tests`;
+  renderScanOutcome(state.scanOutcome);
   $("#mode-filter").value = state.mode;
   $("#scope-filter").value = state.scope;
+  $("#level-filter").value = state.graph.view.level || state.level;
+  $("#level-filter").disabled = state.mode === "dependencies";
+  renderContinueControls();
   renderSidebar();
   renderGraph();
-  if (!state.selectedId && !state.flowLens) await openProjectHome(state.projectHome?.conceptSearch?.concept || "");
+  if (!state.selectedId && !state.flowLens && !state.initialFlowOpened) {
+    state.initialFlowOpened = true;
+    const firstFlow = state.graph.flows?.[0];
+    if (firstFlow) {
+      await openFlowLens(firstFlow.id);
+    } else {
+      await openProjectHome(state.projectHome?.conceptSearch?.concept || "");
+    }
+  }
+}
+
+function selectedPlannedOverlay() {
+  if (!state.continueMode || !state.plannedOverlayId) return null;
+  return state.plannedOverlays?.records?.find((overlay) => overlay.id === state.plannedOverlayId) || null;
+}
+
+function renderContinueControls() {
+  const enabled = Boolean(state.continueMode);
+  const select = $("#planned-overlay-filter");
+  const records = state.plannedOverlays?.status === "available" ? state.plannedOverlays.records || [] : [];
+  if (state.plannedOverlayId && !records.some((record) => record.id === state.plannedOverlayId)) {
+    state.plannedOverlayId = null;
+    state.selectedPlannedNodeId = null;
+  }
+  select.innerHTML = `<option value="">${records.length ? "Choose a planned overlay" : "No local planned overlays"}</option>${records.map((overlay) => `<option value="${escapeHtml(overlay.id)}" ${overlay.id === state.plannedOverlayId ? "selected" : ""}>${escapeHtml(overlay.id)} · ${escapeHtml(overlay.checkpointFreshnessStatus)}</option>`).join("")}`;
+  select.disabled = !enabled || !records.length;
+  $("#continue-mode").checked = enabled;
+  const status = $("#continue-mode-status");
+  status.textContent = enabled ? "On" : "Off";
+  status.dataset.status = enabled ? "on" : "off";
+  const overlay = selectedPlannedOverlay();
+  $("#continue-mode-note").textContent = !enabled
+    ? "Off: this map contains only current static technical evidence."
+    : !records.length
+      ? "No local planned overlay is available. Planning metadata remains separate from source evidence."
+      : !overlay
+        ? "Choose one overlay. Planned nodes remain delivery-plan metadata, not source facts."
+        : `${overlay.nodes.length} planned nodes · ${overlay.edges.length} planned relationships · checkpoint anchors ${overlay.checkpointFreshnessStatus}.`;
+}
+
+function renderScanOutcome(outcome, phase = null) {
+  const badge = $("#scan-status-badge");
+  const cancel = $("#cancel-scan");
+  if (!badge) return;
+  if (state.candidateRepositoryCheck) {
+    badge.className = "scan-status-badge candidate";
+    badge.textContent = "Checking new repository · current map remains active";
+    badge.title = [
+      "Candidate repository check in progress.",
+      `Current map: ${state.graph?.project?.name || "active repository"}.`,
+      "Cancel is unavailable until the candidate is accepted.",
+    ].join("\n");
+    if (cancel) cancel.hidden = true;
+    return;
+  }
+  const status = outcome?.status || "idle";
+  const freshness = outcome?.activeGraph?.freshness || "unavailable";
+  const displayPhase = phase || outcome?.progress?.phase || "";
+  badge.className = "scan-status-badge";
+  if (status === "running") {
+    badge.classList.add("running");
+    badge.textContent = displayPhase ? `Scanning · ${displayPhase.replaceAll("-", " ")}` : "Scanning";
+  } else if (status === "complete" && freshness === "current") {
+    badge.classList.add("current");
+    badge.textContent = "Scan current";
+  } else if (outcome?.activeGraph?.available) {
+    badge.classList.add("stale");
+    badge.textContent = "Cached graph · source unverified";
+  } else if (status === "failed") {
+    badge.classList.add("failed");
+    badge.textContent = "Scan failed";
+  } else {
+    badge.textContent = "Scan status unavailable";
+  }
+  const bounds = outcome?.bounds || {};
+  const selection = outcome?.discovery?.selection || outcome?.progress?.selection || currentPackageSelection();
+  const limits = [
+    Number.isFinite(bounds.timeBudgetMs) ? `${bounds.timeBudgetMs} ms` : null,
+    Number.isFinite(bounds.maxFiles) ? `${bounds.maxFiles} files` : null,
+    Number.isFinite(bounds.maxBytes) ? `${bounds.maxBytes} bytes` : null,
+  ].filter(Boolean).join(" · ");
+  badge.title = [
+    `Status: ${status}`,
+    `Freshness: ${freshness}`,
+    outcome?.activeGraph?.source ? `Graph source: ${outcome.activeGraph.source}` : null,
+    outcome?.reason ? `Reason: ${outcome.reason}` : null,
+    limits ? `Bounds: ${limits}` : "Bounds: none",
+    selection?.status === "selected" ? `Static package scope: ${selection.path}` : null,
+  ].filter(Boolean).join("\n");
+  if (cancel) cancel.hidden = !(status === "running" && outcome?.mode === "bounded-full-analysis");
+}
+
+function setCandidateRepositoryCheck(requestedRoot = null) {
+  state.candidateRepositoryCheck = requestedRoot;
+  const submit = $("#scan-form button[type=submit]");
+  if (submit) submit.disabled = Boolean(requestedRoot);
+  renderScanOutcome(state.scanOutcome);
 }
 
 function showStatus(message) {
@@ -138,6 +282,25 @@ async function reloadLiveView(options = {}) {
 function connectLiveUpdates() {
   if (!window.EventSource) return;
   state.events = new EventSource("/api/events");
+  state.events.addEventListener("ready", (event) => {
+    try {
+      const ready = JSON.parse(event.data);
+      if (ready.scanOutcome) {
+        state.scanOutcome = ready.scanOutcome;
+        renderScanOutcome(ready.scanOutcome);
+      }
+    } catch {}
+  });
+  state.events.addEventListener("scan-status", (event) => {
+    try {
+      const update = JSON.parse(event.data);
+      state.scanOutcome = update;
+      renderScanOutcome(update, update.phase);
+      if (["partial-by-budget", "cancelled", "failed"].includes(update.status) && update.activeGraph?.available) {
+        toast("Scan did not complete. Flowpeek kept the last complete graph and marks it source-unverified.");
+      }
+    } catch {}
+  });
   state.events.addEventListener("graph", (event) => {
     try {
       const update = JSON.parse(event.data);
@@ -168,18 +331,31 @@ function connectLiveUpdates() {
   state.events.addEventListener("graph-error", (event) => {
     try { toast(`Live scan failed: ${JSON.parse(event.data).message}`); } catch { toast("Live scan failed."); }
   });
+  state.events.addEventListener("planned-overlay", async () => {
+    try {
+      state.plannedOverlays = await request("/api/planned-overlays");
+      renderContinueControls();
+      if (state.continueMode) renderGraph();
+    } catch (error) {
+      toast(`Planned overlay refresh failed: ${error.message}`);
+    }
+  });
+  state.events.addEventListener("plan-reconciliation", () => {
+    if (state.continueMode && state.selectedPlannedNodeId) selectPlannedNode(state.selectedPlannedNodeId).catch((error) => toast(`Plan-reconciliation refresh failed: ${error.message}`));
+  });
 }
 
 function renderSidebar() {
   const flowList = $("#flow-list");
   const flowItems = state.graph.flows;
   const catalog = state.graph.flowCatalog || { total: flowItems.length, returned: flowItems.length, omittedFlowIds: [], truncated: false, warning: null };
+  const entryCount = (state.graph.stats.endpoints || 0) + (state.graph.stats.commandEntries || 0) + (state.graph.stats.scheduledEntries || 0);
   $("#flow-summary").textContent = catalog.truncated
     ? `${catalog.returned} of ${catalog.total} Flow Lenses shown. ${catalog.warning || "Some items are omitted."}`
-    : `${catalog.returned} Flow Lenses for ${state.graph.stats.endpoints} detected endpoints.`;
+    : `${catalog.returned} Flow Lenses for ${entryCount} detected static entries.`;
   flowList.innerHTML = flowItems.length
     ? flowItems.map((flow) => `<button class="flow-button${state.flowLens?.flow?.id === flow.id ? " selected-flow" : ""}" data-flow="${escapeHtml(flow.id)}" title="${escapeHtml(flow.title)}">${escapeHtml(flow.title)}</button>`).join("")
-    : `<section class="empty-flow-state"><strong>No static HTTP/request entry point detected.</strong><p>This does not mean the application has no behavior. Flowpeek still has its bounded technical map.</p><div class="button-row"><button data-empty-flow-action="overview">Explore features</button><button data-empty-flow-action="search">Find code</button></div></section>`;
+    : `<section class="empty-flow-state"><strong>No supported static entry point detected.</strong><p>This does not mean the application has no behavior. Flowpeek still has its bounded technical map.</p><div class="button-row"><button data-empty-flow-action="overview">Explore features</button><button data-empty-flow-action="search">Find code</button></div></section>`;
   flowList.querySelectorAll("[data-flow]").forEach((button) => button.addEventListener("click", () => openFlowLens(button.dataset.flow)));
   flowList.querySelectorAll("[data-empty-flow-action]").forEach((button) => button.addEventListener("click", async () => {
     if (button.dataset.emptyFlowAction === "search") {
@@ -400,23 +576,133 @@ async function runProductProofBenchmark() {
 
 function graphLabel(node) {
   if (node.kind === "summary") return `${node.label}\n${node.memberCount} source node${node.memberCount === 1 ? "" : "s"}`;
-  return `${node.label}\n${node.kind === "endpoint" ? "HTTP handler" : node.type}`;
+  const role = node.kind === "endpoint" ? "HTTP entry" : node.kind === "command" ? "Declared package command" : node.kind === "schedule" ? "Declared static schedule" : node.type;
+  const evidence = node.analysis?.status === "inventory-only" ? "inventory only" : "static evidence";
+  return `${node.label}\n${role} · ${evidence}`;
+}
+
+function contextRefTarget(contextRef, factualNodeIds, anchors) {
+  try {
+    const parts = new URL(contextRef).pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    const contextId = parts[2]?.replace(/@\d+$/u, "") || null;
+    if (parts[1] === "node" && contextId && factualNodeIds.has(contextId)) return contextId;
+    const anchorId = `plan-anchor:${encodeURIComponent(contextRef)}`;
+    if (!anchors.has(anchorId)) anchors.set(anchorId, { data: { id: anchorId, label: `Current context anchor\n${parts[1] || "unknown"}`, type: "context-anchor", kind: "context-anchor", contextRef, anchor: true, planned: false, color: "#536782" } });
+    return anchorId;
+  } catch {
+    const anchorId = `plan-anchor:${encodeURIComponent(contextRef)}`;
+    if (!anchors.has(anchorId)) anchors.set(anchorId, { data: { id: anchorId, label: "Current context anchor", type: "context-anchor", kind: "context-anchor", contextRef, anchor: true, planned: false, color: "#536782" } });
+    return anchorId;
+  }
+}
+
+function continuationElements() {
+  const overlay = selectedPlannedOverlay();
+  if (!overlay) return { nodes: [], edges: [], plannedNodes: 0, plannedEdges: 0, anchorNodes: 0 };
+  const factualNodeIds = new Set(state.graph.nodes.map((node) => node.id));
+  const anchors = new Map();
+  const plannedId = (id) => `planned:${overlay.id}:${id}`;
+  const endpoint = (value) => value.kind === "planned-node" ? plannedId(value.plannedNodeId) : contextRefTarget(value.contextRef, factualNodeIds, anchors);
+  const nodes = overlay.nodes.map((node) => ({ data: { id: plannedId(node.id), label: `PLANNED\n${node.title}`, type: "planned", kind: node.kind, planned: true, plannedNodeId: node.id, overlayId: overlay.id, planRef: node.planRef, checkpointId: overlay.checkpointId, checkpointFreshnessStatus: overlay.checkpointFreshnessStatus, color: "#7956b2" } }));
+  const edges = overlay.edges.map((edge, index) => ({ data: { id: `planned-edge:${overlay.id}:${index}`, source: endpoint(edge.source), target: endpoint(edge.target), type: "planned", planned: true, label: edge.relationship.replaceAll("_", " "), relationship: edge.relationship, overlayId: overlay.id } }));
+  return { nodes: [...anchors.values(), ...nodes], edges, plannedNodes: nodes.length, plannedEdges: edges.length, anchorNodes: anchors.size };
 }
 
 function graphElements() {
+  const continuation = continuationElements();
+  return {
+    elements: [
+      ...state.graph.nodes.map((node) => ({ data: { id: node.id, label: graphLabel(node), type: node.type, kind: node.kind, layer: node.layer, planned: false, analysisStatus: node.analysis?.status || "parsed", evidenceClass: node.evidenceClass || "parser-fact", color: colorByType[node.type] || colorByType.feature } })),
+      ...state.graph.edges.map((edge, index) => ({ data: { id: edge.id || `${edge.source}-${edge.target}-${index}`, source: edge.source, target: edge.target, type: edge.type, label: edge.count > 1 ? `${edge.type} · ${edge.count}` : edge.type, count: edge.count || 1, planned: false } })),
+      ...continuation.nodes,
+      ...continuation.edges,
+    ],
+    continuation,
+  };
+}
+
+function elementId(element) { return element.data.id; }
+
+function newNodePosition(element, elements, cy, index) {
+  const id = elementId(element);
+  const relation = elements.find((candidate) => candidate.data.source === id || candidate.data.target === id);
+  const neighborId = relation?.data.source === id ? relation.data.target : relation?.data.source;
+  const neighbor = neighborId ? cy.getElementById(neighborId) : null;
+  const origin = neighbor?.length ? neighbor.position() : { x: cy.width() / 2, y: cy.height() / 2 };
+  const angle = (index % 6) * (Math.PI / 3);
+  const distance = 164 + Math.floor(index / 6) * 54;
+  return { x: origin.x + Math.cos(angle) * distance, y: origin.y + Math.sin(angle) * distance };
+}
+
+function synchronizeCytoscape(cy, elements, style) {
+  const next = new Map(elements.map((element) => [elementId(element), element]));
+  const removed = cy.elements().filter((element) => !next.has(element.id()));
+  const additions = [];
+  cy.batch(() => {
+    if (removed.length) cy.remove(removed);
+    for (const element of elements) {
+      const current = cy.getElementById(elementId(element));
+      if (current.length) current.data(element.data);
+      else additions.push(element);
+    }
+  });
+  const nodes = additions.filter((element) => !element.data.source).map((element, index) => ({ ...element, position: newNodePosition(element, elements, cy, index) }));
+  const edges = additions.filter((element) => element.data.source);
+  if (nodes.length) cy.add(nodes.map((element) => ({ ...element, group: "nodes" })));
+  if (edges.length) cy.add(edges.map((element) => ({ ...element, group: "edges" })));
+  if (style?.length && cy.style()?.fromJson) cy.style().fromJson(style).update();
+  return { addedNodes: additions.filter((element) => !element.data.source).length, addedEdges: additions.filter((element) => element.data.source).length, removed: removed.length };
+}
+
+function viewRenderKey(view, continuation) {
   return [
-    ...state.graph.nodes.map((node) => ({ data: { id: node.id, label: graphLabel(node), type: node.type, kind: node.kind, layer: node.layer, color: colorByType[node.type] || colorByType.feature } })),
-    ...state.graph.edges.map((edge, index) => ({ data: { id: edge.id || `${edge.source}-${edge.target}-${index}`, source: edge.source, target: edge.target, type: edge.type, label: edge.count > 1 ? `${edge.type} · ${edge.count}` : edge.type, count: edge.count || 1 } })),
-  ];
+    view.mode,
+    view.scope,
+    view.level,
+    view.focusId || "",
+    state.continueMode ? state.plannedOverlayId || "continue-without-overlay" : "technical-only",
+    continuation.plannedNodes,
+    continuation.anchorNodes,
+  ].join("\u0000");
+}
+
+function focusRenderedView(cy, view, renderedNodeCount) {
+  if (renderedNodeCount <= 20) {
+    cy.fit(undefined, 42);
+    // A two-node projection otherwise expands to the renderer's maximum zoom,
+    // turning a compact orientation map into two oversized cards. This limits
+    // only the automatic fit; people can still zoom in deliberately.
+    cy.zoom(Math.min(cy.zoom(), 1.35));
+    cy.center(cy.nodes());
+    return;
+  }
+  const focus = view.focusId ? cy.getElementById(view.focusId) : cy.nodes().first();
+  cy.zoom(0.78);
+  if (focus.length) cy.center(focus);
 }
 
 function renderGraph() {
-  if (state.cy) { state.cy.destroy(); state.cy = null; }
   const container = $("#graph");
   const { nodes, edges, view } = state.graph;
-  $("#view-title").textContent = modeTitles[view.mode];
-  $("#graph-note").textContent = view.emptyState || `${nodes.length} visible nodes · ${edges.length} visible relationships · ${view.sourceNodeCount} source nodes represented`;
-  if (!nodes.length) {
+  const graphRender = graphElements();
+  const continuation = graphRender.continuation;
+  const nextRenderViewKey = viewRenderKey(view, continuation);
+  const renderedNodeCount = nodes.length + continuation.plannedNodes + continuation.anchorNodes;
+  $("#view-title").textContent = state.continueMode ? "Continue mode" : mapTitle(view);
+  container.setAttribute("aria-label", state.continueMode
+    ? "Technical flow graph with an explicitly selected delivery plan overlay. Planned nodes are not found in source."
+    : "Static technical flow graph. Planned delivery metadata is not shown.");
+  const rendererNote = state.renderer === "webgl" ? " · WebGL preview: experimental" : "";
+  const catalog = state.graph.display?.catalog;
+  const omission = catalog?.truncated ? ` · ${catalog.nodes.omitted + catalog.edges.omitted + catalog.edges.omittedBecauseNodeBound} omitted by display bounds` : "";
+  $("#graph-note").textContent = view.emptyState || `${nodes.length} visible nodes · ${edges.length} visible relationships · ${view.sourceNodeCount} source nodes represented${omission}${rendererNote}`;
+  if (state.continueMode) {
+    const anchorNote = continuation.anchorNodes ? ` · ${continuation.anchorNodes} context anchors` : "";
+    $("#graph-note").textContent = `${nodes.length} technical nodes · ${edges.length} factual relationships · ${continuation.plannedNodes} planned nodes · ${continuation.plannedEdges} planned relationships${anchorNote}${rendererNote}`;
+  }
+  if (!renderedNodeCount) {
+    if (state.cy) { state.cy.destroy(); state.cy = null; state.cyRenderer = null; }
+    state.renderViewKey = null;
     container.innerHTML = `<div class="empty-canvas"><strong>Choose a node to inspect dependencies</strong><span>${escapeHtml(view.emptyState || "No nodes match this view.")}</span></div>`;
     return;
   }
@@ -425,20 +711,29 @@ function renderGraph() {
     return;
   }
   window.cytoscape.use(window.cytoscapeDagre);
-  state.cy = window.cytoscape({
+  const startedAt = performance.now();
+  const edgeCurveStyle = state.renderer === "webgl" ? "bezier" : "taxi";
+  const renderOptions = {
     container,
-    elements: graphElements(),
+    elements: graphRender.elements,
     minZoom: 0.35,
     maxZoom: 2.4,
     wheelSensitivity: 0.18,
     boxSelectionEnabled: false,
+    renderer: state.renderer === "webgl" ? { name: "canvas", webgl: true } : { name: "canvas" },
     style: [
       { selector: "node", style: { "background-color": "#ffffff", "border-width": 2, "border-color": "data(color)", "shape": "round-rectangle", "width": 208, "height": 72, "label": "data(label)", "color": "#172033", "font-family": "Inter, system-ui, sans-serif", "font-size": 13, "font-weight": 700, "text-wrap": "wrap", "text-max-width": 174, "text-valign": "center", "text-halign": "center", "padding": 8, "overlay-opacity": 0 } },
       { selector: "node[kind = 'summary']", style: { "background-color": "#f2f5ff", "border-color": "#3457d5", "border-style": "double", "border-width": 4 } },
+      { selector: "node[analysisStatus = 'inventory-only']", style: { "border-style": "dotted", "border-width": 3, "background-color": "#f8fafc" } },
       { selector: "node[type = 'endpoint']", style: { "background-color": "#fbf4ff", "shape": "round-rectangle" } },
+      { selector: "node[type = 'command']", style: { "background-color": "#eff9fc", "shape": "round-rectangle" } },
+      { selector: "node[type = 'schedule']", style: { "background-color": "#fff6e9", "shape": "round-rectangle" } },
       { selector: "node[type = 'database']", style: { "background-color": "#fff9ed", "shape": "barrel" } },
       { selector: "node[type = 'external']", style: { "background-color": "#f5f7fa", "shape": "hexagon" } },
-      { selector: "edge", style: { "width": 1.2, "line-color": "#aebbd0", "target-arrow-color": "#aebbd0", "target-arrow-shape": "triangle", "arrow-scale": 0.8, "curve-style": "taxi", "taxi-direction": "horizontal", "taxi-turn": "45%", "taxi-turn-min-distance": 24, "opacity": 0.38, "overlay-opacity": 0 } },
+      { selector: "node[type = 'context-anchor']", style: { "background-color": "#f4f7fb", "border-style": "dotted", "border-color": "#536782", "shape": "diamond", "width": 154, "height": 58, "font-size": 10, "font-weight": 700 } },
+      { selector: "node[type = 'planned']", style: { "background-color": "#fbf8ff", "border-color": "#7956b2", "border-style": "dashed", "border-width": 3, "shape": "ellipse", "width": 196, "height": 78, "font-size": 12, "font-weight": 800, "opacity": 0.9 } },
+      { selector: "edge", style: { "width": 1.2, "line-color": "#aebbd0", "target-arrow-color": "#aebbd0", "target-arrow-shape": "triangle", "arrow-scale": 0.8, "curve-style": edgeCurveStyle, "taxi-direction": "horizontal", "taxi-turn": "45%", "taxi-turn-min-distance": 24, "opacity": 0.38, "overlay-opacity": 0 } },
+      { selector: "edge[type = 'planned']", style: { "width": 2.2, "line-style": "dashed", "line-color": "#7956b2", "target-arrow-color": "#7956b2", "target-arrow-shape": "triangle", "label": "data(label)", "font-size": 10, "font-weight": 700, "color": "#59398a", "text-background-color": "#fbf8ff", "text-background-opacity": 0.96, "text-background-padding": 3, "opacity": 0.92 } },
       { selector: ".selected", style: { "border-color": "#172033", "border-width": 5, "background-color": "#e7edff", "underlay-color": "#3457d5", "underlay-opacity": 0.12, "underlay-padding": 9 } },
       { selector: ".incoming-node", style: { "border-color": "#16827a", "background-color": "#eefaf7" } },
       { selector: ".outgoing-node", style: { "border-color": "#7046b5", "background-color": "#f7f2ff" } },
@@ -447,18 +742,193 @@ function renderGraph() {
       { selector: ".outgoing-edge", style: { "line-color": "#7046b5", "target-arrow-color": "#7046b5" } },
       { selector: ".dimmed", style: { "opacity": 0.09, "text-opacity": 0 } },
     ],
-    layout: { name: "dagre", rankDir: "LR", rankSep: 96, nodeSep: 52, edgeSep: 22, padding: 56, animate: false, fit: nodes.length <= 20 },
-    ready() {
-      if (nodes.length <= 20) return;
-      const focus = view.focusId ? this.getElementById(view.focusId) : this.nodes().first();
-      this.zoom(0.78);
-      if (focus.length) this.center(focus);
-    },
+    layout: { name: "dagre", rankDir: "LR", rankSep: 96, nodeSep: 52, edgeSep: 22, padding: 56, animate: false, fit: false },
+  };
+  const recreate = !state.cy || state.cyRenderer !== state.renderer;
+  const viewChanged = state.renderViewKey !== null && state.renderViewKey !== nextRenderViewKey;
+  if (recreate && state.cy) { state.cy.destroy(); state.cy = null; }
+  try {
+    if (recreate) {
+      state.cy = window.cytoscape(renderOptions);
+      state.cyRenderer = state.renderer;
+      focusRenderedView(state.cy, view, renderedNodeCount);
+    } else {
+      synchronizeCytoscape(state.cy, graphRender.elements, renderOptions.style);
+      // Preserve the user's viewport for a live refresh of the same bounded
+      // view. A mode/level/focus transition is a different map, however, and
+      // must receive a layout plus a visible focus rather than inheriting an
+      // unrelated viewport from the previous projection.
+      if (viewChanged) {
+        state.cy.layout(renderOptions.layout).run();
+        focusRenderedView(state.cy, view, renderedNodeCount);
+      }
+    }
+  } catch (error) {
+    if (state.renderer !== "webgl") throw error;
+    state.renderer = "canvas";
+    $("#renderer-mode").value = "canvas";
+    state.cy = window.cytoscape({ ...renderOptions, renderer: { name: "canvas" } });
+    state.cyRenderer = "canvas";
+    toast(`WebGL preview is unavailable here; Canvas remains active. ${error.message}`);
+  }
+  state.renderViewKey = nextRenderViewKey;
+  state.rendererMetrics = {
+    schemaVersion: "flowpeek-renderer-observation/v1",
+    renderer: state.renderer,
+    nodes: nodes.length,
+    edges: edges.length,
+    initializationMs: Number((performance.now() - startedAt).toFixed(2)),
+    evidenceClass: "local-observation",
+    limitation: "One local viewer construction measurement. It is not a cross-device benchmark, first-paint measurement, or readability proof.",
+  };
+  if (recreate) state.cy.on("tap", "node", (event) => {
+    const data = event.target.data();
+    if (data.planned) selectPlannedNode(data.plannedNodeId).catch((error) => toast(`Planned node could not open: ${error.message}`));
+    else if (data.anchor) renderPlannedAnchorInspector(data.contextRef);
+    else selectNode(event.target.id());
   });
-  state.cy.on("tap", "node", (event) => selectNode(event.target.id()));
-  state.cy.on("mouseover", "node", (event) => highlightNode(event.target.id()));
-  state.cy.on("mouseout", "node", () => highlightNode(state.selectedId));
+  if (recreate) state.cy.on("mouseover", "node", (event) => highlightNode(event.target.id()));
+  if (recreate) state.cy.on("mouseout", "node", () => {
+    const overlay = selectedPlannedOverlay();
+    const plannedId = overlay && state.selectedPlannedNodeId ? `planned:${overlay.id}:${state.selectedPlannedNodeId}` : null;
+    highlightNode(state.selectedId || plannedId);
+  });
   if (state.selectedId && state.graph.nodes.some((node) => node.id === state.selectedId)) highlightNode(state.selectedId);
+  else if (state.selectedPlannedNodeId && selectedPlannedOverlay()) highlightNode(`planned:${state.plannedOverlayId}:${state.selectedPlannedNodeId}`);
+}
+
+async function measureRenderer(renderer = state.renderer) {
+  if (!["canvas", "webgl"].includes(renderer)) throw new Error("Renderer must be canvas or webgl.");
+  const previousRenderer = state.renderer;
+  state.renderer = renderer;
+  $("#renderer-mode").value = renderer;
+  const startedAt = performance.now();
+  renderGraph();
+  await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  const fitStartedAt = performance.now();
+  state.cy?.fit(undefined, 42);
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  const focusStartedAt = performance.now();
+  const focus = state.selectedId || state.graph?.view?.focusId || state.graph?.nodes?.[0]?.id || null;
+  if (focus) highlightNode(focus);
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  const result = {
+    ...(state.rendererMetrics || {}),
+    renderer: state.renderer,
+    initializationAndFirstPaintMs: Number((performance.now() - startedAt).toFixed(2)),
+    fitMs: Number((focusStartedAt - fitStartedAt).toFixed(2)),
+    focusMs: Number((performance.now() - focusStartedAt).toFixed(2)),
+    selectedContextPreserved: !state.selectedId || Boolean(state.cy?.getElementById(state.selectedId)?.length),
+  };
+  if (previousRenderer !== state.renderer) {
+    state.renderer = previousRenderer;
+    $("#renderer-mode").value = previousRenderer;
+    renderGraph();
+  }
+  return result;
+}
+
+window.flowpeekRendererBenchmark = { measure: measureRenderer, current: () => state.rendererMetrics };
+
+function plannedNodeContext(overlay, node) {
+  return {
+    schemaVersion: "flowpeek-viewer-planned-node-context/v1",
+    evidenceClass: "delivery-plan",
+    planRef: node.planRef,
+    overlay: { id: overlay.id, checkpointId: overlay.checkpointId, overlayVersion: overlay.overlayVersion, checkpointFreshnessStatus: overlay.checkpointFreshnessStatus },
+    plannedNode: { id: node.id, kind: node.kind, title: node.title, responsibility: node.responsibility, acceptanceCriteria: node.acceptanceCriteria, anchors: node.anchors, candidatePath: node.candidatePath },
+    limitation: "Planned context is local delivery-plan metadata. It is not found in source, a factual graph relationship, implementation proof, test proof, or runtime evidence.",
+  };
+}
+
+function renderPlannedAnchorInspector(contextRef) {
+  $("#inspector").innerHTML = `<div class="node-kicker">current context anchor · static reference</div><h2 class="node-title">Planned edge anchor</h2><div class="detail-section first-section"><h3>What this means</h3><p>This display-only anchor represents a selected technical Context Ref needed by the plan. It is not a source node and does not add a factual relationship.</p></div><div class="detail-section"><h3>Context Ref</h3><div class="node-path">${escapeHtml(contextRef)}</div><div class="button-row"><button id="copy-planned-anchor">Copy Context Ref</button><button id="open-planned-anchor">Open current technical context</button></div></div>`;
+  $("#copy-planned-anchor").addEventListener("click", () => copyText(contextRef, "Context Ref copied."));
+  $("#open-planned-anchor").addEventListener("click", async () => {
+    $("#context-ref-input").value = contextRef;
+    await resolveContextFromInput();
+  });
+}
+
+function reconciliationId() {
+  const suffix = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `reconciliation.viewer-${suffix}`.toLowerCase();
+}
+
+function reconciliationRecordList(records) {
+  if (!records.length) return "<p class='muted'>No reconciliation has been recorded for this exact Plan Ref.</p>";
+  return `<div class="reconciliation-records">${records.map((record) => `<div class="reconciliation-record"><strong>${escapeHtml(record.outcome)}</strong><span>${escapeHtml(record.actorKind)} · ${escapeHtml(record.actor)} · ${escapeHtml(record.createdAt)}</span><small>${escapeHtml(record.actualContextStatuses?.map((item) => item.status).join(", ") || "no actual Context Ref")}</small></div>`).join("")}</div>`;
+}
+
+function continuationComparisonCard(comparison, planRef) {
+  if (comparison.status !== "available") return `<p class="muted">Baseline/Planned/Current comparison is unavailable. Missing retained evidence is not treated as missing implementation.</p>`;
+  const plan = comparison.plans.find((item) => item.planRef === planRef);
+  if (!plan) return `<p class="muted">This Plan Ref is not present in the selected comparison. No replacement plan is inferred.</p>`;
+  return `<div class="continuation-comparison status-${escapeHtml(plan.status)}"><div class="continuation-comparison-heading"><strong>${escapeHtml(plan.status)}</strong><span>deterministic</span></div><div class="continuation-comparison-grid"><div><small>Baseline</small><span>${escapeHtml(comparison.baseline.freshnessStatus)}</span></div><div><small>Planned</small><span>${escapeHtml(comparison.planned.checkpointFreshnessStatus)}</span></div><div><small>Current</small><span>graph v${escapeHtml(comparison.current.graphVersion)}</span></div></div>${plan.latestReconciliation ? `<p class="muted">Latest reconciliation: ${escapeHtml(plan.latestReconciliation.outcome)} by ${escapeHtml(plan.latestReconciliation.actorKind)}.</p>` : "<p class=\"muted\">No reconciliation is recorded for this exact Plan Ref.</p>"}<p class="muted">${escapeHtml(plan.limitation)}</p></div>`;
+}
+
+function checkpointDivergenceCard(divergence) {
+  const paths = divergence.changedPaths?.items || [];
+  return `<div class="continuation-comparison status-${escapeHtml(divergence.status)}"><div class="continuation-comparison-heading"><strong>${escapeHtml(divergence.status)}</strong><span>read-only local Git/source check</span></div><p class="muted">${escapeHtml(divergence.diagnostics?.[0]?.message || "No divergence diagnostic is available.")}</p>${paths.length ? `<p class="muted">Changed paths: ${escapeHtml(paths.join(", "))}${divergence.changedPaths.truncated ? " …" : ""}</p>` : ""}<p class="muted">${escapeHtml(divergence.limitation)}</p></div>`;
+}
+
+async function selectPlannedNode(plannedNodeId) {
+  const overlay = selectedPlannedOverlay();
+  const node = overlay?.nodes.find((item) => item.id === plannedNodeId);
+  if (!overlay || !node) return toast("The selected planned node is no longer available.");
+  state.selectedId = null;
+  state.selectedPlannedNodeId = plannedNodeId;
+  const acceptance = node.acceptanceCriteria.length ? `<ul class="rule-list">${node.acceptanceCriteria.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "<p class='muted'>No acceptance criteria recorded.</p>";
+  const anchors = node.anchors.length ? `<div class="connection-list">${node.anchors.map((anchor) => `<button class="connection-button" data-planned-anchor="${escapeHtml(anchor)}"><span>${escapeHtml(anchor)}</span><span class="connection-kind">context</span></button>`).join("")}</div>` : "<p class='muted'>No technical Context Ref anchor recorded.</p>";
+  $("#inspector").innerHTML = `<div class="node-kicker">delivery plan · not found in source</div><h2 class="node-title">${escapeHtml(node.title)}</h2><div class="verification-status status-${escapeHtml(overlay.checkpointFreshnessStatus === "current" ? "current" : "stale")}"><strong>${escapeHtml(overlay.checkpointFreshnessStatus)} checkpoint anchors</strong><span>Planned ${escapeHtml(node.kind)} · overlay ${escapeHtml(overlay.id)}</span></div><div class="detail-section"><h3>Plan Ref</h3><div class="node-path">${escapeHtml(node.planRef)}</div><div class="button-row"><button id="copy-plan-ref">Copy Plan Ref</button><button id="copy-planned-context">Copy bounded plan context</button></div></div><div class="detail-section"><h3>Responsibility</h3><p>${escapeHtml(node.responsibility || "No responsibility recorded.")}</p>${node.candidatePath ? `<div class="node-path">Candidate path: ${escapeHtml(node.candidatePath)}</div>` : ""}</div><div class="detail-section"><h3>Acceptance criteria</h3>${acceptance}</div><div class="detail-section"><h3>Technical anchors</h3>${anchors}</div><div class="detail-section"><h3>Reconciliations</h3><div id="planned-reconciliations"><p class="muted">Loading local delivery assertions...</p></div></div><div class="detail-section"><h3>Record human reconciliation</h3><p class="muted">This records a local human delivery assertion. It cannot change source, parser facts, Flow Lens, impact, test proof, runtime evidence, or approval authority.</p><form id="record-plan-reconciliation" class="reconciliation-form"><label>Outcome<select name="outcome"><option value="confirmed-implemented">Confirmed implemented</option><option value="partially-implemented">Partially implemented</option><option value="implemented-differently">Implemented differently</option><option value="not-the-same">Not the same entity</option><option value="superseded">Superseded</option><option value="unresolved">Unresolved</option></select></label><label>Reviewer identity<input name="actor" required maxlength="240" value="local viewer"></label><label>Current actual Context Refs<textarea name="actualContextRefs" placeholder="fp://local/.../node/...@version\nfp://local/.../flow/...@version"></textarea></label><label>Evidence references (optional, one per line)<textarea name="evidenceReferences" placeholder="manual-review | review:123 | human-observation"></textarea></label><button type="submit">Record reconciliation</button></form></div><div class="detail-section"><h3>Evidence boundary</h3><p>Delivery-plan metadata is visible only because Continue mode is on. It does not create a source node, static call, impact result, Flow Lens step, parser-coverage fact, implementation result, or runtime observation.</p></div>`;
+  const anchorSection = [...$("#inspector").querySelectorAll(".detail-section")].find((section) => section.querySelector("h3")?.textContent === "Technical anchors");
+  anchorSection?.insertAdjacentHTML("afterend", "<div class=\"detail-section\"><h3>Baseline / Planned / Current</h3><div id=\"continuation-comparison\"><p class=\"muted\">Loading deterministic comparison...</p></div></div>");
+  anchorSection?.insertAdjacentHTML("afterend", "<div class=\"detail-section\"><h3>Baseline divergence</h3><div id=\"checkpoint-divergence\"><p class=\"muted\">Loading read-only local Git/source check...</p></div></div>");
+  $("#copy-plan-ref").addEventListener("click", () => copyText(node.planRef, "Plan Ref copied."));
+  $("#copy-planned-context").addEventListener("click", () => copyText(JSON.stringify(plannedNodeContext(overlay, node), null, 2), "Bounded plan context copied."));
+  $("#inspector").querySelectorAll("[data-planned-anchor]").forEach((button) => button.addEventListener("click", () => renderPlannedAnchorInspector(button.dataset.plannedAnchor)));
+  $("#record-plan-reconciliation").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const actualContextRefs = String(form.get("actualContextRefs") || "").split("\n").map((item) => item.trim()).filter(Boolean);
+    const evidenceReferences = String(form.get("evidenceReferences") || "").split("\n").map((item) => item.trim()).filter(Boolean).map((item) => {
+      const [kind, reference, evidenceClass] = item.split("|").map((part) => part.trim());
+      return { kind, reference, evidenceClass };
+    });
+    const id = reconciliationId();
+    try {
+      const result = await request("/api/plan-reconciliations", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ operationId: `viewer:${id}`, id, planRef: node.planRef, actualContextRefs, outcome: form.get("outcome"), actor: form.get("actor"), actorKind: "human", evidenceReferences }) });
+      toast(`${result.created ? "Recorded" : "Reused"} ${result.reconciliation.outcome}.`);
+      await selectPlannedNode(plannedNodeId);
+    } catch (error) {
+      toast(`Reconciliation was not recorded: ${error.message}`);
+    }
+  });
+  try {
+    const divergence = await request(`/api/checkpoint-divergence?checkpointId=${encodeURIComponent(overlay.checkpointId)}`);
+    const container = $("#checkpoint-divergence");
+    if (container) container.innerHTML = checkpointDivergenceCard(divergence);
+  } catch (error) {
+    const container = $("#checkpoint-divergence");
+    if (container) container.innerHTML = `<p class="muted">Divergence is unavailable: ${escapeHtml(error.message)}.</p>`;
+  }
+  try {
+    const comparison = await request(`/api/continuation-comparison?checkpointId=${encodeURIComponent(overlay.checkpointId)}&overlayId=${encodeURIComponent(overlay.id)}`);
+    const container = $("#continuation-comparison");
+    if (container) container.innerHTML = continuationComparisonCard(comparison, node.planRef);
+  } catch (error) {
+    const container = $("#continuation-comparison");
+    if (container) container.innerHTML = `<p class="muted">Comparison is unavailable: ${escapeHtml(error.message)}. Missing retained evidence is not missing implementation.</p>`;
+  }
+  try {
+    const reconciliations = await request(`/api/plan-reconciliations?planRef=${encodeURIComponent(node.planRef)}`);
+    const container = $("#planned-reconciliations");
+    if (container) container.innerHTML = reconciliationRecordList(reconciliations.records);
+  } catch (error) {
+    const container = $("#planned-reconciliations");
+    if (container) container.innerHTML = `<p class="muted">Reconciliations are unavailable: ${escapeHtml(error.message)}</p>`;
+  }
+  highlightNode(`planned:${overlay.id}:${node.id}`);
 }
 
 function highlightNode(id) {
@@ -543,12 +1013,24 @@ async function runBenchmark() {
 }
 
 function renderSummaryInspector(node) {
+  const level = node.hierarchy?.level || state.graph?.view?.level || "feature";
+  const nextLevel = ({ domain: "feature", feature: "component", component: "symbol" })[level] || null;
   const types = Object.entries(node.typeCounts || {}).map(([type, count]) => `<span class="method-chip">${escapeHtml(type)} · ${count}</span>`).join("");
   const members = node.members?.length
     ? `<div class="connection-list">${node.members.map((member) => `<button class="connection-button" data-member="${escapeHtml(member.id)}"><span>${escapeHtml(member.label)}</span><span class="connection-kind">${escapeHtml(member.type)}</span></button>`).join("")}</div>`
     : "<p class='muted'>No member preview is available.</p>";
   $("#inspector").innerHTML = `<div class="node-kicker">feature summary · derived</div><h2 class="node-title">${escapeHtml(node.label)}</h2><div class="detail-section first-section"><h3>What this node means</h3><p>This is a visual aggregation of ${node.memberCount} source nodes. It is not a file, a runtime service, or an execution step.</p></div><div class="detail-section"><h3>Member types</h3><div class="method-chips">${types}</div></div><div class="detail-section"><h3>Member preview</h3>${members}</div><div class="detail-section"><h3>Evidence boundary</h3><p>Each aggregated edge is derived from stored parser facts. Open a member to inspect its exact source evidence.</p></div>`;
   $("#inspector").querySelectorAll("[data-member]").forEach((button) => button.addEventListener("click", () => openDependency(button.dataset.member)));
+  if (nextLevel) {
+    $("#inspector .first-section").insertAdjacentHTML("beforeend", `<button id="drill-semantic-level">Explore ${escapeHtml(nextLevel)}s</button>`);
+    $("#drill-semantic-level").addEventListener("click", async () => {
+      state.level = nextLevel;
+      state.focusId = node.id;
+      state.selectedId = null;
+      state.flowLens = null;
+      await loadView();
+    });
+  }
 }
 
 function connectionList(items) {
@@ -651,6 +1133,13 @@ function flowInterfaceSection(lens) {
   if (!contract) return "";
   const boundary = contract.boundary;
   const handler = boundary.handler.status === "available" ? boundary.handler.id : boundary.handler.reason;
+  const task = boundary.task?.status === "available" ? boundary.task.id : boundary.task?.reason || null;
+  const commandLabel = boundary.command?.scriptName ? `npm run ${boundary.command.scriptName}` : null;
+  const scheduleLabel = boundary.schedule?.taskName ? `node-cron → ${boundary.schedule.taskName}` : null;
+  const boundaryLabel = boundary.method || commandLabel || scheduleLabel || boundary.kind;
+  const boundaryDetail = boundary.route || (boundary.command ? `${boundary.command.runner || "runner"} → ${boundary.command.targetPath || "declared target"}` : boundary.schedule ? `${boundary.schedule.expression || "literal schedule"} → ${boundary.schedule.targetPath || "declared task"}` : "Detected flow entry");
+  const commandDetail = boundary.command ? `<p class="muted">Manifest: ${escapeHtml(boundary.command.manifest || "unknown")} · declared target: ${escapeHtml(boundary.command.targetPath || "unknown")}</p>` : "";
+  const scheduleDetail = boundary.schedule ? `<p class="muted">Adapter: ${escapeHtml(boundary.schedule.adapter || "unknown")} · declared task: ${escapeHtml(boundary.schedule.targetPath || "unknown")}</p>` : "";
   const runs = lens.testRuns?.runs || [];
   const runCards = runs.length ? runs.map((run) => `<div class="trace-record"><strong>${escapeHtml(run.status)} · ${escapeHtml(run.runId)}</strong><span>${escapeHtml(run.status === "running" ? `Current static step: ${run.currentStepId || "between reported steps"}` : run.status === "failed" ? `Stopped at static step: ${run.stoppedAtStepId || "runner-level failure"}` : run.lastEventType)}</span><small>Graph v${escapeHtml(run.graphVersion)} · ${escapeHtml(run.updatedAt)} · ${escapeHtml(run.events.length)} event${run.events.length === 1 ? "" : "s"}</small></div>`).join("") : `<p class="muted">No runner-adapter events are recorded for this flow.</p>`;
   const formatFields = (fields) => fields?.length ? `<ul class="rule-list">${fields.map((field) => `<li><code>${escapeHtml(field.name)}</code>: ${escapeHtml(field.type)}${field.required ? "" : " · optional"}</li>`).join("")}</ul>` : "";
@@ -660,7 +1149,21 @@ function flowInterfaceSection(lens) {
   const responseDetail = contract.responses.status === "available"
     ? `<div class="contract-unavailable"><strong>Expected responses · parser fact · ${escapeHtml(contract.responses.adapter)}</strong>${contract.responses.variants.map((variant) => `<p><code>${escapeHtml(variant.status)}</code>${formatFields(variant.fields)}</p>`).join("")}</div>`
     : `<div class="contract-unavailable"><strong>Expected responses · ${escapeHtml(contract.responses.status)}</strong><span>${escapeHtml(contract.responses.reason)}</span></div>`;
-  return `<div class="detail-section flow-interface"><h3>Interface contract &amp; QA evidence</h3><div class="verification-status status-compatible"><strong>${escapeHtml(boundary.method || boundary.kind)}</strong><span>${escapeHtml(boundary.route || "Detected flow entry")}</span></div><p class="muted">Handler: ${escapeHtml(handler)}</p>${requestDetail}${responseDetail}<h4 class="verification-history-title">Test/QA run evidence</h4><div class="trace-records">${runCards}</div><p class="muted">${escapeHtml(contract.execution.limitation)}</p></div>`;
+  return `<div class="detail-section flow-interface"><h3>Interface contract &amp; QA evidence</h3><div class="verification-status status-compatible"><strong>${escapeHtml(boundaryLabel)}</strong><span>${escapeHtml(boundaryDetail)}</span></div>${commandDetail}${scheduleDetail}<p class="muted">${escapeHtml(boundary.schedule ? "Task target" : "Handler")}: ${escapeHtml(boundary.schedule ? task || "unavailable" : handler)}</p>${requestDetail}${responseDetail}<h4 class="verification-history-title">Test/QA run evidence</h4><div class="trace-records">${runCards}</div><p class="muted">${escapeHtml(contract.execution.limitation)}</p></div>`;
+}
+
+async function openDeliveryLedger() {
+  const [ledger, workflows] = await Promise.all([request("/api/work-records?limit=50"), request("/api/workflows")]);
+  state.selectedId = null;
+  state.flowLens = null;
+  const rows = ledger.records.map((record) => {
+    const window = record.plan.plannedStart || record.plan.plannedEnd
+      ? `${record.plan.plannedStart || "Unscheduled"} → ${record.plan.plannedEnd || "Unscheduled"}`
+      : "Unscheduled";
+    const freshness = record.staleContextCount ? ` · ${record.staleContextCount} stale Context Ref${record.staleContextCount === 1 ? "" : "s"}` : " · Context Refs current";
+    return `<li><strong>${escapeHtml(record.title)}</strong><span>${escapeHtml(record.kind)} · plan r${record.planRevision} · ${escapeHtml(window)}</span><span>${record.contextRefs.length} Context Ref${record.contextRefs.length === 1 ? "" : "s"} · ${record.dependencies.length} dependencies${escapeHtml(freshness)}</span></li>`;
+  }).join("");
+  $("#inspector").innerHTML = `<div class="node-kicker">LOCAL DELIVERY METADATA</div><h2 class="node-title">Work ledger</h2><div class="detail-section first-section"><h3>${ledger.totalMatched} planned records · ${ledger.events.length} recent actual events</h3><p>${escapeHtml(ledger.limitation)}</p></div><div class="detail-section"><h3>Available methods</h3><p>${workflows.workflows.map((workflow) => escapeHtml(workflow.title)).join(" · ") || "No workflow definitions available."}</p></div><div class="detail-section"><h3>Planned work</h3>${rows ? `<ul class="work-ledger-list">${rows}</ul>` : "<p>No local work records yet. Agents and trusted local tools may create evidence-linked records; Flowpeek does not infer them from code.</p>"}</div><div class="detail-section"><h3>Actual evidence boundary</h3><p>Actual events are append-only local observations. A workflow state or reference does not prove source execution, CI success, approval authority, or runtime behavior.</p></div>`;
 }
 
 function workspaceContractSection(lens) {
@@ -821,7 +1324,7 @@ function renderFlowLensInspector(lens) {
     : "";
   const workspaceContracts = workspaceContractSection(lens);
   state.selectedId = null;
-  $("#inspector").innerHTML = `<div class="node-kicker">Flow Lens · derived static evidence</div><h2 class="node-title">${escapeHtml(lens.flow.title)}</h2><div class="node-path">Graph v${escapeHtml(lens.project.graphVersion)} · ${escapeHtml(lens.flow.id)}</div><div class="detail-section first-section"><h3>How to read this flow</h3><p>${escapeHtml(lens.limitations[0])}</p></div><div class="detail-section"><h3>Flow Context Card</h3><p>Portable, versioned static flow evidence for people and agents. It contains no source contents or runtime claims.</p>${resolutionNote}<div class="button-row"><button id="copy-flow-context-ref">Copy reference</button><button id="copy-flow-context-json">Copy JSON</button><button id="copy-flow-context-markdown">Copy Markdown</button></div><div class="node-path">${escapeHtml(lens.flow.contextRef)}</div></div><div class="detail-section"><h3>Technical steps</h3><div class="flow-lens-steps">${steps}</div></div><div class="detail-section"><h3>Static boundaries</h3>${boundaries}</div>${truncation}${semanticSuggestionSection(lens)}${agentSemanticProposalSection(lens)}${semanticFeedbackSection(lens)}${traceHistorySection(lens.agentEvidenceTraces, "flow")}${flowVerificationSection(lens)}${flowInterfaceSection(lens)}${workspaceContracts}<div class="detail-section"><h3>Interpretation limits</h3><ul class="rule-list">${lens.limitations.slice(1).map((limitation) => `<li>${escapeHtml(limitation)}</li>`).join("")}</ul></div><div class="detail-section"><button id="copy-flow-lens">Copy Flow Lens JSON</button></div>`;
+  $("#inspector").innerHTML = `<div class="node-kicker">Flow Lens · ${escapeHtml(lens.flow.entry?.kind || "static-entry")} · derived static evidence</div><h2 class="node-title">${escapeHtml(lens.flow.title)}</h2><div class="node-path">Graph v${escapeHtml(lens.project.graphVersion)} · ${escapeHtml(lens.flow.id)}</div><div class="detail-section first-section"><h3>How to read this flow</h3><p>${escapeHtml(lens.limitations[0])}</p></div><div class="detail-section"><h3>Flow Context Card</h3><p>Portable, versioned static flow evidence for people and agents. It contains no source contents or runtime claims.</p>${resolutionNote}<div class="button-row"><button id="copy-flow-context-ref">Copy reference</button><button id="copy-flow-context-json">Copy JSON</button><button id="copy-flow-context-markdown">Copy Markdown</button></div><div class="node-path">${escapeHtml(lens.flow.contextRef)}</div></div><div class="detail-section"><h3>Technical steps</h3><div class="flow-lens-steps">${steps}</div></div><div class="detail-section"><h3>Static boundaries</h3>${boundaries}</div>${truncation}${semanticSuggestionSection(lens)}${agentSemanticProposalSection(lens)}${semanticFeedbackSection(lens)}${traceHistorySection(lens.agentEvidenceTraces, "flow")}${flowVerificationSection(lens)}${flowInterfaceSection(lens)}${workspaceContracts}<div class="detail-section"><h3>Interpretation limits</h3><ul class="rule-list">${lens.limitations.slice(1).map((limitation) => `<li>${escapeHtml(limitation)}</li>`).join("")}</ul></div><div class="detail-section"><button id="copy-flow-lens">Copy Flow Lens JSON</button></div>`;
   const inspector = $("#inspector");
   if (lens.truncation.displayTruncated && lens.truncation.displayedSteps < 24) {
     inspector.querySelector(".flow-lens-steps").closest(".detail-section").insertAdjacentHTML("afterend", `<div class="detail-section"><button id="expand-flow-evidence">Show next evidence steps</button><p class="muted">Expands this bounded static projection to at most 24 steps; source traversal may still be truncated.</p></div>`);
@@ -1048,9 +1551,9 @@ function renderSemanticReviewQueue(queue) {
     const compare = edited || proposed ? `<div class="review-compare"><div><strong>Original suggestion</strong>${queueCandidate(item.suggestion.candidate)}</div><div><strong>${edited ? "Human edited" : "Agent/provider proposed"}</strong>${queueCandidate(edited || proposed)}</div></div>` : "";
     const source = item.sourceEvidence;
     const note = item.feedback.reason ? `Review note: ${item.feedback.reason}` : item.agentProposal?.status === "current" ? `${item.agentProposal.provider} proposal by ${item.agentProposal.proposedBy}: ${item.agentProposal.rationale}` : item.suggestion.candidate ? item.suggestion.candidate.technicalPurpose : "No semantic candidate was generated.";
-    return `<article class="review-queue-item status-${escapeHtml(item.queueStatus)}"><header><input type="checkbox" data-review-select="${escapeHtml(item.flow.id)}" ${item.queueStatus !== "suggested" ? "disabled" : ""} aria-label="Select ${escapeHtml(item.flow.title)} for batch review"><div><h3>${escapeHtml(item.flow.title)}</h3><small>${escapeHtml(item.suggestion.confidence.level)} confidence · ${escapeHtml(item.suggestion.confidence.score)}</small></div><span>${escapeHtml(item.queueStatus)}</span></header>${compare}<p class="muted">${escapeHtml(note)}</p><div class="review-evidence"><button data-review-flow="${escapeHtml(item.flow.id)}">Review Flow Lens</button>${source.endpoint ? `<button data-review-evidence="${escapeHtml(source.endpoint.id)}" title="${escapeHtml(evidenceLocation(source.endpoint.evidence))}">Open endpoint evidence · ${escapeHtml(evidenceLocation(source.endpoint.evidence))}</button>` : ""}${source.handler ? `<button data-review-evidence="${escapeHtml(source.handler.id)}" title="${escapeHtml(evidenceLocation(source.handler.evidence))}">Open handler evidence · ${escapeHtml(evidenceLocation(source.handler.evidence))}</button>` : ""}</div></article>`;
+    return `<article class="review-queue-item status-${escapeHtml(item.queueStatus)}"><header><input type="checkbox" data-review-select="${escapeHtml(item.flow.id)}" ${item.queueStatus !== "suggested" ? "disabled" : ""} aria-label="Select ${escapeHtml(item.flow.title)} for batch review"><div><h3>${escapeHtml(item.flow.title)}</h3><small>${escapeHtml(item.suggestion.confidence.level)} confidence · ${escapeHtml(item.suggestion.confidence.score)}</small></div><span>${escapeHtml(item.queueStatus)}</span></header>${compare}<p class="muted">${escapeHtml(note)}</p><div class="review-evidence"><button data-review-flow="${escapeHtml(item.flow.id)}">Review Flow Lens</button>${source.entry ? `<button data-review-evidence="${escapeHtml(source.entry.id)}" title="${escapeHtml(evidenceLocation(source.entry.evidence))}">Open ${escapeHtml(source.entry.kind)} evidence · ${escapeHtml(evidenceLocation(source.entry.evidence))}</button>` : ""}${source.handler ? `<button data-review-evidence="${escapeHtml(source.handler.id)}" title="${escapeHtml(evidenceLocation(source.handler.evidence))}">Open handler evidence · ${escapeHtml(evidenceLocation(source.handler.evidence))}</button>` : ""}</div></article>`;
   }).join("") || "<p class='muted'>No items match this review state.</p>";
-  $("#inspector").innerHTML = `<div class="node-kicker">Semantic review queue · local human feedback</div><h2 class="node-title">Review suggestions</h2><div class="detail-section first-section review-queue"><p>${escapeHtml(`${queue.endpointCount} detected endpoints · ${queue.flowCatalog.total} discoverable Flow Lenses · ${queue.totalMatched} items in this filter.`)}</p>${warning}<p class="muted">Suggestion = deterministic derived label. Agent proposal = unverified override draft. Feedback = reviewer outcome. Verification and runtime behavior remain separate.</p><div class="review-queue-toolbar"><label>Filter <select id="review-queue-filter"><option value="suggested" ${queue.status === "suggested" ? "selected" : ""}>Suggested</option><option value="agent-proposed" ${queue.status === "agent-proposed" ? "selected" : ""}>Agent proposed</option><option value="edited" ${queue.status === "edited" ? "selected" : ""}>Edited</option><option value="rejected" ${queue.status === "rejected" ? "selected" : ""}>Rejected</option><option value="all" ${queue.status === "all" ? "selected" : ""}>All</option></select></label><label>Reviewer for batch accept <input id="review-queue-reviewer" maxlength="240" placeholder="Required for selected suggestions"></label><div class="review-queue-actions"><button id="review-queue-select-all">Select visible suggested</button><button id="review-queue-batch-accept">Accept selected</button></div></div>${items}</div>`;
+  $("#inspector").innerHTML = `<div class="node-kicker">Semantic review queue · local human feedback</div><h2 class="node-title">Review suggestions</h2><div class="detail-section first-section review-queue"><p>${escapeHtml(`${queue.entryCount} detected static entries · ${queue.flowCatalog.total} discoverable Flow Lenses · ${queue.totalMatched} items in this filter.`)}</p>${warning}<p class="muted">Suggestion = deterministic derived label. Agent proposal = unverified override draft. Feedback = reviewer outcome. Verification and runtime behavior remain separate.</p><div class="review-queue-toolbar"><label>Filter <select id="review-queue-filter"><option value="suggested" ${queue.status === "suggested" ? "selected" : ""}>Suggested</option><option value="agent-proposed" ${queue.status === "agent-proposed" ? "selected" : ""}>Agent proposed</option><option value="edited" ${queue.status === "edited" ? "selected" : ""}>Edited</option><option value="rejected" ${queue.status === "rejected" ? "selected" : ""}>Rejected</option><option value="all" ${queue.status === "all" ? "selected" : ""}>All</option></select></label><label>Reviewer for batch accept <input id="review-queue-reviewer" maxlength="240" placeholder="Required for selected suggestions"></label><div class="review-queue-actions"><button id="review-queue-select-all">Select visible suggested</button><button id="review-queue-batch-accept">Accept selected</button></div></div>${items}</div>`;
   $("#review-queue-filter").addEventListener("change", (event) => openSemanticReviewQueue(event.target.value));
   $("#review-queue-select-all").addEventListener("click", () => $("#inspector").querySelectorAll("[data-review-select]:not(:disabled)").forEach((box) => { box.checked = true; }));
   $("#review-queue-batch-accept").addEventListener("click", async () => {
@@ -1209,17 +1712,42 @@ async function resolveContextFromInput() {
 
 $("#scan-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const requestedRoot = $("#root-input").value.trim();
+  const checkingCandidate = Boolean(!state.workspace && requestedRoot && requestedRoot !== state.graph?.project?.root);
   try {
-    $("#status").textContent = "Scanning repository...";
+    if (checkingCandidate) {
+      setCandidateRepositoryCheck(requestedRoot);
+      $("#status").textContent = "Checking the new repository. The current map remains active until the check succeeds.";
+    } else {
+      $("#status").textContent = "Scanning repository...";
+    }
     if (state.workspace) {
-      await request("/api/workspace/projects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ root: $("#root-input").value.trim() }) });
+      await request("/api/workspace/projects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ root: requestedRoot }) });
       window.location.reload();
       return;
     }
-    await request("/api/scan", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ root: $("#root-input").value.trim() }) });
-    state.mode = "overview"; state.scope = "application"; state.focusId = null; state.selectedId = null; state.flowLens = null; state.benchmark = null;
-    await loadView(); toast("Repository graph generated.");
-  } catch (error) { $("#status").textContent = ""; toast(error.message); }
+    await request("/api/scan", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ root: requestedRoot }) });
+    setCandidateRepositoryCheck(null);
+    state.mode = "overview"; state.scope = "application"; state.focusId = null; state.selectedId = null; state.flowLens = null; state.benchmark = null; state.initialFlowOpened = false;
+    await loadView(); toast(checkingCandidate ? "New repository map is active." : "Current repository graph generated.");
+  } catch (error) {
+    setCandidateRepositoryCheck(null);
+    $("#status").textContent = "";
+    if (error.payload?.scanOutcome) {
+      state.scanOutcome = error.payload.scanOutcome;
+      renderScanOutcome(state.scanOutcome);
+      await loadView().catch(() => {});
+    }
+    toast(error.message);
+  }
+});
+$("#cancel-scan").addEventListener("click", async () => {
+  try {
+    const result = await request("/api/scan/cancel", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    toast(result.accepted ? "Cancellation requested. The last complete graph will remain active." : "No cancellable bounded scan is running.");
+  } catch (error) {
+    toast(error.message);
+  }
 });
 
 $("#workspace-project-select").addEventListener("change", async (event) => {
@@ -1238,11 +1766,38 @@ $("#resolve-context-ref").addEventListener("click", () => resolveContextFromInpu
 $("#context-ref-input").addEventListener("keydown", (event) => { if (event.key === "Enter") resolveContextFromInput().catch((error) => { $("#context-ref-status").textContent = error.message; toast(error.message); }); });
 $("#mode-filter").addEventListener("change", async (event) => { state.mode = event.target.value; state.selectedId = null; state.flowLens = null; if (state.mode !== "dependencies") state.focusId = null; await loadView(); });
 $("#scope-filter").addEventListener("change", async (event) => { state.scope = event.target.value; state.selectedId = null; state.flowLens = null; await loadView(); });
+$("#level-filter").addEventListener("change", async (event) => { state.level = event.target.value; state.focusId = null; state.selectedId = null; state.flowLens = null; if (state.mode === "dependencies") state.mode = "overview"; await loadView(); });
+$("#continue-mode").addEventListener("change", (event) => {
+  state.continueMode = event.target.checked;
+  state.selectedPlannedNodeId = null;
+  if (!state.continueMode) state.plannedOverlayId = null;
+  renderContinueControls();
+  renderGraph();
+  if (!state.continueMode) openProjectHome().catch((error) => toast(error.message));
+});
+$("#planned-overlay-filter").addEventListener("change", (event) => {
+  state.plannedOverlayId = event.target.value || null;
+  state.selectedPlannedNodeId = null;
+  renderContinueControls();
+  renderGraph();
+  const overlay = selectedPlannedOverlay();
+  if (overlay) toast(`Showing planned overlay ${overlay.id}.`);
+});
 $("#clear-focus").addEventListener("click", async () => { state.focusId = null; state.selectedId = null; state.flowLens = null; state.mode = "overview"; await loadView(); });
 $("#open-review-queue").addEventListener("click", () => openSemanticReviewQueue().catch((error) => toast(error.message)));
+$("#open-primary-flow").addEventListener("click", () => {
+  const firstFlow = state.graph?.flows?.[0];
+  if (!firstFlow) {
+    toast("No supported static Flow Lens is available in this graph version.");
+    return;
+  }
+  openFlowLens(firstFlow.id).catch((error) => toast(error.message));
+});
 $("#open-project-home").addEventListener("click", () => openProjectHome().catch((error) => toast(error.message)));
 $("#open-product-proof").addEventListener("click", () => openProductProof().catch((error) => toast(error.message)));
+$("#open-delivery-ledger").addEventListener("click", () => openDeliveryLedger().catch((error) => toast(error.message)));
 $("#fit-graph").addEventListener("click", () => { if (state.cy) state.cy.fit(undefined, 42); });
+$("#renderer-mode").addEventListener("change", (event) => { state.renderer = event.target.value; renderGraph(); });
 $("#run-benchmark").addEventListener("click", () => runBenchmark());
 $("#export-mermaid").addEventListener("click", async () => { const { mermaid } = await request("/api/export/mermaid"); const blob = new Blob([mermaid], { type: "text/plain" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "project-flow.mmd"; link.click(); URL.revokeObjectURL(link.href); });
 

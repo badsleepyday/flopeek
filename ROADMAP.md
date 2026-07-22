@@ -33,7 +33,8 @@ Current package version: `0.2.0`.
 | Capability | Status | Current evidence |
 | --- | --- | --- |
 | Local CLI scan and graph cache | `done` | Summary, JSON, Mermaid, and optional cache. |
-| Lightweight local viewer | `done` | Feature/request/dependency views, Flow Lens, flow Context Card, captured before/current comparison, search, inspector, benchmark. |
+| Large-repository discovery and bounded scan | `partial` | CLI, local server, Viewer/HTTP/SSE, and MCP share terminal outcomes, progress, cancellation, complete-result-only promotion, and last-complete fallback. Shared-plan mutation verification is current; cross-platform helper cleanup and consented monorepo package evidence remain. |
+| Lightweight local viewer | `done` | Feature/entry/dependency views, Flow Lens for supported static entries, flow Context Card, captured before/current comparison, search, inspector, benchmark. |
 | AST/compiler-based adapters | `partial` | Detailed in [SUPPORT.md](SUPPORT.md). |
 | Machine-readable coverage and limits | `done` | Graph analysis, viewer, MCP agent context. |
 | Evidence-first Trust Analytics | `done` | One versioned viewer/HTTP/MCP report preserves denominators, freshness, independent evidence classes, explicit unavailable accuracy, and no composite truth score. |
@@ -43,7 +44,7 @@ Current package version: `0.2.0`.
 | Static Git graph history | `done` | Commit archive snapshots and flow/topology comparison. |
 | Source-safe MCP core | `done` | Versioned source-read-only graph/context operations plus bounded idempotent metadata appends; no source body, shell, credential, or source-write surface. |
 | Human descriptions | `partial` | Per-node local notes plus immutable attributed flow verification records. |
-| Context Cards and portable refs | `done` | Node and bounded HTTP/request flow cards, JSON/Markdown packets, local resolver, and flow verification lifecycle exist. |
+| Context Cards and portable refs | `done` | Node and bounded supported-entry flow cards, JSON/Markdown packets, local resolver, and flow verification lifecycle exist. |
 | Durable layered Briefs | `done` | Versioned Project/Feature/Flow/Node Briefs, evidence-class separation, source basis, freshness, immutable minimal manifests, artifact expiry, API, and JSON/Markdown packets. |
 | Token-budgeted handoff context | `done` | One deterministic MCP/API composition surface ranks project/features/flows/tests/evidence under an explicit character-based token estimator and reports omissions. |
 | Portable Handoff Workspace | `done` | Immutable superseding workspace versions, append-only attributed notes, JSON/Markdown export/import, strict portable-text guards, and isolated foreign read-only state. |
@@ -57,7 +58,7 @@ Current package version: `0.2.0`.
 | Flow contract and test-run evidence foundation | `partial` | HTTP method/route/exact handler are explicit; the narrow Next.js literal-contract pilot exposes handler-bound request/response fields, while dynamic and unsupported forms remain unavailable. A published opt-in runner fixture reports running/failing static steps without executing commands; real CI integration remains. |
 | Agent evidence trace | `done` | Append-only Context Ref/action/changed-path/verification records, bounded viewer history/filtering, API, and MCP are available; records remain declarations, not proof. |
 | Semantic inference | `partial` | Deterministic HTTP/request candidates, evidence, confidence, abstention, immutable local feedback, trace binding, and draft-only viewer handoff exist; no real feedback dataset or trained model. |
-| SDLC workflow engine | `planned` | Product and architecture contract only. |
+| SDLC workflow engine and local Work ledger | `partial` | Durable work records, planned windows, append-only actual events, Agile/Waterfall/custom definitions, evidence-gated transitions, a read-only Viewer inspector, immutable continuation checkpoints, immutable planned overlays/Plan Refs with CLI/HTTP/MCP parity, an opt-in Viewer Continue mode, append-only human reconciliation records, deterministic baseline/plan/current comparison, read-only divergence, and declared dependency readiness are current. Checkpoint editing and external evidence authority remain. |
 | Public distribution | `planned` | Package remains private and has no selected license. |
 
 ## Agile operating model
@@ -117,6 +118,7 @@ Adding another parser is lower priority than correcting a misleading default flo
 
 ### Now
 
+- Execute the versioned work-continuation sequence in [docs/work-continuation-plan.md](docs/work-continuation-plan.md), beginning with an immutable Git/graph-bound checkpoint before adding planned technical overlays.
 - Validate the global workspace hub on a consented multi-repository microservice system and a large monorepo.
 - Run an observed usability study of agent proposal → human revise/verify → reusable semantic memory.
 - Validate the completed Next.js Route Handler literal-contract pilot on a consented production-shaped repository; dynamic values and unsupported adapters remain unavailable.
@@ -124,6 +126,7 @@ Adding another parser is lower priority than correcting a misleading default flo
 
 ### Next
 
+- Add read-only branch divergence after the checkpoint, Plan Ref, Continue-mode, manual reconciliation, and baseline/plan/current comparison contracts.
 - Run opt-in human/agent handoff studies on real legacy repositories using the consent-ready observation protocol, and retain independently reviewed outcome evidence outside Flowpeek's local cache.
 - Add consented runtime/test evidence adapters only after a separate privacy, sanitization, retention, and command-authority review; automatic collection remains out of scope.
 - Validate concept taxonomy and aliases with opted-in human handoff studies before broadening the vocabulary.
@@ -135,7 +138,7 @@ Adding another parser is lower priority than correcting a misleading default flo
 
 - Optional local ML and opt-in LLM wording assistance.
 - Explicitly approved local test execution adapters with allowlisted commands; MCP remains free of arbitrary shell access.
-- Generic SDLC workflow engine and evidence gates.
+- Suggested plan-to-actual matching only after a consented human-reviewed reconciliation dataset and held-out evaluation exist.
 - Historical continuity and permissioned integrations.
 - Public package/release hardening.
 
@@ -357,7 +360,7 @@ As a maintainer, I want one compact artifact containing responsibility, evidence
 #### Delivery
 
 - [x] Version Context Card schema.
-- [x] Support node and bounded HTTP/request flow cards.
+- [x] Support node and bounded supported-entry flow cards.
 - [x] Include knowledge class, confidence, evidence refs, verification state, and limitations for node and flow cards.
 - [x] Provide JSON and Markdown Context Packet exports for node and flow cards.
 - [x] Exclude unbounded source contents and secrets.
@@ -374,11 +377,12 @@ As a new developer, I want a readable technical flow rather than a breadth-first
 
 #### Delivery
 
-- [x] Add projection role per displayed HTTP/request step.
+- [x] Add projection role per displayed supported-entry step.
 - [x] Attach deterministic parser-edge evidence references.
 - [x] Identify supported static persistence, queue, and external boundaries without claiming side-effect success.
 - [x] Represent retained ambiguity, bounded fan-out, truncation, and missing transition evidence.
-- [ ] Add entry families incrementally: HTTP is current; command/queue/event/schedule remain planned.
+- [x] Add one narrow command family: literal `package.json` direct-runner scripts with one scanned source-file target.
+- [ ] Add framework-command, queue, event, and schedule families only with their own direct evidence contracts.
 
 #### Acceptance criteria
 
@@ -419,7 +423,7 @@ Dependency: Epics 2–3.
 
 - [x] Read-only MCP over stdio.
 - [x] Machine-readable parser coverage and interpretation limits.
-- [x] Overview, search, node, dependency, request-flow, Flow Lens, impact, test, Context Card/ref, delta, snapshot, history, and refresh tools.
+- [x] Overview, search, node, dependency, static-entry-flow, legacy request-flow, Flow Lens, impact, test, Context Card/ref, delta, snapshot, history, and refresh tools.
 - [x] No source contents, shell, source writes, credentials, or deployment access.
 
 ### Story 4.1 — Context resolution tools
@@ -486,7 +490,9 @@ Language/framework support can grow without expanding a monolithic scanner and s
 
 ## Epic 6 — Transparent semantic inference
 
-Status: `planned`.
+Status: `partial` — deterministic suggestions, abstention, immutable feedback,
+and a privacy-safe evaluation gate are current; a consented dataset, trained
+model, and broader entry-family features remain.
 
 Priority: P2.
 
@@ -533,7 +539,9 @@ Semantic suggestions measurably outperform deterministic naming on held-out veri
 
 ## Epic 7 — Flowpeek SDLC workflow engine
 
-Status: `planned`.
+Status: `partial` — the local Delivery Graph and evidence-gated workflow
+foundation are current; versioned continuation, editable Viewer workflow,
+dependency blocking, and external evidence authority remain.
 
 Priority: P2/P3.
 
@@ -545,37 +553,54 @@ Flowpeek supports Agile, Waterfall, and custom methods as templates over one evi
 
 ### Story 7.1 — Delivery Graph and Work record
 
-- [ ] Version Delivery Graph schema.
-- [ ] Add goal, requirement/story, decision, task, checkpoint, approval, test result, review, release, observation, and incident records.
-- [ ] Link delivery records to Context Cards and graph versions.
-- [ ] Keep workflow assertions separate from Evidence Graph facts.
+- [x] Version local Delivery Graph work-record and append-only event schemas.
+- [x] Add locally persisted objective, requirement/story, decision, task, checkpoint, approval, test result, review, release, observation, and incident records.
+- [x] Link delivery records to project-scoped Context Refs and their graph versions.
+- [x] Keep workflow assertions separate from Evidence Graph facts; this storage layer records plans/events while `workflow-engine.js` owns validated transitions.
 
 ### Story 7.2 — Generic workflow state machine
 
-- [ ] Version states, transitions, roles, evidence requirements, approval gates, and entry/exit rules.
-- [ ] Validate transitions deterministically.
-- [ ] Prevent status from fabricating technical completion.
+- [x] Version local states, transitions, roles, and evidence requirements; external approval authority and integrations remain unimplemented.
+- [x] Validate local transitions deterministically against the assigned workflow and declared evidence references.
+- [x] Prevent status from fabricating technical completion; every transition states its explicit limitation.
 
 ### Story 7.3 — Method templates
 
-- [ ] Agile template: backlog → planned → implementing → verifying → reviewing → released → observing.
-- [ ] Waterfall template: requirement → design → implementation → verification → release.
-- [ ] Custom workflow editor with schema validation.
+- [x] Agile template: backlog → planned → implementing → verifying → reviewing → released → observing.
+- [x] Waterfall template: requirements → design → implementation → verification → release → observing.
+- [x] Local custom workflow definitions with schema validation; user editing surfaces remain pending.
 
 ### Story 7.4 — Planned-versus-actual timeline
 
-- [ ] Planned blocks are editable and methodology-specific.
-- [ ] Actual events are append-only evidence from graph refresh, Git, declared tests, review, release, or integrations.
+- [x] Planned windows are editable through the local work-plan API and retained as methodology-neutral delivery metadata.
+- [x] Actual local events are append-only and can carry declared Context Ref, test, review, release, or observation references; automatic Git/integration collection remains pending.
 - [ ] Viewer distinguishes plan, actual, retry, failure, approval, supersession, and rollback without relying only on color.
 
 ### Story 7.5 — Human and agent work ledger
 
-- [ ] Ownership and role.
-- [ ] Task dependencies and blocking.
-- [ ] Required Context Cards and graph versions.
-- [ ] Required verification and approval.
-- [ ] Stale-context warning.
-- [ ] No private model reasoning.
+- [x] Ownership plus task dependencies are stored as local work-record metadata; cycles are rejected and built-in implementation entry is blocked when declared dependencies are not locally workflow-ready. This remains delivery metadata, not source or runtime proof.
+- [x] Required project-scoped Context Refs retain their graph versions and are surfaced with current/stale/future status.
+- [x] Local workflow templates require declared verification and approval evidence kinds before their configured transitions.
+- [x] Stale Context Ref counts are shared by the Viewer, HTTP, MCP, and CLI ledger views.
+- [x] Delivery events reject source bodies, raw logs, credentials, machine paths, and private reasoning fields.
+
+### Story 7.6 — Versioned work continuation
+
+The accepted architecture is [ADR-020](docs/adr/ADR-020-versioned-work-continuation.md).
+The lower-cost-model execution contract and acceptance order are maintained in
+[docs/work-continuation-plan.md](docs/work-continuation-plan.md).
+
+- [x] Synchronize the current Delivery Graph/workflow baseline and lock planned entities outside the Evidence Graph.
+- [x] Compose immutable continuation checkpoints from current Git/source basis, graph version, selected Context Refs, optional Handoff Workspace, and Work records.
+- [x] Expose checkpoint list/get/create through one local CLI, HTTP, and MCP contract without adding a Viewer control.
+- [x] Add a separate Plan Ref and immutable planned-node/planned-edge overlay without contaminating Flow Lens, impact, search, or parser coverage.
+- [x] Expose planned-overlay list/get/create and exact Plan Ref resolution through one local CLI, HTTP, and MCP contract without adding a Viewer control.
+- [x] Render explicit, accessible ghost nodes only in an opt-in Viewer Continue mode.
+- [x] Add append-only manual one-to-many reconciliation with distinct human and agent authorship.
+- [x] Compare retained baseline, plan, and current context with explicit partial/unavailable outcomes.
+- [x] Detect local branch/source divergence without network, checkout, merge, rebase, or ref mutation.
+- [x] Provide one bounded continuation packet shared by HTTP and MCP.
+- [ ] Complete Flowpeek-on-Flowpeek dogfooding, broad surface parity, documentation, and packaging verification.
 
 ### Epic exit criteria
 
@@ -589,7 +614,8 @@ Priority: P3.
 
 ### Historical intent stories
 
-- [ ] Link active-branch Git evidence first.
+- [x] Link bounded active-branch path-touch Git evidence to current/stale Context Refs without checkout, ref mutation, or rationale claims.
+- [x] Compare a current/stale Context Ref against two pinned static Git snapshots, separating exact static identity from same-path candidates without rename, successor, or rationale claims.
 - [ ] Optionally inspect all refs for archaeology without treating them as current architecture.
 - [ ] Link PRs, issues, ADRs, incidents, releases, and observations when evidence exists.
 - [ ] Classify rationale as explicit, inferred, verified, superseded, or unknown.
@@ -1078,6 +1104,172 @@ Goal: validate Flowpeek against private repository shapes without retaining targ
 Acceptance evidence: [`benchmarks/private-dogfood-summary.json`](benchmarks/private-dogfood-summary.json) records five completed anonymous scans and one explicit 60-second budget overrun; endpoint-free scans retain technical graphs while exposing zero HTTP/request Flow Lenses; the multi-repository sample exposes matching endpoint/Flow-Lens counts; `scan --no-cache` leaves no Flowpeek metadata in its temporary regression fixture; `npm run test:docs`, package/public policy checks, and the scanner suite pass.
 
 After this iteration: add a user-configurable initial-scan time budget and workspace discovery strategy, then run a consented human orientation study and an actually independent multi-provider cohort. Do not claim either outcome from this dogfooding evidence.
+
+### Iteration 38 — Stable repository discovery and bounded analysis
+
+Status: `partial`. The shared human/agent scan-outcome slice is current;
+filesystem-pass optimization, helper-process portability evidence, and consented
+large-monorepo package validation remain.
+
+Goal: make large-repository startup explicit and bounded without ever presenting
+an incomplete graph as complete or replacing the last complete cache.
+
+- [x] Add a read-only `flowpeek-repository-discovery/v1` contract for candidate
+  source, bytes, scope, static manifests, package names, adapter demand,
+  diagnostics, declared limits, and an opaque source/resolver-control inventory
+  fingerprint.
+- [x] Add `flowpeek discover` with time, file, and byte bounds, summary/JSON
+  output, exit code `2` for bounded discovery, and no metadata write.
+- [x] Add `flowpeek-bounded-scan-result/v1` for complete,
+  partial-by-budget, cancelled, and failed terminal outcomes.
+- [x] Analyze only the discovered source plan, re-inventory after analysis, and
+  discard the graph when its fingerprint changed.
+- [x] Preserve the last complete graph cache byte-for-byte when preflight blocks
+  analysis; never promote a partial graph.
+- [x] Add exact-limit, fingerprint-change, cancellation, cache-preservation, CLI,
+  and no-cache regression coverage.
+- [x] Replace the separate discovery/analysis/verification walks with one shared
+  immutable discovery plan without weakening mutation detection. Verification
+  re-reads planned directories and relevant candidates, not a second broad
+  workspace/adapter/manifest discovery report.
+- [ ] Prove or qualify Go/.NET helper-process cleanup on Windows, Linux, and macOS.
+- [x] Give cache-disabled sessions monotonic source-state identity or disable
+  stale Context Ref claims for those sessions.
+- [x] Expose one bounded outcome, cached fallback, progress, and cancellation
+  contract through server startup, watcher refresh, Viewer/HTTP/SSE, and MCP.
+- [x] Prove active HTTP/SSE and MCP cancellation retain one stale-unverified
+  complete graph, and reconcile a filesystem event queued during invalidated
+  manual bounded analysis.
+- [x] Keep rejected repository-switch candidates out of the active SSE outcome,
+  and isolate cache-disabled session deltas from durable cache identities.
+- [x] Keep candidate-root Viewer state explicit and bind live-watcher regression
+  assertions to the exact SSE delta rather than a later filesystem refresh.
+- [x] Let a developer explicitly select one validated local package path with
+  `--package`; preserve root/ancestor resolver controls, label the resulting
+  static subtree in Viewer/HTTP/MCP/agent context, and force a non-promotable
+  session-only graph so it cannot overwrite the repository-wide cache.
+- [ ] Validate package selection and per-package progress on consented large
+  monorepositories; manifest inventory alone is not workspace topology.
+
+Current dogfood observation: Flowpeek-on-Flowpeek discovery completed with 132
+candidate files and a bounded no-cache scan produced a complete 1,257-node,
+4,484-edge graph with a matching shared-plan verification within the declared
+local limits. These are development
+observations, not public performance or accuracy evidence.
+
+Acceptance for the completed iteration requires one shared outcome across human
+and agent surfaces, cache preservation under every non-complete state, explicit
+omissions, reproducible large-workspace evidence, and no unsupported hard
+cancellation or Context Ref freshness claim.
+
+After this iteration: generalize Flow Projections beyond HTTP/request entries
+one evidence-backed family at a time, beginning with command and scheduled entry
+points, while preserving the same Context Ref, limitation, and human/agent
+parity contracts.
+
+### Iteration 39 — Generalized evidence-backed entry flows
+
+Status: `complete` — the versioned entry contract covers narrow literal package scripts, narrow Django management-command declarations, and narrow literal node-cron schedules. Django `5.2.5` was scanned at pinned revision `a3b1107a4955bdd994908efb4c6e1d03c281e69f` as production-shaped static evidence. Broader command/framework discovery remains deliberately out of scope.
+
+Goal: project technical flows from supported non-HTTP entry facts without
+renaming static topology as runtime, business, or successful execution truth.
+
+- [x] Define `flowpeek-static-flow-entry/v1` and retain it in Flow Lens, Context Packet, comparison, and delta evidence.
+- [x] Add deterministic command entry points from literal `package.json` scripts with exactly one supported direct runner and one repository-local scanned source target; do not execute the manifest or runner.
+- [ ] Add framework command declarations without executing configuration.
+- [x] Add scheduled entry points only for adapters with direct syntax evidence: module-scope default-import node-cron `schedule()` with a safe literal cron expression and one exact local top-level function target.
+- [x] Add a narrow Django management-command entry adapter: a non-private `management/commands/<name>.py` module, one top-level `Command` class directly extending an imported `django.core.management.base.BaseCommand` binding, and one direct `handle` method; retain all other forms as unsupported inventory.
+- [x] Preserve the same Flow Context Ref, bounds, ambiguity, comparison,
+  verification, Viewer, HTTP, and MCP contracts used by HTTP/request Flow Lens.
+- [x] Keep unsupported shell-composed, quoted, flagged, indirect, out-of-repository, and unscanned-target package scripts plus unsupported node-cron expressions/callbacks machine-readable and absent from Flow Lens claims; scheduler initialization, task execution, dynamic dispatch, and other scheduler APIs remain unsupported.
+- [x] Keep unsupported Django command forms, app registration, settings loading, command invocation, and execution outside Flow Lens claims.
+- [ ] Validate each entry family on a pinned fixture and at least one consented
+  production-shaped repository before broad support wording.
+
+### Iteration 40 — Dense Viewer renderer and WebGL feasibility
+
+Status: `partial`.
+
+Goal: determine whether a WebGL-backed renderer materially improves dense,
+bounded projections without weakening human comprehension or accessibility.
+
+- [ ] Pin small, medium, and dense projection fixtures with reproducible node and
+  edge counts.
+- [ ] Measure load time, interaction latency, fit/focus latency, memory, and
+  stable-frame behavior for the current Cytoscape canvas renderer and candidate
+  WebGL renderers.
+- [ ] Run Azka and Iris readability checks for label legibility, focus direction,
+  semantic zoom, keyboard navigation outside the canvas, screenshots, and
+  non-color cues.
+- [ ] Preserve node IDs, Context Refs, inspector behavior, and selection parity
+  across renderer implementations.
+- [ ] Reject renderer migration if its only advantage requires rendering an
+  unbounded repository graph or hiding evidence labels.
+- [x] Keep Canvas as the supported default and make WebGL an explicit bounded-map preview with Canvas fallback (ADR-018); no default-renderer change is approved.
+
+## Next executable sequence — Versioned work continuation
+
+Status: `in progress`, with C1 through C10 complete. C11 is the next
+implementation item.
+
+This sequence refines Story 7.6 without creating a second roadmap. Execute it in
+order; one focused commit and acceptance gate per item. The exact schemas, files,
+surface contracts, tests, non-goals, and suggested commit messages are in
+[docs/work-continuation-plan.md](docs/work-continuation-plan.md).
+
+| Item | Status | Outcome |
+| --- | --- | --- |
+| C1 Canonical baseline synchronization | `done` | Current Delivery Graph/workflow behavior, remaining boundaries, ADR-020, and this execution contract are aligned. |
+| C2 Immutable continuation checkpoint core | `done` | Exact current project/Git-or-working-tree/graph baseline composes selected context, handoff, and delivery work in immutable local storage. |
+| C3 Checkpoint surface parity | `done` | CLI, HTTP, MCP, and service contracts share one checkpoint identity and freshness result. |
+| C4 Planned technical overlay core | `done` | Planned nodes/edges and Plan Refs remain separate from technical graph facts in immutable local storage. |
+| C5 Planned overlay surface parity | `done` | CLI, HTTP, and MCP share exact immutable overlay projections and non-redirecting Plan Ref resolution. |
+| C6 Explicit Viewer Continue mode | `done` | The opt-in local Viewer overlay uses explicit text, shape, border, opacity, dashed relationships, counts, Plan Refs, and an evidence boundary; factual search, impact, Flow Lens, and parser facts remain unchanged. |
+| C7 Append-only manual reconciliation | `done` | CLI, HTTP, MCP, and the trusted local Viewer record/list exact append-only reconciliation projections. Positive outcomes require a human actor and current same-project technical Context Refs; every record remains delivery metadata, not parser fact. |
+| C8 Baseline/plan/current comparison | `done` | HTTP, MCP, and the Viewer share one deterministic retained-evidence comparison. It reports plan status without AI matching or concluding that unavailable history means implementation is absent. |
+| C9 Read-only branch divergence | `done` | HTTP, MCP, and the Viewer expose bounded local Git/source divergence plus selected Context Ref freshness without mutating refs or the working tree. |
+| C10 Bounded agent continuation packet | `done` | HTTP and MCP share one versioned token-bounded packet with baseline, selected current Context Cards, optional exact plan, reconciliation, divergence, limitations, and explicit omissions. |
+| C11 Stabilization and dogfooding | `in progress` | The real-stdio-MCP continuation journey is covered in a disposable repository. Viewer/manual and independent-provider review evidence, plus the final Flowpeek-on-Flowpeek observation, remain open before this sequence can close. |
+| C12 Dependency-aware continuation preflight | `done` | Declared work dependencies have a bounded read-only readiness projection, circular plans are rejected, and built-in implementation entry stops on blocking, unresolved, or unknown local dependency metadata without treating readiness as source or runtime proof. |
+| C13 Active-branch Context Git evidence | `done` | A current/stale Context Ref yields bounded local path-touch history from the active branch without checkout, ref mutation, or rationale claims. |
+| C14 Git snapshot Context continuity | `done` | CLI, HTTP, and MCP compare a current/stale Context Ref across two static snapshots, preserving exact static identity separately from same-path candidates and never inferring rename, successor, or semantic equivalence. |
+
+### Immediate dogfooding stability gate
+
+Status: `in progress`. This gate takes priority over new product breadth. Its
+purpose is to make the existing surfaces dependable enough for repeated
+Flowpeek-on-Flowpeek and supported-language dogfooding; it does not widen any
+language, runtime, business-flow, or release claim.
+
+| Gate | Status | Required outcome |
+| --- | --- | --- |
+| S1 Production module loading | `done` | The history/continuity circular dependency is removed and production CLI/MCP loading is covered. |
+| S2 Entry-point regression coverage | `done` | Production CLI and real stdio MCP cover history, Git snapshot comparison, and Git Context continuity import order. |
+| S3 Cache hygiene | `done` | Cache retention is inspectable and explicitly prunable; cache-disabled fixture scans do not create new Flowpeek metadata. Existing user-owned metadata is preserved. |
+| S4 Delivery-document synchronization | `done` | Gate B reconciled roadmap, checkpoint, support claims, and executable E46–E53 evidence at the current dirty baseline; manual Viewer/browser evidence remains separately open in S5. |
+| S5 C11 observable stabilization | `open` | Complete manual Viewer/readability/accessibility recovery checks, the supported Node/OS matrix, real stdio MCP dogfooding, and explicitly scoped provider evidence. |
+| S6 Supported-language dogfooding proof | `done` | A digest-pinned TypeScript, Python, and PHP fixture cohort audits declared static relations, semantic levels, MCP Context Ref retrieval, disposable refresh, and stale resolution without executing targets. It is not production-repository or runtime evidence. |
+
+The mechanical implementation contract is
+[docs/stability-semantic-zoom-execution-plan.md](docs/stability-semantic-zoom-execution-plan.md).
+Execute it in order; bounded semantic zoom is the first priority feature after
+the projection and live-renderer foundations are stable.
+
+| Execution item | Status | Stability outcome |
+| --- | --- | --- |
+| E46 Production surface recovery | `done` | Git history and continuity now load through real CLI and stdio MCP without the former circular module dependency. |
+| E47 Cache hygiene and retention observability | `done` | Local cache size and registered derived-artifact retention are inspectable; dry-run-first pruning is explicitly scoped before storage migration. |
+| E48 Bounded view-projection contract | `done` | `flowpeek-view-projection/v2` removes silent graph slicing and establishes shared identity, bounds, and omissions. |
+| E49 Stable live renderer | `done` | Compatible live refreshes reconcile Cytoscape elements in place and preserve viewport and unchanged-node positions. |
+| E50 Bounded semantic zoom v1 | `done` | Deterministic Domain, Feature, Component, and Symbol navigation is available across Viewer, CLI, and MCP; composite derived ids retain every selected ancestor and root files do not become fabricated domains. |
+| E51 Flow-first product navigation | `done` | A supported bounded Flow Lens is the primary Viewer journey; Project Home remains explicit and is the no-flow fallback. |
+| E52 Evidence readability and observable QA | `done` | Delivered Viewer contract has non-color evidence vocabulary, responsive/reduced-motion safeguards, and a local observable QA test; the separate manual S5 release gate remains open. |
+| E53 Supported-language product dogfooding | `done` | A pinned JS/TS, Python, and PHP supported-subset cohort passes audited static flow, semantic zoom, MCP Context Ref, and stale-refresh checks. |
+
+Routine CLI/MCP dogfooding requires S1 through S4. Routine product dogfooding
+requires E46 through E52 plus the minimum pinned E53 cohort. S5 remains
+required before any beta or stable claim; S6 and E53 are complete for the
+declared static cohort.
 
 ## Product metrics
 

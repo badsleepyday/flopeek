@@ -1,5 +1,6 @@
 const { createContextRef } = require("./context-card");
 const { DEFAULT_FLOW_LENS_MAX_STEPS, MAX_FLOW_LENS_STEPS, validateFlowLensMaxSteps } = require("./flow-lens-options");
+const { inferFlowEntry } = require("./flow-entry");
 
 const FLOW_LENS_SCHEMA = "flowpeek-flow-lens/v1";
 const FLOW_TRAVERSAL_STEP_BOUND = MAX_FLOW_LENS_STEPS;
@@ -25,6 +26,8 @@ function evidenceEdge(edge) {
 
 function stepRole(node) {
   if (node.kind === "endpoint") return "entry";
+  if (node.kind === "command") return "command-entry";
+  if (node.kind === "schedule") return "scheduled-entry";
   if (["route", "controller"].includes(node.type)) return "routing";
   if (node.type === "service") return "orchestration";
   if (["repository", "database"].includes(node.type)) return "persistence";
@@ -119,7 +122,8 @@ function createFlowProjection(graph, flow, options = {}) {
     missingTransitionEvidence: missingTransitions,
   };
   const entryNode = nodeById.get(flow.entryId);
-  const handlerEdge = graph.edges.find((edge) => edge.source === flow.entryId && edge.type === "handles") || null;
+  const entry = inferFlowEntry(flow, entryNode);
+  const handlerEdge = entry.kind === "http-request" ? graph.edges.find((edge) => edge.source === flow.entryId && edge.type === "handles") || null : null;
   const handlerNode = handlerEdge ? nodeById.get(handlerEdge.target) : null;
   const exactHandler = Boolean(handlerNode?.kind === "symbol" && handlerEdge?.confidence === "exact");
   const siblingHandlerIds = sourceSteps
@@ -133,15 +137,65 @@ function createFlowProjection(graph, flow, options = {}) {
     siblingHandlerContamination: siblingHandlerIds.length > 0,
     siblingHandlerIds,
   };
+  const commandTargetEdge = entry.family === "command"
+    ? graph.edges.find((edge) => edge.source === flow.entryId && edge.type === "declares-command-target") || null
+    : null;
+  const commandTarget = commandTargetEdge ? nodeById.get(commandTargetEdge.target) : null;
+  const scheduleTargetEdge = entry.kind === "scheduled-task"
+    ? graph.edges.find((edge) => edge.source === flow.entryId && edge.type === "schedules") || null
+    : null;
+  const scheduleTarget = scheduleTargetEdge ? nodeById.get(scheduleTargetEdge.target) : null;
+  const entryEvidence = entry.kind === "http-request"
+    ? {
+      family: "http",
+      binding: handlerEvidence.binding,
+      targetId: handlerEvidence.handlerId,
+      edge: handlerEvidence.edge,
+      siblingHandlerContamination: handlerEvidence.siblingHandlerContamination,
+      siblingHandlerIds: handlerEvidence.siblingHandlerIds,
+    }
+    : entry.family === "command"
+      ? {
+        family: "command",
+        binding: entry.kind === "framework-command"
+          ? commandTarget?.kind === "symbol" && commandTarget?.type === "class" && commandTargetEdge?.confidence === "exact" ? "exact-framework-command-target" : commandTarget ? "non-exact-target" : "missing-target"
+          : commandTarget?.kind === "file" && commandTargetEdge?.confidence === "exact" ? "exact-literal-target" : commandTarget ? "non-exact-target" : "missing-target",
+        targetId: commandTarget?.id || null,
+        edge: commandTargetEdge ? evidenceEdge(commandTargetEdge) : null,
+        siblingHandlerContamination: false,
+        siblingHandlerIds: [],
+      }
+      : entry.kind === "scheduled-task"
+        ? {
+          family: "scheduler",
+          binding: scheduleTarget?.kind === "symbol" && scheduleTarget?.type === "function" && scheduleTargetEdge?.confidence === "exact" ? "exact-local-task" : scheduleTarget ? "non-exact-task" : "missing-task",
+          targetId: scheduleTarget?.id || null,
+          edge: scheduleTargetEdge ? evidenceEdge(scheduleTargetEdge) : null,
+          siblingHandlerContamination: false,
+          siblingHandlerIds: [],
+        }
+      : { family: "unknown", binding: "unknown", targetId: null, edge: null, siblingHandlerContamination: false, siblingHandlerIds: [] };
   const limitations = [
-    "This is a bounded static technical projection from a detected HTTP/request entry. It is not a runtime trace, business process, control-flow proof, or timing sequence.",
+    entry.kind === "http-request"
+      ? "This is a bounded static technical projection from a detected HTTP/request entry. It is not a runtime trace, business process, control-flow proof, or timing sequence."
+      : entry.family === "command"
+        ? entry.kind === "framework-command"
+          ? "This is a bounded static technical projection from an exact Django management command declaration. It is not proof that Django registered the command, settings loaded, the command ran, a runtime trace, business process, control-flow proof, or timing sequence."
+          : "This is a bounded static technical projection from a declared literal package script. It is not proof that a command ran, that its runner exists, a runtime trace, business process, control-flow proof, or timing sequence."
+        : entry.kind === "scheduled-task"
+          ? "This is a bounded static technical projection from a declared node-cron registration. It is not proof that scheduling initialized, a scheduled time occurred, a task ran, a runtime trace, business process, control-flow proof, or timing sequence."
+        : "This is a bounded static technical projection from a detected entry. It is not a runtime trace, business process, control-flow proof, or timing sequence.",
     "Step roles and static boundaries are derived from node type and parser evidence; they do not establish ownership, side-effect success, or external behavior.",
+    ...(entry.limitations || []),
   ];
   if (truncation.displayTruncated) limitations.push(`The lens displays the first ${steps.length} of ${sourceSteps.length} traversed steps; use raw dependencies to inspect omitted continuation.`);
   if (truncation.sourceTraversalMayBeTruncated) limitations.push(`The source traversal reached Flowpeek's ${FLOW_TRAVERSAL_STEP_BOUND}-step bound; further static continuation may be omitted.`);
   if (missingTransitions.length) limitations.push("Some displayed steps have no adjacent-depth parser edge in the retained traversal; they are shown as static members, not a proven transition.");
-  if (!exactHandler) limitations.push("The endpoint could not be bound to one exact exported HTTP handler symbol, so this is a lower-confidence file-level fallback rather than handler-specific evidence.");
-  if (handlerEvidence.siblingHandlerContamination) limitations.push("Sibling HTTP handler symbols were retained in this traversal. Semantic confidence is reduced until the containment path is removed or inspected.");
+  if (entry.kind === "http-request" && !exactHandler) limitations.push("The endpoint could not be bound to one exact exported HTTP handler symbol, so this is a lower-confidence file-level fallback rather than handler-specific evidence.");
+  if (entry.kind === "http-request" && handlerEvidence.siblingHandlerContamination) limitations.push("Sibling HTTP handler symbols were retained in this traversal. Semantic confidence is reduced until the containment path is removed or inspected.");
+  if (entry.kind === "package-script" && entryEvidence.binding !== "exact-literal-target") limitations.push("The literal package script could not be bound to one exact scanned target file, so the command projection has limited static evidence.");
+  if (entry.kind === "framework-command" && entryEvidence.binding !== "exact-framework-command-target") limitations.push("The Django declaration could not be bound to one exact top-level Command class, so the framework command projection has limited static evidence.");
+  if (entry.kind === "scheduled-task" && entryEvidence.binding !== "exact-local-task") limitations.push("The literal node-cron registration could not be bound to one exact local top-level task function, so the scheduler projection has limited static evidence.");
   return {
     schemaVersion: FLOW_LENS_SCHEMA,
     id: `lens:${flow.id}@${graph.state.graphVersion}`,
@@ -150,15 +204,22 @@ function createFlowProjection(graph, flow, options = {}) {
       id: flow.id,
       title: flow.title,
       entryId: flow.entryId,
+      entry,
       contextRef: createContextRef(graph.project.projectId, "flow", flow.id, graph.state.graphVersion),
       entryContextRef: createContextRef(graph.project.projectId, "node", flow.entryId, graph.state.graphVersion),
     },
     knowledgeClass: "derived",
-    confidence: exactHandler && !handlerEvidence.siblingHandlerContamination ? "exact-static-evidence" : "limited-static-evidence",
+    confidence: (entry.kind === "http-request" && exactHandler && !handlerEvidence.siblingHandlerContamination)
+      || (entry.kind === "package-script" && entryEvidence.binding === "exact-literal-target")
+      || (entry.kind === "framework-command" && entryEvidence.binding === "exact-framework-command-target")
+      || (entry.kind === "scheduled-task" && entryEvidence.binding === "exact-local-task")
+      ? "exact-static-evidence"
+      : "limited-static-evidence",
     steps,
     staticBoundaries: boundaries,
     truncation,
-    handlerEvidence,
+    handlerEvidence: entry.kind === "http-request" ? handlerEvidence : null,
+    entryEvidence,
     verification: null,
     unresolvedQuestions: ["No flow-level human verification record exists in this vertical slice."],
     limitations,

@@ -113,6 +113,7 @@ function flowSummary(flow) {
     id: flow.id,
     title: flow.title,
     entryId: flow.entryId,
+    entry: flow.entry || null,
     steps: (flow.steps || []).map((step) => ({ id: step.id, depth: step.depth })),
   };
 }
@@ -237,7 +238,7 @@ function createGraphDelta(previousGraph, graph, options = {}) {
       affectedContexts: contextNodes.items.length + contextFlows.items.length,
       flowComparisons: flowComparisons.items.length,
     },
-    limitation: "Affected contexts and bounded Flow Lens comparisons identify static HTTP/request evidence from one adjacent delta. They do not prove runtime execution, control flow, business behavior, or a full historical Context Card.",
+    limitation: "Affected contexts and bounded Flow Lens comparisons identify supported static entry evidence from one adjacent delta. They do not prove command invocation, runtime execution, control flow, business behavior, or a full historical Context Card.",
   };
 }
 
