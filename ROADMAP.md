@@ -1032,7 +1032,7 @@ After this iteration: run a real privacy-reviewed paired provider cohort outside
 
 ### Iteration 34 — Public Alpha Clean-Room Packaging
 
-Status: `completed` for a private candidate tarball and local clean-room contract. npm publication, licensing approval, a real provider cohort, and release-stage approval remain explicitly outside this iteration.
+Status: `completed` for a public-Core candidate tarball and local clean-room contract. npm publication, a real provider cohort, and release-stage approval remain explicitly outside this iteration.
 
 Goal: prove that the exact bounded npm artifact can be installed and used from an empty temporary project without relying on the source checkout, leaking repository-only artifacts, executing target code, or claiming publication/release authority.
 
@@ -1068,23 +1068,21 @@ Acceptance evidence: the direct-repository benchmark cannot read `expectations.j
 
 After this iteration: run paired, consented developer and provider studies that measure time to first correct flow, files inspected, unsupported claims, and verified task outcomes. Do not infer those outcomes from deterministic retrieval alone.
 
-### Iteration 36 — Private development and public release boundary
+### Iteration 36 — Public Core and private overlay boundary
 
-Status: `completed` for deterministic public-tree projection and local structural verification. Public repository creation, visibility change, release approval, version bump, and publication remain blocked owner actions; Apache-2.0 source licensing is present.
+Status: `completed` for the repository-model migration. `badsleepyday/flowpeek` is the public canonical Core on `main`; the private overlay is separate and consumes pinned public Core tags. The former private-development-to-public snapshot model has been retired.
 
-Goal: keep private development governance and history out of the public Flowpeek source tree while preserving one private source of truth and a reproducible public candidate.
+Goal: preserve one public Core source of truth while keeping commercial and confidential work in a separate private overlay without copying Core implementation or tests.
 
-- [x] Define a versioned public repository policy separate from the npm package policy.
-- [x] Export only tracked files from a clean committed private revision into a new external directory.
-- [x] Exclude `.agents`, `.agent-team`, `AGENTS.md`, private Git history, cache, credentials, logs, keys, and untracked files.
-- [x] Retain only explicitly approved public `.github` workflows and the portable `.flowpeek/config.json` dogfooding scope.
-- [x] Create no `.git` directory, remote operation, visibility change, release, or package publication.
-- [x] Report structural safety separately from license, package-private, and owner-approval blockers.
-- [x] Add focused audit/export tests and document initial and subsequent public snapshot workflows.
+- [x] Make public `main` the only long-lived Core source branch and release alpha, beta, release-candidate, and stable channels as immutable tags.
+- [x] Create a tagged-release workflow that verifies public source and package evidence before creating the corresponding GitHub Release.
+- [x] Define the private overlay as a consumer of immutable public Core tags rather than a mirror, exporter source, or alternative Core branch.
+- [x] Retire private-development-to-public export scripts, policies, tests, and documentation from the public Core repository.
+- [x] Keep public Core release readiness separate from npm publication approval and from private-overlay work.
 
-Acceptance evidence: `npm run test:public-repository` passes; `npm run audit:public-repository` reports a structurally valid bounded candidate; a clean synthetic export contains public CI and `.flowpeek/config.json`, contains no agent governance or Git history, and refuses dirty/overlapping sources; and the current candidate remains explicitly blocked from public release.
+Acceptance evidence: `RELEASING.md`, `ARCHITECTURE.md`, `SUPPORT.md`, and this roadmap identify public `main` as canonical; document-contract verification rejects the retired snapshot model; the public release workflow runs from `v*` tags; and the private overlay pins a public immutable tag without copying Core source.
 
-After this iteration: the owner must confirm the public repository model, reserve the package/repository names, approve the first public snapshot, and define credentials for a reviewed public-repository pull-request workflow. Never mirror the private repository.
+After this iteration: complete the remaining observable stability gate, choose the package and brand identity, then prepare a separately approved npm beta release from a tagged public Core commit.
 
 ### Iteration 37 — Private-repository dogfooding safety and entry integrity
 

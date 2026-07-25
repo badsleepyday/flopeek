@@ -98,7 +98,7 @@ coverage, or universal accuracy claims.
 | Delivery context | Work records, evidence-gated workflows, timelines, immutable checkpoints, planned overlays, and reconciliation |
 | Viewer | Semantic zoom, keyboard Flow Lens navigation, narrow layouts, Canvas default, and experimental bounded WebGL preview |
 | Stability | Last-complete-graph fallback, scan cancellation, cache freshness, helper cleanup, and deterministic cancellation coverage |
-| Packaging | Strict allowlist, clean-room installation verification, and public-repository structural audit |
+| Packaging | Strict allowlist, clean-room installation verification, and tagged public-Core release checks |
 
 The historical beta candidate does not mean the npm package was published as a
 public beta release.
