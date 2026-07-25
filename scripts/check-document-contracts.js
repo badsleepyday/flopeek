@@ -10,20 +10,19 @@ const requireMatch = (text, pattern, label) => { if (!pattern.test(text)) failur
 const rejectMatch = (text, pattern, label) => { if (pattern.test(text)) failures.push(`Stale ${label}.`); };
 
 const packageJson = JSON.parse(read("package.json"));
-const policy = JSON.parse(read("packaging/public-repository-policy.json"));
-const workflow = read(".github/workflows/public-snapshot.yml");
 const support = read("SUPPORT.md");
 const roadmap = read("ROADMAP.md");
-const publicGuide = read("docs/public-private-repositories.md");
+const architecture = read("ARCHITECTURE.md");
+const releasing = read("RELEASING.md");
 
 if (packageJson.license !== "Apache-2.0") failures.push("package.json must declare Apache-2.0.");
 if (!fs.existsSync(path.join(root, "LICENSE"))) failures.push("LICENSE must exist.");
-if (!policy.requiredPaths.includes("LICENSE")) failures.push("Public repository policy must require LICENSE.");
-requireMatch(workflow, /GITHUB_REF_NAME}" != "master"/, "private master stable-release guard");
-requireMatch(workflow, /base_branch="main"/, "public main stable target");
-requireMatch(publicGuide, /`badsleepyday\/flowpeek` public destination/, "configured public destination");
-requireMatch(publicGuide, /private `master`/, "private master documentation");
-rejectMatch(`${support}\n${roadmap}\n${publicGuide}`, /blocked by (?:the )?missing license|no selected license|no license has been selected/i, "missing-license claim");
+requireMatch(releasing, /`main` is the only long-lived public source branch/, "public main release contract");
+requireMatch(releasing, /Private overlay boundary/, "private overlay release boundary");
+requireMatch(support, /The public `main` branch is the canonical Flowpeek Core source/, "canonical public Core support statement");
+requireMatch(architecture, /Public Core releases are created from immutable tags on `main`/, "tagged public Core architecture statement");
+rejectMatch(`${support}\n${roadmap}\n${architecture}`, /private development source of truth|private-development to public-source projection|public repository creation, visibility change/i, "retired private-to-public source model");
+rejectMatch(`${support}\n${roadmap}\n${architecture}`, /export:public-repository|audit:public-repository|public-snapshot\.yml/, "retired public snapshot tooling");
 requireMatch(support, /fixture gate reports 40\/40 expected relationships/, "current fixture corpus total");
 
 if (failures.length) {

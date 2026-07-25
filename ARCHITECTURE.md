@@ -63,7 +63,7 @@ Status: `current`
 - `package.json#files` and `packaging/package-policy.json` bound the candidate tarball to runtime modules, Viewer assets, the Flowpeek integration skill, showcase, and public benchmark data. Repository governance, tests, CI, caches, credentials, logs, and source maps are rejected by the package audit.
 - `scripts/verify-clean-room.js` packs and installs the exact source tarball into an operating-system temporary consumer with lifecycle scripts disabled, then checks the installed binary, bounded static scan, MCP bootstrap, fixture immutability, and cleanup.
 - The source repository is public. npm registry publishing remains intentionally separate from a source tag or GitHub Release; packaging evidence does not decide registry permission or release stage.
-- `packaging/public-repository-policy.json` and `scripts/export-public-repository.js` remain compatibility tooling for auditing an allowlisted source projection. They have no authority to publish or overwrite this public repository. Public Core releases are created from immutable tags on `main`; private overlays consume those tagged Core versions.
+- Public Core releases are created from immutable tags on `main`; a separate private overlay consumes those tagged Core versions and must not copy Core source or become a second Core source of truth.
 
 ### Main modules
 
@@ -111,7 +111,6 @@ Status: `current`
 | `src/git-metadata.js` | One-command Git branch/revision/dirty metadata plus static Git directory, shallow-state, and origin-remote reads used to reduce cold scan overhead. |
 | `src/package-policy.js` | Strict npm pack inventory validation, runtime allowlist, denied cache/credential/governance content, size bounds, package identity, and private-release boundary. |
 | `src/clean-room-package.js` | Isolated tarball pack/install verification, installed CLI and MCP smoke contracts, copied-fixture fingerprinting, host-specific phase observations, and mandatory temporary-state cleanup. |
-| `scripts/lib/public-repository-policy.js` | Private-development to public-source projection, structural audit, release blockers, clean-worktree enforcement, and history-free snapshot export. |
 | `src/showcase.js` | Validated temporary-workspace checkout demonstration with bounded apply/reset/status mutations, viewer deep linking, automatic cleanup, and no target-application execution. |
 | `src/framework-route.js` | Isolated deterministic Next.js and SvelteKit file-system route derivation used by scanner classification and analysis. |
 | `src/source-classification.js` | Isolated deterministic source type, layer, label, domain, and feature derivation used by the scanner. |
