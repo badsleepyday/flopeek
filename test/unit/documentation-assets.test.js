@@ -57,6 +57,16 @@ test("README user paths and screenshots are present and portable", () => {
   assert.equal(readme.includes("AppData\\Local\\Temp"), false);
 });
 
+test("public product identity keeps the brand and release boundary explicit", () => {
+  const identity = read("docs/product-identity.md");
+  const packageJson = JSON.parse(read("package.json"));
+  assert.match(identity, /\*\*Flowpeek\*\*/);
+  assert.match(identity, /Versioned change context for developers and coding agents\./);
+  assert.match(identity, /does \*\*not\*\* claim trademark clearance/);
+  assert.equal(packageJson.name, "flowpeek");
+  assert.equal(packageJson.description, "Versioned change context for developers and coding agents.");
+});
+
 test("bounded scan documentation states the shared complete-result-only contract", () => {
   const readme = read("README.md");
   const guide = read("docs/using-flowpeek.md");
