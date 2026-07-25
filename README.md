@@ -1,8 +1,24 @@
 # Flowpeek
 
-> See the technical flow before you edit the code.
+> Understand the technical flow before you edit the code.
 
-Flowpeek turns an existing repository into a focused, versioned technical map. Open it in a lightweight local Viewer or give the same context to a coding agent through MCP.
+**Flowpeek is a local-first technical flow explorer for existing source
+repositories.** It turns deterministic parser and repository facts into small,
+versioned maps that developers and coding agents can inspect from the same local
+graph.
+
+Use Flowpeek to answer concrete repository questions:
+
+- Where does this technical flow enter?
+- Which source files, symbols, and static relationships are involved?
+- Which tests are directly related by supported parser evidence?
+- What changed between graph versions or Git snapshots?
+- What exact, bounded context can another developer or coding agent reuse?
+
+The same evidence is available in a lightweight local Viewer, through HTTP, and
+through Model Context Protocol (MCP) tools. Flowpeek does not turn static
+relationships into claims about runtime order, business intent, or successful
+execution.
 
 - **Local-first:** source stays on your machine.
 - **AI-optional:** parsing and graph generation are deterministic.
@@ -10,6 +26,66 @@ Flowpeek turns an existing repository into a focused, versioned technical map. O
 - **Evidence-aware:** static flow, tests, human notes, agent declarations, and runtime observations stay separate.
 
 ![Repository to shared Flowpeek context](docs/assets/shared-context-workflow.svg)
+
+## See the product
+
+### Focus one technical flow
+
+Flow Lens reduces a repository graph to one bounded static path, with technical
+steps, source locations, parser coverage, and a versioned Context Ref.
+
+![Flowpeek Viewer showing a bounded POST checkout Flow Lens](docs/assets/screenshots/flow-lens.png)
+
+### Understand what changed
+
+Before/current comparison identifies added, removed, and changed static
+relationships between adjacent graph versions. It is change-orientation
+evidence, not runtime history.
+
+![Flowpeek before and current static flow comparison](docs/assets/screenshots/flow-comparison.png)
+
+### Inspect proof together with its limits
+
+The proof panel shows pinned benchmark evidence and current-repository facts
+alongside the exact scope and limitations of each result.
+
+![Flowpeek product proof panel with bounded evidence](docs/assets/screenshots/product-proof.png)
+
+## Historical beta-candidate snapshot
+
+This snapshot describes the candidate validated on July 25, 2026 before public
+Core became authoritative in tagged commits on public `main`. These are
+repository and test facts for that revision—not live telemetry, runtime
+coverage, or universal accuracy claims.
+
+| Metric | Validated result |
+| --- | ---: |
+| Full repository test suite | **318 passed / 0 failed** |
+| Source files scanned | **196** |
+| Structurally parsed files | **196** |
+| Parse failures | **0** |
+| Static graph nodes | **1,787** |
+| Static graph edges | **6,479** |
+| Tests represented in the graph | **84** |
+| MCP tools exposed by clean-room install | **62** |
+| Package audit | **Passed — 178 files** |
+| GitHub Actions | **Node 20 passed · Node 22 passed** |
+
+### Development included in this beta channel
+
+| Product area | Current capability |
+| --- | --- |
+| Repository orientation | Bounded repository discovery, package-scoped scans, explicit resource limits, and typed inventory anchors |
+| Technical flows | Supported HTTP/request, package-script, `node-cron`, Django, Click, Typer, and Flask CLI entry evidence |
+| Change understanding | Graph deltas, affected contexts, before/current Flow Lens comparison, and Git Context Ref continuity |
+| Human/agent handoff | Versioned Context Refs, Context Packets, and relevance-ranked bounded MCP context |
+| Delivery context | Work records, evidence-gated workflows, timelines, immutable checkpoints, planned overlays, and reconciliation |
+| Viewer | Semantic zoom, keyboard Flow Lens navigation, narrow layouts, Canvas default, and experimental bounded WebGL preview |
+| Stability | Last-complete-graph fallback, scan cancellation, cache freshness, helper cleanup, and deterministic cancellation coverage |
+| Packaging | Strict allowlist, clean-room installation verification, and public-repository structural audit |
+
+The historical beta candidate does not mean the npm package was published as a
+public beta release.
 
 ## Try the full experience
 
@@ -28,9 +104,6 @@ The showcase opens a safe temporary checkout flow. It does not execute the targe
 Public preview and stable versions are immutable Git tags on `main`, not long-
 lived `alpha` or `beta` branches. See [RELEASING.md](RELEASING.md) for the
 release contract.
-
-![A focused Flow Lens in the local Viewer](docs/assets/screenshots/flow-lens.png)
-
 Follow one live change:
 
 1. Copy the **apply** command shown by the Viewer.
@@ -58,8 +131,6 @@ semantic zoom, Flow Lens, direct dependencies, live change tray, Context Cards,
 proof reports, a read-only local Work ledger, and a focused source inspector—not
 another IDE or project tracker. Semantic summary nodes are derived from static
 source facts; they are not files, runtime services, or execution steps.
-
-![Before and current static flow comparison](docs/assets/screenshots/flow-comparison.png)
 
 ### Agent view
 
@@ -159,8 +230,6 @@ the same progress, cancellation, and `stale-unverified` outcome contract.
 The chart reports one host-specific comparison for one supported unchanged file per pinned checkout. It is not a universal speed guarantee.
 
 ### Bounded proof snapshot
-
-![Bounded product proof in the local Viewer](docs/assets/screenshots/product-proof.png)
 
 | Evidence | Checked result | Boundary |
 | --- | ---: | --- |
