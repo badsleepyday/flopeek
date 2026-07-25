@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "flowpeek-semantic-suggestion-feedback-evaluation/v1",
+  "interpretation": "This synthetic contract corpus verifies local feedback metric aggregation and trace-link reporting. It is not collected human-review data, does not measure candidate usefulness, and must not be used as model-quality calibration.",
+  "records": [
+    { "id": "accepted-with-passed-trace", "decision": "accepted", "traceVerificationStatus": "passed" },
+    { "id": "accepted-without-trace", "decision": "accepted" },
+    { "id": "edited-with-passed-trace", "decision": "edited", "traceVerificationStatus": "passed" },
+    { "id": "edited-with-not-run-trace", "decision": "edited", "traceVerificationStatus": "not-run" },
+    { "id": "rejected-with-failed-trace", "decision": "rejected", "traceVerificationStatus": "failed" },
+    { "id": "rejected-without-trace", "decision": "rejected" },
+    { "id": "abstained-without-trace", "decision": "abstained" },
+    { "id": "abstained-with-not-run-trace", "decision": "abstained", "traceVerificationStatus": "not-run" }
+  ],
+  "expected": {
+    "total": 8,
+    "decisions": { "accepted": 2, "edited": 2, "rejected": 2, "abstained": 2 },
+    "traceLinked": 5,
+    "traceVerificationStatuses": { "passed": 2, "not-run": 2, "failed": 1 }
+  }
+}

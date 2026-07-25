@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "flowpeek-showcase/v1",
+  "id": "commerce-checkout",
+  "title": "Commerce checkout flow",
+  "primaryFlow": {
+    "method": "POST",
+    "route": "/api/checkout",
+    "flowId": "flow:endpoint:src/app/api/checkout/route.ts:POST:/api/checkout"
+  },
+  "change": {
+    "path": "src/checkout/payment.ts",
+    "template": "showcase-assets/payment.changed.txt",
+    "description": "Insert a static risk-review step between payment authorization and order persistence."
+  },
+  "expectedEvidence": {
+    "relatedTestPath": "test/checkout.test.ts",
+    "addedStepId": "symbol:src/checkout/risk.ts:function:reviewRisk",
+    "dynamicBoundaryPath": "src/checkout/discount.ts"
+  },
+  "limitations": [
+    "The displayed flow is a deterministic static projection, not observed runtime order or proof of successful checkout behavior.",
+    "The related test is a direct static relationship, not proof of behavioral coverage.",
+    "The computed discount-rule import is deliberately unsupported; its missing target edge does not prove that runtime behavior is absent.",
+    "This repository is a product demonstration, not independent benchmark evidence."
+  ]
+}

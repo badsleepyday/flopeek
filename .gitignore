@@ -1,0 +1,8 @@
+node_modules/
+.flowpeek/*
+!.flowpeek/
+!.flowpeek/config.json
+.project-flow/
+coverage/
+*.flowpeek-reviewed.json
+/test/fixtures/**/.flowpeek/

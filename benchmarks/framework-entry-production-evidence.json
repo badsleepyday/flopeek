@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "flowpeek-framework-entry-production-evidence/v1",
+  "capturedAt": "2026-07-18T00:00:00.000Z",
+  "repository": {
+    "name": "django/django",
+    "source": "https://github.com/django/django.git",
+    "requestedTag": "5.2.5",
+    "revision": "a3b1107a4955bdd994908efb4c6e1d03c281e69f",
+    "license": "BSD-3-Clause"
+  },
+  "scan": {
+    "scannedFiles": 2864,
+    "supportedDjangoManagementCommands": 47,
+    "frameworkCommandFlowsInApplicationScope": 24
+  },
+  "checkedRelation": {
+    "source": "command:django/contrib/auth/management/commands/changepassword.py:django:changepassword",
+    "type": "declares-command-target",
+    "target": "symbol:django/contrib/auth/management/commands/changepassword.py:class:Command",
+    "status": "passed"
+  },
+  "interpretation": "This is production-shaped static parser evidence for the narrow Django declaration adapter. It does not prove Django application registration, settings loading, command invocation, handle execution, runtime order, or successful behavior.",
+  "reproduction": "git clone --depth 1 --branch 5.2.5 https://github.com/django/django.git <directory>; node -e \"const { scanRepository } = require('./src/scanner'); console.log(scanRepository('<directory>', { persistIdentity: false }).analysis.entryPoints.supported.djangoManagementCommands)\""
+}

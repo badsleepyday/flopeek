@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "flowpeek-renderer-projection-corpus/v1",
+  "purpose": "Deterministic static fixture definitions for bounded Canvas/WebGL Viewer evaluation. This corpus is not a runtime benchmark result or a default-renderer decision.",
+  "projection": {
+    "mode": "overview",
+    "scope": "application",
+    "level": "symbol",
+    "maxNodes": 100,
+    "maxEdges": 200
+  },
+  "fixtures": [
+    { "id": "small", "functions": 12, "directCallStatements": 16 },
+    { "id": "medium", "functions": 48, "directCallStatements": 80 },
+    { "id": "dense", "functions": 100, "directCallStatements": 180 }
+  ],
+  "measurementContract": {
+    "requiredMetrics": ["initializationAndFirstPaintMs", "fitMs", "focusMs", "stableFrame", "memory"],
+    "rendererModes": ["canvas", "webgl"],
+    "requiredHumanChecks": ["label-legibility", "focus-direction", "semantic-zoom", "keyboard-navigation", "non-color-cues"],
+    "crossDevice": "A result must identify a genuinely distinct device. Multiple browsers or viewport sizes on one host are not cross-device evidence."
+  },
+  "limitations": [
+    "The corpus generates static source only; it does not execute target code.",
+    "A measured renderer construction is a local observation, not a performance promise or a default-renderer approval.",
+    "Canvas remains the supported default until all renderer, human-review, and cross-device requirements are met."
+  ]
+}

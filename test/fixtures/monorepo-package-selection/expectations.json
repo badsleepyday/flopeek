@@ -1,0 +1,12 @@
+{
+  "minimumPrecision": 1.0,
+  "minimumRecall": 1.0,
+  "endpoints": [
+    { "label": "GET /api/health", "confidence": "exact" }
+  ],
+  "relationships": [
+    { "type": "imports", "source": "file:apps/api/src/app/api/health/route.ts", "target": "file:packages/shared/src/utils.ts" },
+    { "type": "handles", "source": "endpoint:GET /api/health", "target": "symbol:apps/api/src/app/api/health/route.ts:function:GET" },
+    { "type": "calls", "source": "symbol:apps/api/src/app/api/health/route.ts:function:GET", "target": "symbol:packages/shared/src/utils.ts:function:formatResponse" }
+  ]
+}

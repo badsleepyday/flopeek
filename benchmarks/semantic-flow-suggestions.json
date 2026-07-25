@@ -1,0 +1,35 @@
+{
+  "schemaVersion": "flowpeek-semantic-flow-suggestion-evaluation/v1",
+  "interpretation": "This small deterministic contract corpus checks expected candidate fields and abstention behavior. It does not measure business-purpose correctness or general repository recall.",
+  "cases": [
+    {
+      "id": "create-payment",
+      "flowTitle": "POST /payments",
+      "entryKind": "endpoint",
+      "stepRoles": ["entry", "orchestration", "persistence"],
+      "boundary": "persistence",
+      "expected": { "status": "suggested", "title": "Create Payment", "role": "create-request", "grouping": "payments" }
+    },
+    {
+      "id": "get-order",
+      "flowTitle": "GET /api/v1/orders/:id",
+      "entryKind": "endpoint",
+      "stepRoles": ["entry", "orchestration"],
+      "expected": { "status": "suggested", "title": "Get Order", "role": "read-request", "grouping": "orders" }
+    },
+    {
+      "id": "non-http-fallback",
+      "flowTitle": "Orders Controller",
+      "entryKind": "file",
+      "stepRoles": ["routing"],
+      "expected": { "status": "abstained", "code": "unsupported-entry" }
+    },
+    {
+      "id": "dynamic-wildcard",
+      "flowTitle": "GET /files/*",
+      "entryKind": "endpoint",
+      "stepRoles": ["entry"],
+      "expected": { "status": "abstained", "code": "dynamic-route" }
+    }
+  ]
+}

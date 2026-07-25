@@ -1,0 +1,67 @@
+{
+  "schemaVersion": "flowpeek-public-proof-evidence/v1",
+  "updatedAt": "2026-07-14T00:00:00.000Z",
+  "relationshipAudit": {
+    "manifest": "benchmarks/real-repository-corpus.json",
+    "runDate": "2026-07-14",
+    "repositories": 5,
+    "auditedScopes": 14,
+    "expectedRelationships": 92,
+    "truePositives": 92,
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "precision": 1,
+    "recall": 1,
+    "elapsedSeconds": 283.4,
+    "limitation": "This result covers only the manually audited outgoing relationships declared by the pinned manifest. It is not a global score for every edge, language construct, repository, or runtime behavior."
+  },
+  "incrementalPerformance": {
+    "benchmark": "flowpeek-incremental-scan/v1",
+    "runDates": ["2026-07-13", "2026-07-14"],
+    "runtime": "Node.js 24.14.1",
+    "iterationsPerRepository": 3,
+    "rows": [
+      {
+        "repository": "SvelteKit",
+        "url": "https://github.com/sveltejs/kit",
+        "revision": "14d7d5a",
+        "sourceFiles": 2216,
+        "parsedFiles": 2214,
+        "fullMedianMs": 3992.24,
+        "incrementalMedianMs": 947.48,
+        "speedup": 4.21
+      },
+      {
+        "repository": "pnpm",
+        "url": "https://github.com/pnpm/pnpm",
+        "revision": "0a68c77",
+        "sourceFiles": 2615,
+        "parsedFiles": 1568,
+        "fullMedianMs": 11485.87,
+        "incrementalMedianMs": 6865.61,
+        "speedup": 1.67
+      },
+      {
+        "repository": "NestJS",
+        "url": "https://github.com/nestjs/nest",
+        "revision": "f293848",
+        "sourceFiles": 1731,
+        "parsedFiles": 1727,
+        "fullMedianMs": 6675.51,
+        "incrementalMedianMs": 3952.46,
+        "speedup": 1.69
+      },
+      {
+        "repository": "Symfony",
+        "url": "https://github.com/symfony/symfony",
+        "revision": "7dbebd8",
+        "sourceFiles": 10730,
+        "parsedFiles": 10726,
+        "fullMedianMs": 47270.13,
+        "incrementalMedianMs": 866.87,
+        "speedup": 54.53
+      }
+    ],
+    "limitation": "These are local CPU-time samples for one unchanged supported source file per pinned checkout. They compare parser-fact reuse with full reparsing on one machine and are not universal performance guarantees."
+  }
+}

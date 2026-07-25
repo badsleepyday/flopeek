@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Flowpeek</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">LOCAL PROJECT FLOW EXPLORER</p>
+        <h1>Flowpeek</h1>
+      </div>
+      <form id="scan-form" class="scan-form">
+        <label for="root-input">Repository</label>
+        <input id="root-input" name="root" placeholder="D:\\path\\to\\repository" autocomplete="off" />
+        <button type="submit">Scan repository</button>
+      </form>
+    </header>
+
+    <section class="project-bar" aria-live="polite">
+      <label id="workspace-project-picker" class="workspace-project-picker" hidden>
+        <span id="workspace-name">Workspace</span>
+        <select id="workspace-project-select" aria-label="Active workspace project"></select>
+      </label>
+      <span id="project-name">Loading project...</span>
+      <span id="package-scope-badge" class="badge" hidden></span>
+      <span id="package-scope-boundary" class="muted" hidden></span>
+      <span id="project-id-badge" class="badge" title="Persistent Flowpeek project identity"></span>
+      <span id="graph-version-badge" class="badge" title="Persistent static graph version"></span>
+      <span id="branch-badge" class="badge"></span>
+      <span id="revision-badge" class="muted"></span>
+      <span id="stats"></span>
+      <span id="scan-status-badge" class="scan-status-badge" aria-live="polite" title="Flowpeek scan freshness"></span>
+      <button id="cancel-scan" class="cancel-scan" type="button" hidden>Cancel</button>
+      <span id="status" class="status"></span>
+    </section>
+
+    <section id="showcase-guide" class="showcase-guide" hidden aria-label="Flowpeek showcase walkthrough">
+      <div>
+        <p class="showcase-kicker">GUIDED TEMPORARY WORKSPACE</p>
+        <strong>Checkout flow showcase</strong>
+        <span>The target application is not executed. This demonstration is not independent benchmark or runtime evidence.</span>
+      </div>
+      <ol>
+        <li>Inspect the opened Flow Lens and copy its Context Ref.</li>
+        <li>Apply the declared change from another terminal.</li>
+        <li>Wait for live refresh, then open the before/current comparison.</li>
+        <li>Reset the temporary source when finished.</li>
+      </ol>
+      <div class="showcase-actions">
+        <button id="copy-showcase-apply">Copy apply command</button>
+        <button id="copy-showcase-reset">Copy reset command</button>
+      </div>
+    </section>
+
+    <main class="workspace">
+      <aside class="sidebar">
+        <label class="field-label" for="search">Find code</label>
+        <input id="search" placeholder="File, entry, service..." autocomplete="off" />
+        <div id="search-results" class="search-results"></div>
+        <label class="field-label" for="context-ref-input">Resolve Context Ref</label>
+        <input id="context-ref-input" placeholder="fp://local/.../node/...@version" autocomplete="off" />
+        <button id="resolve-context-ref" class="context-resolve-button">Resolve reference</button>
+        <p id="context-ref-status" class="context-ref-status" aria-live="polite"></p>
+        <label class="field-label" for="mode-filter">Map mode</label>
+        <select id="mode-filter">
+          <option value="overview">Feature overview</option>
+          <option value="requests">Entry map</option>
+          <option value="dependencies">Direct dependencies</option>
+        </select>
+        <label class="field-label" for="scope-filter">Include</label>
+        <select id="scope-filter">
+          <option value="application">Application code</option>
+          <option value="runtime">+ Runtime integrations</option>
+          <option value="framework">+ Framework internals</option>
+          <option value="devtool">+ Build &amp; development tooling</option>
+          <option value="all">Everything (diagnostic)</option>
+        </select>
+        <label class="field-label" for="level-filter">Detail level</label>
+        <select id="level-filter">
+          <option value="domain">Domains</option>
+          <option value="feature" selected>Features</option>
+          <option value="component">Components</option>
+          <option value="symbol">Symbols</option>
+        </select>
+        <section class="sidebar-section continue-controls" aria-labelledby="continue-mode-heading">
+          <div class="heading-row"><h2 id="continue-mode-heading">Continue mode</h2><span id="continue-mode-status" class="continue-status">Off</span></div>
+          <label class="continue-toggle"><input id="continue-mode" type="checkbox"> Show one delivery plan</label>
+          <label class="field-label" for="planned-overlay-filter">Planned overlay</label>
+          <select id="planned-overlay-filter" disabled><option value="">No overlay selected</option></select>
+          <p id="continue-mode-note" class="muted">Off: this map contains only current static technical evidence.</p>
+        </section>
+        <div class="sidebar-section heading-row"><h2>Detected static flows</h2><button id="clear-focus" class="text-button" hidden>Clear focus</button></div>
+        <p id="flow-summary" class="sidebar-section muted" aria-live="polite"></p>
+        <button id="open-review-queue" class="review-queue-button">Review semantic suggestions</button>
+        <div id="flow-list" class="flow-list"></div>
+        <section id="live-updates" class="sidebar-section live-updates" hidden></section>
+        <section id="analysis-coverage" class="sidebar-section coverage-summary" aria-live="polite" hidden></section>
+        <div class="sidebar-section view-hint"><h2>Reading this map</h2><p>Overview and entry-map nodes are feature summaries. Select one to see which source nodes they represent.</p></div>
+      </aside>
+
+      <section class="canvas-panel">
+        <div class="canvas-toolbar">
+          <div class="view-heading"><strong id="view-title">Feature overview</strong><span id="graph-note" class="muted"></span></div>
+          <div class="toolbar-actions">
+            <button id="open-primary-flow" title="Open the first supported static Flow Lens">Flow</button>
+            <button id="open-project-home" title="Open the evidence-backed project orientation page">Home</button>
+            <button id="open-product-proof" title="Open checked product evidence and boundaries">Proof</button>
+            <button id="open-delivery-ledger" title="Open local planned work and append-only delivery evidence">Work</button>
+            <label class="renderer-control" title="Canvas is the supported default. WebGL is an experimental dense-map preview.">Renderer <select id="renderer-mode" aria-label="Graph renderer"><option value="canvas">Canvas</option><option value="webgl">WebGL preview</option></select></label>
+            <button id="fit-graph" title="Fit the current bounded map in the canvas">Fit</button>
+            <button id="measure-renderer" title="Measure this bounded map locally in Canvas and WebGL preview">Measure renderer</button>
+            <button id="run-benchmark" title="Run a local full-versus-incremental scan comparison">Benchmark</button>
+            <button id="export-mermaid" title="Copy the current bounded map as Mermaid">Export</button>
+          </div>
+        </div>
+        <div class="graph-stage">
+          <div id="graph" role="img" aria-label="Bounded static project graph. Use the static flow list, Find code search, and inspector controls for keyboard navigation." aria-describedby="graph-reading-key"></div>
+          <div id="graph-reading-key" class="map-key">
+            <span><i class="key-line incoming" aria-hidden="true"></i>Incoming relationship</span>
+            <span><i class="key-node" aria-hidden="true"></i>Selected node</span>
+            <span><i class="key-line outgoing" aria-hidden="true"></i>Outgoing relationship</span>
+            <span class="aggregate-key"><i class="key-node aggregate" aria-hidden="true"></i>Derived aggregate</span>
+            <span class="planned-key"><i class="key-node planned" aria-hidden="true"></i>Planned · not in source</span>
+            <span class="inventory-key"><i class="key-node inventory" aria-hidden="true"></i>Inventory only · no implied relationship</span>
+            <span class="map-boundary">STATIC EVIDENCE · NOT RUNTIME ORDER</span>
+          </div>
+        </div>
+      </section>
+
+      <aside id="inspector" class="inspector"></aside>
+    </main>
+    <template id="toast-template"><div class="toast"></div></template>
+    <script src="/vendor/cytoscape.min.js"></script>
+    <script src="/vendor/cytoscape-dagre.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,26 @@
+name: Verify real repository corpus
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Pinned external corpus
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: >-
+          npm run test:real-corpus --
+          --clone-directory "$RUNNER_TEMP/flowpeek-real-corpus"
+          --format summary

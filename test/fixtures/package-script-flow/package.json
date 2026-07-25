@@ -1,0 +1,9 @@
+{
+  "name": "package-script-flow",
+  "private": true,
+  "scripts": {
+    "serve": "node src/main.ts",
+    "unsupported-shell": "node src/main.ts && node src/other.ts",
+    "unsupported-framework": "vite"
+  }
+}

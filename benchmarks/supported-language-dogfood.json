@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "flowpeek-supported-language-dogfood/v1",
+  "generatedAt": "2026-07-22T07:36:10.556Z",
+  "casesPath": "benchmarks/supported-language-dogfood-cases.json",
+  "outcomes": [
+    {
+      "id": "typescript-order-flow",
+      "language": "TypeScript",
+      "fixture": "typescript-order-flow",
+      "sourceDigest": "2de8708076d76ed64a1df768bb3ecb2057a84ceb0b2991fd6c05fdf8b7b177a4",
+      "supportedStaticEntry": { "id": "flow:endpoint:src/orders/orders.routes.ts:POST:/orders", "kind": "http-request", "family": "http", "displayedSteps": 5 },
+      "relationshipAudit": { "expected": 7, "detected": 7, "truePositives": 7, "falsePositives": 0, "falseNegatives": 0, "precision": 1, "recall": 1 },
+      "semanticLevels": { "domain": 1, "feature": 1, "component": 1, "symbol": 9 },
+      "mcp": { "graphVersion": 1, "contextRefResolved": true },
+      "contextResolution": { "before": "current", "afterSourceOnlyEdit": "stale" },
+      "refresh": { "fromGraphVersion": 1, "toGraphVersion": 2, "changedPath": "src/orders/orders.service.ts" }
+    },
+    {
+      "id": "python-payment-flow",
+      "language": "Python",
+      "fixture": "python-payment-flow",
+      "sourceDigest": "c4a249bc8b9ff3eaa249f133d66bf5198d0ce9cb9b03db13e237e8d8762b0eb6",
+      "supportedStaticEntry": { "id": "flow:endpoint:src/payments/routes.py:GET:/payments/{payment_id}", "kind": "http-request", "family": "http", "displayedSteps": 5 },
+      "relationshipAudit": { "expected": 4, "detected": 4, "truePositives": 4, "falsePositives": 0, "falseNegatives": 0, "precision": 1, "recall": 1 },
+      "semanticLevels": { "domain": 1, "feature": 1, "component": 1, "symbol": 7 },
+      "mcp": { "graphVersion": 1, "contextRefResolved": true },
+      "contextResolution": { "before": "current", "afterSourceOnlyEdit": "stale" },
+      "refresh": { "fromGraphVersion": 1, "toGraphVersion": 2, "changedPath": "src/payments/service.py" }
+    },
+    {
+      "id": "php-package-flow",
+      "language": "PHP",
+      "fixture": "php-package-flow",
+      "sourceDigest": "8d6462b33a4d43e4eeabfdc4f8b5a2b53a676e041295438cb8e18f1b3f6264b5",
+      "supportedStaticEntry": { "id": "flow:command:package.json:checkout", "kind": "package-script", "family": "command", "displayedSteps": 4 },
+      "relationshipAudit": { "expected": 2, "detected": 2, "truePositives": 2, "falsePositives": 0, "falseNegatives": 0, "precision": 1, "recall": 1 },
+      "semanticLevels": { "domain": 1, "feature": 1, "component": 2, "symbol": 1 },
+      "mcp": { "graphVersion": 1, "contextRefResolved": true },
+      "contextResolution": { "before": "current", "afterSourceOnlyEdit": "stale" },
+      "refresh": { "fromGraphVersion": 1, "toGraphVersion": 2, "changedPath": "src/checkout.php" }
+    }
+  ],
+  "limitation": "This report keeps audited static relationships, semantic projection traversal, and Context Ref freshness separate. It is not a language-support score, runtime benchmark, or release approval. Target applications and tests are never executed."
+}

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "flowpeek-agent-comparison-report/v1",
+  "studyId": "flowpeek-agent-comparison-template",
+  "suite": {
+    "id": "flowpeek-initial-orientation-suite",
+    "caseCount": 3
+  },
+  "status": "not-run",
+  "evidenceClass": "ai-provider-outcome",
+  "providerExecutionInvokedByFlowpeek": false,
+  "summary": null,
+  "reason": "The checked artifact is a privacy-reviewed input template. No provider execution was supplied or inferred.",
+  "conclusionBoundary": "Harness availability is not evidence that Flowpeek improves agent outcomes."
+}

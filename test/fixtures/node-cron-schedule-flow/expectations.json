@@ -1,0 +1,8 @@
+{
+  "minimumPrecision": 0.9,
+  "minimumRecall": 0.9,
+  "relationships": [
+    { "type": "schedules", "source": "schedule:src/jobs.ts:refreshSnapshot", "target": "symbol:src/jobs.ts:function:refreshSnapshot" },
+    { "type": "calls", "source": "symbol:src/jobs.ts:function:refreshSnapshot", "target": "symbol:src/store.ts:function:persistSnapshot" }
+  ]
+}

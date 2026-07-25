@@ -1,0 +1,91 @@
+{
+  "schemaVersion": "flowpeek-package-policy/v1",
+  "package": {
+    "name": "flowpeek",
+    "privateUntilReleaseApproval": true,
+    "bin": "src/cli.js",
+    "minimumNodeMajor": 20
+  },
+  "allowedExactPaths": [
+    "ARCHITECTURE.md",
+    "LICENSE",
+    "BENCHMARKS.md",
+    "PRODUCT.md",
+    "README.md",
+    "ROADMAP.md",
+    "SUPPORT.md",
+    "package.json",
+    "benchmarks/agent-comparison-report.json",
+    "benchmarks/agent-comparison-runs.template.json",
+    "benchmarks/framework-entry-production-evidence.json",
+    "benchmarks/handoff-quality.json",
+    "benchmarks/orientation-baseline.json",
+    "benchmarks/orientation-cases.json",
+    "benchmarks/orientation-flowpeek.json",
+    "benchmarks/private-dogfood-summary.json",
+    "benchmarks/production-static-evidence.json",
+    "benchmarks/public-proof.json",
+    "benchmarks/real-repository-corpus.json",
+    "benchmarks/renderer-projection-corpus.json",
+    "benchmarks/semantic-flow-suggestions.json",
+    "benchmarks/semantic-suggestion-feedback-contract.json",
+    "benchmarks/monorepo-package-selection.json"
+  ],
+  "allowedDirectories": [
+    "docs",
+    "examples/commerce-showcase",
+    "integrations/skills/flowpeek",
+    "public",
+    "src"
+  ],
+  "requiredPaths": [
+    "LICENSE",
+    "README.md",
+    "docs/README.md",
+    "docs/using-flowpeek.md",
+    "docs/assets/shared-context-workflow.svg",
+    "docs/assets/screenshots/flow-lens.png",
+    "package.json",
+    "src/cli.js",
+    "src/mcp.js",
+    "src/scanner.js",
+    "public/index.html",
+    "public/app.js",
+    "public/styles.css",
+    "integrations/skills/flowpeek/SKILL.md",
+    "examples/commerce-showcase/flowpeek-showcase.json",
+    "benchmarks/public-proof.json",
+    "benchmarks/real-repository-corpus.json",
+    "benchmarks/orientation-cases.json"
+  ],
+  "deniedPathSegments": [
+    ".agent-team",
+    ".agents",
+    ".flowpeek",
+    ".git",
+    ".github",
+    "node_modules"
+  ],
+  "deniedBasenames": [
+    ".env",
+    ".npmrc",
+    "credentials.json",
+    "id_rsa",
+    "id_ed25519"
+  ],
+  "deniedBasenamePrefixes": [
+    ".env.",
+    "credentials.",
+    "secrets."
+  ],
+  "deniedSuffixes": [
+    ".crt",
+    ".key",
+    ".log",
+    ".map",
+    ".pem",
+    ".pfx"
+  ],
+  "maximumEntries": 180,
+  "maximumUnpackedBytes": 2600000
+}
