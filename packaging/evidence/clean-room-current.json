@@ -1,6 +1,6 @@
 {
   "schemaVersion": "flowpeek-clean-room-package-report/v1",
-  "generatedAt": "2026-07-24T00:47:09.668Z",
+  "generatedAt": "2026-07-25T13:34:22.818Z",
   "status": "passed",
   "evidenceClass": "clean-room-package-observation",
   "environment": {
@@ -16,19 +16,21 @@
     "status": "passed",
     "package": {
       "name": "flowpeek",
-      "version": "0.2.0",
-      "private": true,
-      "filename": "flowpeek-0.2.0.tgz",
-      "packedBytes": 924587,
-      "unpackedBytes": 2508084,
-      "entries": 175
+      "version": "0.2.1-beta.0",
+      "private": false,
+      "filename": "flowpeek-0.2.1-beta.0.tgz",
+      "packedBytes": 727626,
+      "unpackedBytes": 2305671,
+      "entries": 177
     },
     "policy": {
-      "schemaVersion": "flowpeek-package-policy/v1",
+      "schemaVersion": "flowpeek-package-policy/v2",
       "maximumEntries": 180,
       "maximumUnpackedBytes": 2600000,
       "requiredPaths": 18,
-      "releasePublishingApproved": false
+      "releasePublishingApproved": false,
+      "publicationState": "prepared",
+      "distTag": "beta"
     },
     "checks": {
       "allowlist": true,
@@ -45,63 +47,63 @@
     ]
   },
   "artifact": {
-    "filename": "flowpeek-0.2.0.tgz",
-    "sha256": "2631c0a73d550b31a47fceb9d07607e99c4e03fa491e05f65f714b03c9194b84",
-    "packedBytes": 924587
+    "filename": "flowpeek-0.2.1-beta.0.tgz",
+    "sha256": "f94bcc6407429f50b3e505f6d78ab9df2ed58b312ba56ee81b6733d639605754",
+    "packedBytes": 727626
   },
   "phases": [
     {
       "id": "pack-and-audit",
       "status": "passed",
-      "milliseconds": 1917.605
+      "milliseconds": 1489.289
     },
     {
       "id": "copy-fixture",
       "status": "passed",
-      "milliseconds": 45.114
+      "milliseconds": 33.417
     },
     {
       "id": "install-tarball",
       "status": "passed",
-      "milliseconds": 18460.512
+      "milliseconds": 16769.692
     },
     {
       "id": "binary-version",
       "status": "passed",
-      "milliseconds": 3548.152
+      "milliseconds": 3116.07
     },
     {
       "id": "binary-help",
       "status": "passed",
-      "milliseconds": 1125.262
+      "milliseconds": 686.583
     },
     {
       "id": "binary-doctor",
       "status": "passed",
-      "milliseconds": 1419.45
+      "milliseconds": 920.37
     },
     {
       "id": "bounded-static-scan",
       "status": "passed",
-      "milliseconds": 1511.091
+      "milliseconds": 1263.287
     },
     {
       "id": "mcp-startup",
       "status": "passed",
-      "milliseconds": 3630.254
+      "milliseconds": 3752.096
     }
   ],
   "smoke": {
     "packageIdentity": {
       "expectedName": "flowpeek",
       "actualName": "flowpeek",
-      "expectedVersion": "0.2.0",
-      "actualVersion": "0.2.0",
+      "expectedVersion": "0.2.1-beta.0",
+      "actualVersion": "0.2.1-beta.0",
       "binShimPresent": true
     },
     "version": {
-      "expected": "0.2.0",
-      "actual": "0.2.0",
+      "expected": "0.2.1-beta.0",
+      "actual": "0.2.1-beta.0",
       "matched": true
     },
     "help": {
@@ -125,7 +127,7 @@
     },
     "mcp": {
       "connected": true,
-      "toolCount": 61,
+      "toolCount": 62,
       "requiredTools": {
         "getAgentBootstrap": true,
         "getFlowProjection": true,
@@ -140,12 +142,12 @@
       "copied": true,
       "sourceFingerprintBefore": {
         "algorithm": "sha256",
-        "value": "000eca418b78f4bab5ef9deff2e1fdb7f2d8f8424391ceae549fe62c7dfcb4d4",
+        "value": "8584d5b9504aa5019f7ac70614c8511f667d3470bdbf107d49fd092386768814",
         "files": 16
       },
       "sourceFingerprintAfter": {
         "algorithm": "sha256",
-        "value": "000eca418b78f4bab5ef9deff2e1fdb7f2d8f8424391ceae549fe62c7dfcb4d4",
+        "value": "8584d5b9504aa5019f7ac70614c8511f667d3470bdbf107d49fd092386768814",
         "files": 16
       },
       "unchanged": true,
@@ -155,7 +157,7 @@
   },
   "cleanup": {
     "status": "passed",
-    "milliseconds": 3240.771
+    "milliseconds": 2616.266
   },
   "publication": {
     "attempted": false,

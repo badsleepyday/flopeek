@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const PACKAGE_POLICY_SCHEMA = "flowpeek-package-policy/v1";
+const PACKAGE_POLICY_SCHEMA = "flowpeek-package-policy/v2";
 const PACKAGE_AUDIT_SCHEMA = "flowpeek-package-audit/v1";
 
 class PackagePolicyError extends Error {
@@ -40,9 +40,11 @@ function uniqueTextList(value, field, parser = (item, itemField) => portablePath
 function validatePolicy(input) {
   exactKeys(input, ["schemaVersion", "package", "allowedExactPaths", "allowedDirectories", "requiredPaths", "deniedPathSegments", "deniedBasenames", "deniedBasenamePrefixes", "deniedSuffixes", "maximumEntries", "maximumUnpackedBytes"], "policy");
   if (input.schemaVersion !== PACKAGE_POLICY_SCHEMA) throw new PackagePolicyError("invalid-schema", `policy.schemaVersion must be ${PACKAGE_POLICY_SCHEMA}.`);
-  exactKeys(input.package, ["name", "privateUntilReleaseApproval", "bin", "minimumNodeMajor"], "policy.package");
+  exactKeys(input.package, ["name", "publication", "bin", "minimumNodeMajor"], "policy.package");
   if (input.package.name !== "flowpeek") throw new PackagePolicyError("invalid-package-name", "policy.package.name must be flowpeek.");
-  if (input.package.privateUntilReleaseApproval !== true) throw new PackagePolicyError("unsafe-release-policy", "The package must remain private until a separate release approval.");
+  exactKeys(input.package.publication, ["state", "distTag", "approvalFile"], "policy.package.publication");
+  if (input.package.publication.state !== "prepared") throw new PackagePolicyError("unsafe-release-policy", "The package publication state must remain prepared until a separate release approval.");
+  if (input.package.publication.distTag !== "beta") throw new PackagePolicyError("unsafe-release-policy", "The prepared package must use the beta dist-tag.");
   if (!Number.isSafeInteger(input.package.minimumNodeMajor) || input.package.minimumNodeMajor < 20) throw new PackagePolicyError("invalid-node-version", "policy.package.minimumNodeMajor must be an integer of at least 20.");
   if (!Number.isSafeInteger(input.maximumEntries) || input.maximumEntries < 1) throw new PackagePolicyError("invalid-entry-limit", "policy.maximumEntries must be a positive integer.");
   if (!Number.isSafeInteger(input.maximumUnpackedBytes) || input.maximumUnpackedBytes < 1) throw new PackagePolicyError("invalid-size-limit", "policy.maximumUnpackedBytes must be a positive integer.");
@@ -57,7 +59,11 @@ function validatePolicy(input) {
   };
   return {
     schemaVersion: PACKAGE_POLICY_SCHEMA,
-    package: { ...input.package, bin: portablePath(input.package.bin, "policy.package.bin") },
+    package: {
+      ...input.package,
+      publication: { ...input.package.publication, approvalFile: portablePath(input.package.publication.approvalFile, "policy.package.publication.approvalFile") },
+      bin: portablePath(input.package.bin, "policy.package.bin"),
+    },
     allowedExactPaths: uniqueTextList(input.allowedExactPaths, "policy.allowedExactPaths"),
     allowedDirectories: uniqueTextList(input.allowedDirectories, "policy.allowedDirectories"),
     requiredPaths: uniqueTextList(input.requiredPaths, "policy.requiredPaths"),
@@ -105,7 +111,11 @@ function auditPackageFiles(packResult, policyInput, packageJson) {
   if (!Number.isSafeInteger(packResult.unpackedSize) || packResult.unpackedSize > policy.maximumUnpackedBytes) errors.push({ code: "unpacked-size-limit-exceeded", actual: packResult.unpackedSize ?? null, maximum: policy.maximumUnpackedBytes });
   if (packResult.name !== policy.package.name || packageJson.name !== policy.package.name) errors.push({ code: "package-name-mismatch", expected: policy.package.name });
   if (packResult.version !== packageJson.version) errors.push({ code: "package-version-mismatch", expected: packageJson.version, actual: packResult.version ?? null });
-  if (packageJson.private !== policy.package.privateUntilReleaseApproval) errors.push({ code: "release-approval-boundary", expectedPrivate: true, actualPrivate: packageJson.private ?? null });
+  if (packageJson.private !== false) errors.push({ code: "release-publication-metadata", expectedPrivate: false, actualPrivate: packageJson.private ?? null });
+  if (packageJson.publishConfig?.access !== "public" || packageJson.publishConfig?.tag !== policy.package.publication.distTag) {
+    errors.push({ code: "release-publication-metadata", expectedAccess: "public", expectedDistTag: policy.package.publication.distTag });
+  }
+  if (packageJson.scripts?.prepublishOnly !== "npm run verify:npm-publication") errors.push({ code: "release-approval-boundary", expectedScript: "npm run verify:npm-publication" });
   if (packageJson.bin?.flowpeek !== policy.package.bin) errors.push({ code: "binary-path-mismatch", expected: policy.package.bin, actual: packageJson.bin?.flowpeek ?? null });
   const declaredNode = Number(String(packageJson.engines?.node || "").match(/\d+/u)?.[0]);
   if (!Number.isSafeInteger(declaredNode) || declaredNode < policy.package.minimumNodeMajor) errors.push({ code: "node-engine-mismatch", minimum: policy.package.minimumNodeMajor, actual: packageJson.engines?.node ?? null });
@@ -127,6 +137,8 @@ function auditPackageFiles(packResult, policyInput, packageJson) {
       maximumUnpackedBytes: policy.maximumUnpackedBytes,
       requiredPaths: policy.requiredPaths.length,
       releasePublishingApproved: false,
+      publicationState: policy.package.publication.state,
+      distTag: policy.package.publication.distTag,
     },
     checks: {
       allowlist: outsideAllowlist.length === 0,
@@ -134,7 +146,7 @@ function auditPackageFiles(packResult, policyInput, packageJson) {
       requiredRuntime: missing.length === 0,
       boundedSize: files.length <= policy.maximumEntries && Number.isSafeInteger(packResult.unpackedSize) && packResult.unpackedSize <= policy.maximumUnpackedBytes,
       packageIdentity: packResult.name === policy.package.name && packageJson.name === policy.package.name && packResult.version === packageJson.version,
-      releaseBoundary: packageJson.private === true,
+      releaseBoundary: packageJson.private === false && packageJson.publishConfig?.access === "public" && packageJson.publishConfig?.tag === policy.package.publication.distTag && packageJson.scripts?.prepublishOnly === "npm run verify:npm-publication",
     },
     errors,
     limitations: [

@@ -109,7 +109,7 @@ Status: `current`
 | `src/orientation-benchmark.js` | Source-pinned direct-repository versus Flowpeek deterministic orientation evaluator with separate evidence classes, bounded metrics, stale probes in temporary copies, and no provider or target execution. |
 | `src/agent-comparison.js` | Provider-neutral validator and scorer for explicitly supplied paired agent outcomes; provider execution, target execution, source bodies, and machine-local paths remain outside the tool. |
 | `src/git-metadata.js` | One-command Git branch/revision/dirty metadata plus static Git directory, shallow-state, and origin-remote reads used to reduce cold scan overhead. |
-| `src/package-policy.js` | Strict npm pack inventory validation, runtime allowlist, denied cache/credential/governance content, size bounds, package identity, and private-release boundary. |
+| `src/package-policy.js` | Strict npm pack inventory validation, runtime allowlist, denied cache/credential/governance content, size bounds, package identity, and prepared-publication/explicit-approval boundary. |
 | `src/clean-room-package.js` | Isolated tarball pack/install verification, installed CLI and MCP smoke contracts, copied-fixture fingerprinting, host-specific phase observations, and mandatory temporary-state cleanup. |
 | `src/showcase.js` | Validated temporary-workspace checkout demonstration with bounded apply/reset/status mutations, viewer deep linking, automatic cleanup, and no target-application execution. |
 | `src/framework-route.js` | Isolated deterministic Next.js and SvelteKit file-system route derivation used by scanner classification and analysis. |

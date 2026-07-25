@@ -22,8 +22,9 @@ and resolvable Context Refs.
 The unscoped `flowpeek` npm name returned no package from the public npm
 registry during the 2026-07-25 naming check. That is a point-in-time registry
 observation, not a reservation: only an authorized npm publish can establish
-ownership. The package remains `private: true` until the separate public-beta
-release approval is granted.
+ownership. The package has public beta metadata, but its standard publish path
+is blocked by an exact approval record until the separate public-beta release
+decision is granted.
 
 Public web research also found unrelated products using the name FlowPeek/
 Flowpeek, including a Chrome extension and an analytics site. This document

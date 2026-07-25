@@ -127,7 +127,7 @@ npm run verify:clean-room
 
 Checked observation: [`packaging/evidence/clean-room-current.json`](packaging/evidence/clean-room-current.json). Protocol: [`docs/clean-room-package.md`](docs/clean-room-package.md).
 
-**Boundary:** the package remains `private: true`. This does not establish licensing, registry availability, release stage, upgrade compatibility, or support for every operating system.
+**Boundary:** the package has prepared public beta metadata but its standard publish path remains blocked until an exact owner approval record is changed. This does not establish licensing, registry availability, release stage, upgrade compatibility, or support for every operating system.
 
 ## Private dogfooding
 
