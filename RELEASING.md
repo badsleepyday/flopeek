@@ -22,12 +22,23 @@ needs a fix while `main` has moved ahead.
 ## Release procedure
 
 1. Merge the reviewed change to `main` after the required CI checks pass.
-2. Run the public source and package verification from that exact commit.
-3. Create an annotated semantic-version tag on that commit.
-4. Push the tag. The release workflow verifies the tag and creates the GitHub
-   Release, marking prerelease tags as prereleases.
-5. If npm publishing is approved later, publish the exact tagged package with a
-   channel-appropriate npm dist-tag. Publishing is never implied by a Git tag.
+2. Record the owner decision in
+   [`packaging/github-release-approval.json`](packaging/github-release-approval.json).
+   A beta, release candidate, or stable decision must name the exact tag,
+   package version, brand decision, manual Viewer review, six role artifacts,
+   and at least four distinct recorded provider IDs. This record is an explicit
+   maintainer attestation; its references remain independently reviewable
+   evidence, not parser facts or an automated proof of provider independence.
+3. For beta, release candidate, and stable channels, publish the exact approved
+   package first. The tagged-release workflow checks that the public npm
+   dist-tag resolves to that same version. An alpha may remain source-only.
+4. Create an annotated semantic-version tag on the approved `main` commit.
+5. Push the tag. The release workflow fails closed until the approval record,
+   source/package checks, and required registry check pass; only then does it
+   create the GitHub Release and mark prerelease tags as prereleases.
+
+Creating a tag does not bypass this gate. The workflow never runs `npm publish`;
+registry publication retains its separate exact owner approval gate.
 
 ## Private overlay boundary
 

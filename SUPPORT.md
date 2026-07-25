@@ -382,7 +382,7 @@ MCP currently exposes no source write, file content, shell, deployment, credenti
 ## Public Core and private overlay support
 
 - The public `main` branch is the canonical Flowpeek Core source. It is the branch users clone, review, test, and extend.
-- Alpha, beta, release-candidate, and stable Core releases are immutable tags on commits already present on public `main`. The tagged-release workflow verifies the source and package before it creates a GitHub Release.
+- Alpha, beta, release-candidate, and stable Core releases are immutable tags on commits already present on public `main`. The tagged-release workflow fails closed until a source-owned owner approval records the exact tag/package, review evidence, and—outside alpha—the matching public npm dist-tag; it then verifies source and package before creating a GitHub Release. The record does not itself prove that an asserted provider identity is independent.
 - The npm package has prepared public beta metadata, but its standard publish path remains blocked until the exact owner approval record is changed. That does not make the public Core repository a snapshot, a mirror, or a secondary source of truth.
 - Commercial and confidential work belongs in a separate private overlay repository that pins an immutable public Core tag. The overlay must not copy `src/`, `public/`, or the Core test suite, and Core defects found privately must be safely reproduced and fixed through public Core first.
 - The former private-development-to-public snapshot exporter has been retired. Public Core release readiness is evaluated from the public repository, its tagged commit, package policy, CI, and the explicit owner release decision.
