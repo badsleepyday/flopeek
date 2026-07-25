@@ -4,10 +4,10 @@ Use this protocol only with repository-owner permission and a participant who ha
 
 ## Preconditions
 
-- Work from a current Flowpeek graph for the permitted repository.
+- Work from a current Flopeek graph for the permitted repository.
 - Use a participant role only: `senior-developer`, `inheriting-developer`, `handoff-recipient`, or `agent-reviewer`. Do not provide a name, email, employee ID, transcript, source body, raw log, credential, or machine path.
 - Give the participant a bounded task and Context Packet. Retain the Flow Context Ref or node Context Ref that framed that task.
-- Measure elapsed time outside Flowpeek, then round it to whole milliseconds. Flowpeek does not start a timer or observe the participant.
+- Measure elapsed time outside Flopeek, then round it to whole milliseconds. Flopeek does not start a timer or observe the participant.
 
 ## Report one observation
 
@@ -30,7 +30,7 @@ The returned quality report separately exposes `humanHandoffObservations.timeToL
 
 ## Retention and reporting
 
-Flowpeek intentionally does not persist these study observations. Store the returned report only in the separately approved research/hand-off record, with the repository revision, study consent record held by the research owner, and independent reviewer decision. Do not place that record in `.flowpeek` unless the organization explicitly approves the retention policy.
+Flopeek intentionally does not persist these study observations. Store the returned report only in the separately approved research/hand-off record, with the repository revision, study consent record held by the research owner, and independent reviewer decision. Do not place that record in `.flopeek` unless the organization explicitly approves the retention policy.
 
 Report at least: case count, target-located/not-located/inconclusive counts, observed time-to-locate summary, Context Packet budget, stale-context detection, evidence-ref traceability, and outcome evidence class. State the number of unavailable observations rather than treating them as success.
 

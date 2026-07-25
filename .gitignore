@@ -1,8 +1,11 @@
 node_modules/
-.flowpeek/*
-!.flowpeek/
-!.flowpeek/config.json
+.flopeek/*
+!.flopeek/
+!.flopeek/config.json
+# A pre-rename local cache is not source and must remain untracked while users
+# migrate to .flopeek.
+.flowpeek/
 .project-flow/
 coverage/
-*.flowpeek-reviewed.json
-/test/fixtures/**/.flowpeek/
+*.flopeek-reviewed.json
+/test/fixtures/**/.flopeek/

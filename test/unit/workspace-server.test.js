@@ -28,7 +28,7 @@ function repository(parent, name, route) {
 }
 
 test("global workspace hub keeps one web port while activating isolated project graphs", async () => {
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-workspace-hub-"));
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-workspace-hub-"));
   const registryRoot = path.join(temporary, "registry");
   const ordersRoot = repository(temporary, "orders-service", "/orders");
   fs.writeFileSync(path.join(ordersRoot, "src", "orders-status.ts"), "router.get('/orders/status', () => ({ service: 'orders' }));", "utf8");
@@ -154,7 +154,7 @@ test("global workspace hub keeps one web port while activating isolated project 
 });
 
 test("workspace definition restores previously activated projects without merging graph identity", async () => {
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-workspace-restore-"));
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-workspace-restore-"));
   const registryRoot = path.join(temporary, "registry");
   const firstRoot = repository(temporary, "catalog-service", "/catalog");
   const secondRoot = repository(temporary, "inventory-service", "/inventory");
@@ -182,13 +182,13 @@ test("workspace definition restores previously activated projects without mergin
 });
 
 test("workspace registry rejoins the same hub after deterministic port fallback", async () => {
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-workspace-fallback-"));
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-workspace-fallback-"));
   const registryRoot = path.join(temporary, "registry");
   const firstRoot = repository(temporary, "billing-service", "/billing");
   const secondRoot = repository(temporary, "ledger-service", "/ledger");
   const occupied = http.createServer((_request, response) => {
     response.writeHead(404, { "content-type": "text/plain" });
-    response.end("not a Flowpeek hub");
+    response.end("not a Flopeek hub");
   });
   let hub;
   try {

@@ -20,7 +20,7 @@ function payload(result) {
 }
 
 test("HTTP and MCP expose the same read-only cache hygiene projection", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-cache-hygiene-surfaces-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-cache-hygiene-surfaces-"));
   let app;
   let client;
   let instance;
@@ -39,7 +39,7 @@ test("HTTP and MCP expose the same read-only cache hygiene projection", async ()
     await instance.server.connect(serverTransport);
     await client.connect(clientTransport);
     const mcp = payload(await client.callTool({ name: "get_cache_hygiene", arguments: {} }));
-    assert.equal(http.schemaVersion, "flowpeek-cache-hygiene/v1");
+    assert.equal(http.schemaVersion, "flopeek-cache-hygiene/v1");
     assert.equal(mcp.schemaVersion, http.schemaVersion);
     assert.deepEqual(mcp.retention, http.retention);
     assert.deepEqual(mcp.projectIdentity, http.projectIdentity);

@@ -1,6 +1,6 @@
 # Security policy
 
-Flowpeek scans source locally and should not require repository credentials or
+Flopeek scans source locally and should not require repository credentials or
 target execution. Please report suspected security vulnerabilities privately.
 
 ## Reporting
@@ -11,7 +11,7 @@ public issue containing exploit details, credentials, private paths, or source
 content. Contact the repository owner through their GitHub profile and request
 a private reporting channel.
 
-Include a minimal reproduction, affected Flowpeek version or commit, operating
+Include a minimal reproduction, affected Flopeek version or commit, operating
 system, Node version, impact, and suggested mitigation. Do not attach real
 secrets or private repository contents.
 

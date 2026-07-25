@@ -1,6 +1,6 @@
 "use strict";
 
-const FLOW_ENTRY_SCHEMA = "flowpeek-static-flow-entry/v1";
+const FLOW_ENTRY_SCHEMA = "flopeek-static-flow-entry/v1";
 
 function entryBase(input) {
   return {

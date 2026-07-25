@@ -8,7 +8,7 @@ const test = require("node:test");
 const { scanRepositoryBounded } = require("../../src/bounded-scan");
 
 function fixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-cleanup-test-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-cleanup-test-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "cleanup-test-fixture" }));
   fs.mkdirSync(path.join(root, "src"));
@@ -30,7 +30,7 @@ test("bounded scan abort signal terminates worker thread and cleans up handles c
     persistIdentity: false,
   });
 
-  assert.equal(result.schemaVersion, "flowpeek-bounded-scan-result/v1");
+  assert.equal(result.schemaVersion, "flopeek-bounded-scan-result/v1");
   assert.equal(result.status, "cancelled");
   assert.equal(result.graph, null);
   assert.equal(result.cachePromotion.allowed, false);
@@ -44,7 +44,7 @@ test("bounded scan time-budget timeout cleans up worker resource state without l
     persistIdentity: false,
   });
 
-  assert.equal(result.schemaVersion, "flowpeek-bounded-scan-result/v1");
+  assert.equal(result.schemaVersion, "flopeek-bounded-scan-result/v1");
   assert.ok(["partial-by-budget", "complete"].includes(result.status));
   if (result.status === "partial-by-budget") {
     assert.equal(result.graph, null);

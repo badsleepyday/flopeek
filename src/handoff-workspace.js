@@ -8,18 +8,18 @@ const { sourceBasis } = require("./durable-brief");
 const { atomicWriteJson } = require("./graph-cache");
 const { runtimeEvidenceSummary } = require("./runtime-evidence");
 
-const HANDOFF_WORKSPACE_SCHEMA = "flowpeek-handoff-workspace/v1";
-const HANDOFF_WORKSPACES_SCHEMA = "flowpeek-handoff-workspaces/v1";
-const HANDOFF_NOTE_SCHEMA = "flowpeek-handoff-note/v1";
-const HANDOFF_NOTES_SCHEMA = "flowpeek-handoff-notes/v1";
-const HANDOFF_EXPORT_SCHEMA = "flowpeek-handoff-export/v1";
-const HANDOFF_MARKDOWN_SCHEMA = "flowpeek-handoff-markdown/v1";
-const HANDOFF_IMPORT_SCHEMA = "flowpeek-handoff-import/v1";
-const HANDOFF_IMPORTS_SCHEMA = "flowpeek-handoff-imports/v1";
-const HANDOFF_WORKSPACES_RELATIVE_PATH = ".flowpeek/handoff/workspaces.json";
-const HANDOFF_NOTES_RELATIVE_PATH = ".flowpeek/handoff/notes.json";
-const HANDOFF_IMPORTS_RELATIVE_PATH = ".flowpeek/handoff/imports.json";
-const HANDOFF_IMPORT_ARTIFACTS_RELATIVE_PATH = ".flowpeek/handoff/imports";
+const HANDOFF_WORKSPACE_SCHEMA = "flopeek-handoff-workspace/v1";
+const HANDOFF_WORKSPACES_SCHEMA = "flopeek-handoff-workspaces/v1";
+const HANDOFF_NOTE_SCHEMA = "flopeek-handoff-note/v1";
+const HANDOFF_NOTES_SCHEMA = "flopeek-handoff-notes/v1";
+const HANDOFF_EXPORT_SCHEMA = "flopeek-handoff-export/v1";
+const HANDOFF_MARKDOWN_SCHEMA = "flopeek-handoff-markdown/v1";
+const HANDOFF_IMPORT_SCHEMA = "flopeek-handoff-import/v1";
+const HANDOFF_IMPORTS_SCHEMA = "flopeek-handoff-imports/v1";
+const HANDOFF_WORKSPACES_RELATIVE_PATH = ".flopeek/handoff/workspaces.json";
+const HANDOFF_NOTES_RELATIVE_PATH = ".flopeek/handoff/notes.json";
+const HANDOFF_IMPORTS_RELATIVE_PATH = ".flopeek/handoff/imports.json";
+const HANDOFF_IMPORT_ARTIFACTS_RELATIVE_PATH = ".flopeek/handoff/imports";
 const NOTE_SUBJECT_KINDS = new Set(["project", "feature", "flow", "node", "decision", "risk", "question", "general"]);
 const TEXT_SECTIONS = Object.freeze({
   owners: 40,
@@ -266,7 +266,7 @@ function saveHandoffWorkspace(root, graph, input, options = {}) {
   const existing = read.store.records.find((record) => record.operationId === normalized.operationId);
   if (existing) {
     if (existing.inputFingerprint !== inputFingerprint) throw new HandoffWorkspaceError("operation-id-conflict", "operationId already belongs to another immutable handoff workspace version.");
-    return { schemaVersion: "flowpeek-handoff-workspace-result/v1", created: false, workspace: existing };
+    return { schemaVersion: "flopeek-handoff-workspace-result/v1", created: false, workspace: existing };
   }
   const createdAt = options.now || new Date().toISOString();
   if (typeof createdAt !== "string" || Number.isNaN(Date.parse(createdAt))) throw new HandoffWorkspaceError("invalid-created-at", "createdAt must be an ISO-compatible timestamp.");
@@ -306,7 +306,7 @@ function saveHandoffWorkspace(root, graph, input, options = {}) {
   };
   const record = { ...recordBase, id: `handoff-workspace:${fingerprint(recordBase).slice(7, 39)}` };
   atomicWriteJson(read.path, { ...read.store, records: [...read.store.records, record] });
-  return { schemaVersion: "flowpeek-handoff-workspace-result/v1", created: true, workspace: record };
+  return { schemaVersion: "flopeek-handoff-workspace-result/v1", created: true, workspace: record };
 }
 
 function workspaceFreshness(workspace, graph) {
@@ -318,9 +318,9 @@ function workspaceFreshness(workspace, graph) {
 
 function listHandoffWorkspaces(root, graph) {
   const read = readStore(root, HANDOFF_WORKSPACES_RELATIVE_PATH, HANDOFF_WORKSPACES_SCHEMA, graph.project.projectId);
-  if (read.status === "invalid") return { schemaVersion: "flowpeek-handoff-workspace-list/v1", status: "unavailable", current: null, records: [], diagnostics: read.diagnostics };
+  if (read.status === "invalid") return { schemaVersion: "flopeek-handoff-workspace-list/v1", status: "unavailable", current: null, records: [], diagnostics: read.diagnostics };
   const records = lifecycleRecords(read.store.records).map((record) => ({ ...record, freshnessStatus: workspaceFreshness(record, graph) }));
-  return { schemaVersion: "flowpeek-handoff-workspace-list/v1", status: "available", current: records.find((record) => record.lifecycleStatus === "active") || null, total: records.length, records, diagnostics: [] };
+  return { schemaVersion: "flopeek-handoff-workspace-list/v1", status: "available", current: records.find((record) => record.lifecycleStatus === "active") || null, total: records.length, records, diagnostics: [] };
 }
 
 function normalizeNoteInput(input) {
@@ -349,7 +349,7 @@ function saveHandoffNote(root, graph, input, options = {}) {
   const existing = read.store.records.find((record) => record.operationId === normalized.operationId);
   if (existing) {
     if (existing.inputFingerprint !== inputFingerprint) throw new HandoffWorkspaceError("operation-id-conflict", "operationId already belongs to another immutable handoff note.");
-    return { schemaVersion: "flowpeek-handoff-note-result/v1", created: false, note: existing };
+    return { schemaVersion: "flopeek-handoff-note-result/v1", created: false, note: existing };
   }
   const superseded = normalized.supersedesNoteId ? read.store.records.find((record) => record.id === normalized.supersedesNoteId) : null;
   if (normalized.supersedesNoteId && !superseded) throw new HandoffWorkspaceError("superseded-note-not-found", "supersedesNoteId does not identify a retained local note.");
@@ -376,14 +376,14 @@ function saveHandoffNote(root, graph, input, options = {}) {
   };
   const note = { ...base, id: `handoff-note:${fingerprint(base).slice(7, 39)}` };
   atomicWriteJson(read.path, { ...read.store, records: [...read.store.records, note] });
-  return { schemaVersion: "flowpeek-handoff-note-result/v1", created: true, note };
+  return { schemaVersion: "flopeek-handoff-note-result/v1", created: true, note };
 }
 
 function listHandoffNotes(root, graph, workspaceId = null) {
   const read = readStore(root, HANDOFF_NOTES_RELATIVE_PATH, HANDOFF_NOTES_SCHEMA, graph.project.projectId);
-  if (read.status === "invalid") return { schemaVersion: "flowpeek-handoff-note-list/v1", status: "unavailable", records: [], diagnostics: read.diagnostics };
+  if (read.status === "invalid") return { schemaVersion: "flopeek-handoff-note-list/v1", status: "unavailable", records: [], diagnostics: read.diagnostics };
   const records = lifecycleRecords(read.store.records.filter((record) => !workspaceId || record.workspaceId === workspaceId));
-  return { schemaVersion: "flowpeek-handoff-note-list/v1", status: "available", total: records.length, records, diagnostics: [] };
+  return { schemaVersion: "flopeek-handoff-note-list/v1", status: "available", total: records.length, records, diagnostics: [] };
 }
 
 function assertKnownKeys(value, allowed, name) {
@@ -460,7 +460,7 @@ function validateStrictExportShape(packet) {
 }
 
 function validateExport(packet) {
-  if (!packet || typeof packet !== "object" || Array.isArray(packet) || packet.schemaVersion !== HANDOFF_EXPORT_SCHEMA || packet.format !== "json") throw new HandoffWorkspaceError("invalid-handoff-export", "Import must contain a flowpeek-handoff-export/v1 JSON packet.");
+  if (!packet || typeof packet !== "object" || Array.isArray(packet) || packet.schemaVersion !== HANDOFF_EXPORT_SCHEMA || packet.format !== "json") throw new HandoffWorkspaceError("invalid-handoff-export", "Import must contain a flopeek-handoff-export/v1 JSON packet.");
   if (packet.workspace?.schemaVersion !== HANDOFF_WORKSPACE_SCHEMA || !Array.isArray(packet.notes) || packet.notes.some((note) => note.schemaVersion !== HANDOFF_NOTE_SCHEMA)) throw new HandoffWorkspaceError("invalid-handoff-export-content", "Exported workspace or notes do not match the portable handoff schemas.");
   if (packet.access !== "portable-export" || packet.integrity?.algorithm !== "sha256") throw new HandoffWorkspaceError("invalid-handoff-export-integrity", "Export access or integrity metadata is invalid.");
   validateStrictExportShape(packet);
@@ -498,7 +498,7 @@ function handoffMarkdown(packet) {
   lines.push("", "## Critical flows", "", ...(sections.criticalFlows.length ? sections.criticalFlows.map((item) => renderStatement(item.selection)) : ["- None recorded."]));
   lines.push("", "## Related tests", "", ...(sections.relatedTests.length ? sections.relatedTests.map((item) => renderStatement(item.selection)) : ["- None recorded."]));
   lines.push("", "## Notes", "", ...(packet.notes.length ? packet.notes.map((note) => `- ${note.body} _(author: ${note.author}; graph: ${note.graphVersion}; class: ${note.evidenceClass}; status: ${note.lifecycleStatus})_`) : ["- None recorded."]));
-  lines.push("", `<!-- flowpeek-handoff-json-base64:${Buffer.from(JSON.stringify(packet), "utf8").toString("base64")} -->`);
+  lines.push("", `<!-- flopeek-handoff-json-base64:${Buffer.from(JSON.stringify(packet), "utf8").toString("base64")} -->`);
   return lines.join("\n");
 }
 
@@ -529,8 +529,8 @@ function exportHandoffWorkspace(root, graph, options = {}) {
 
 function decodeImport(input) {
   if (typeof input === "string") {
-    const match = input.match(/<!-- flowpeek-handoff-json-base64:([A-Za-z0-9+/=]+) -->/);
-    if (!match) throw new HandoffWorkspaceError("invalid-handoff-markdown", "Markdown import does not contain an embedded portable Flowpeek handoff packet.");
+    const match = input.match(/<!-- flopeek-handoff-json-base64:([A-Za-z0-9+/=]+) -->/);
+    if (!match) throw new HandoffWorkspaceError("invalid-handoff-markdown", "Markdown import does not contain an embedded portable Flopeek handoff packet.");
     try { return JSON.parse(Buffer.from(match[1], "base64").toString("utf8")); } catch (error) { throw new HandoffWorkspaceError("invalid-handoff-markdown-payload", `Embedded Markdown payload is invalid (${error.message}).`); }
   }
   if (input?.schemaVersion === HANDOFF_MARKDOWN_SCHEMA && typeof input.markdown === "string") return decodeImport(input.markdown);
@@ -543,7 +543,7 @@ function importHandoffWorkspace(root, graph, input, options = {}) {
   if (read.status === "invalid") throw new HandoffWorkspaceError("invalid-handoff-import-store", read.diagnostics[0].message);
   const contentHash = packet.integrity.contentHash;
   const existing = read.store.records.find((record) => record.contentHash === contentHash);
-  if (existing) return { schemaVersion: "flowpeek-handoff-import-result/v1", created: false, import: existing };
+  if (existing) return { schemaVersion: "flopeek-handoff-import-result/v1", created: false, import: existing };
   const artifactRelativePath = `${HANDOFF_IMPORT_ARTIFACTS_RELATIVE_PATH}/${contentHash.slice(7)}.json`;
   const createdAt = options.now || new Date().toISOString();
   if (typeof createdAt !== "string" || Number.isNaN(Date.parse(createdAt))) throw new HandoffWorkspaceError("invalid-imported-at", "importedAt must be an ISO-compatible timestamp.");
@@ -563,14 +563,14 @@ function importHandoffWorkspace(root, graph, input, options = {}) {
   };
   atomicWriteJson(path.join(root, artifactRelativePath), packet);
   atomicWriteJson(read.path, { ...read.store, records: [...read.store.records, record] });
-  return { schemaVersion: "flowpeek-handoff-import-result/v1", created: true, import: record };
+  return { schemaVersion: "flopeek-handoff-import-result/v1", created: true, import: record };
 }
 
 function listImportedHandoffs(root, graph) {
   const read = readStore(root, HANDOFF_IMPORTS_RELATIVE_PATH, HANDOFF_IMPORTS_SCHEMA, graph.project.projectId);
-  if (read.status === "invalid") return { schemaVersion: "flowpeek-handoff-import-list/v1", status: "unavailable", records: [], diagnostics: read.diagnostics };
+  if (read.status === "invalid") return { schemaVersion: "flopeek-handoff-import-list/v1", status: "unavailable", records: [], diagnostics: read.diagnostics };
   const records = read.store.records.map((record) => ({ ...record, artifactStatus: fs.existsSync(path.join(root, record.artifact.relativePath)) ? "retained" : "expired" }));
-  return { schemaVersion: "flowpeek-handoff-import-list/v1", status: "available", total: records.length, records, diagnostics: [] };
+  return { schemaVersion: "flopeek-handoff-import-list/v1", status: "available", total: records.length, records, diagnostics: [] };
 }
 
 module.exports = {

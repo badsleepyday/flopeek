@@ -15,7 +15,7 @@ function fileNode(id, filePath) {
 }
 
 test("static convention discovery returns only bounded exact token co-occurrence without source bodies", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-related-implementations-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-related-implementations-"));
   try {
     fs.mkdirSync(path.join(root, "application", "views", "contacts"), { recursive: true });
     fs.writeFileSync(path.join(root, "application", "views", "contacts", "form.php"), '<input class="ha-end-date form-control" data-role="contact-date" onchange="setHaEndDate(this)">');
@@ -47,7 +47,7 @@ test("static convention token extraction recognizes CodeIgniter helper attribute
 });
 
 test("same-directory files are considered before unrelated files when the scan cap applies", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-related-priority-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-related-priority-"));
   try {
     fs.mkdirSync(path.join(root, "application", "views", "hr"), { recursive: true });
     fs.mkdirSync(path.join(root, "application", "aaa"), { recursive: true });
@@ -62,7 +62,7 @@ test("same-directory files are considered before unrelated files when the scan c
 });
 
 test("CLI returns the same bounded convention projection for a file Context Ref", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-related-cli-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-related-cli-"));
   try {
     fs.mkdirSync(path.join(root, "views"), { recursive: true });
     fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "related-cli" }));
@@ -73,7 +73,7 @@ test("CLI returns the same bounded convention projection for a file Context Ref"
     const contextRef = createContextRef(graph.project.projectId, "node", node.id, graph.state.graphVersion);
     const output = execFileSync(process.execPath, [path.join(__dirname, "..", "..", "src", "cli.js"), "related-implementations", root, "--context-ref", contextRef, "--format", "json"], { encoding: "utf8" });
     const result = JSON.parse(output);
-    assert.equal(result.schemaVersion, "flowpeek-related-implementations/v1");
+    assert.equal(result.schemaVersion, "flopeek-related-implementations/v1");
     assert.equal(result.candidates[0].path, "views/edit.php");
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

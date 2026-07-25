@@ -6,7 +6,7 @@ const { runHelperProcessMatrix } = require("../../src/helper-process-matrix");
 
 test("fixture-only Go and .NET helper matrix leaves no observed helper process after completion, timeout, abort, or concurrent scans", { timeout: 90_000 }, async () => {
   const report = await runHelperProcessMatrix();
-  assert.equal(report.schemaVersion, "flowpeek-helper-process-matrix/v1");
+  assert.equal(report.schemaVersion, "flopeek-helper-process-matrix/v1");
   for (const kind of ["go", "csharp"]) {
     const result = report.results[kind];
     if (result.status === "unavailable") continue;

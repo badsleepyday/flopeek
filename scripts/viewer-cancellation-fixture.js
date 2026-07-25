@@ -8,7 +8,7 @@ const { startServer } = require("../src/server");
 
 const FILES = 6_000;
 const PORT = 4799;
-const ROOT = path.join(os.tmpdir(), "flowpeek-df010-bounded-viewer");
+const ROOT = path.join(os.tmpdir(), "flopeek-df010-bounded-viewer");
 
 function write(relativePath, content) {
   const target = path.join(ROOT, relativePath);
@@ -18,7 +18,7 @@ function write(relativePath, content) {
 
 function createFixture() {
   fs.rmSync(ROOT, { recursive: true, force: true });
-  write("package.json", JSON.stringify({ name: "flowpeek-df010-bounded-viewer" }));
+  write("package.json", JSON.stringify({ name: "flopeek-df010-bounded-viewer" }));
   write("src/route.ts", "export async function GET() { return { ok: true }; }\n");
   for (let index = 0; index < FILES; index += 1) write(`src/module-${index}.ts`, `export function module${index}() { return ${index}; }\n`);
   const baseline = scanRepository(ROOT);

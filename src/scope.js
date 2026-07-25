@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const CONFIG_FILENAME = ".flowpeek/config.json";
+const CONFIG_FILENAME = ".flopeek/config.json";
 const CONFIG_SCHEMA_VERSION = 1;
 const DEFAULT_SCOPE_CONFIG = Object.freeze({
   schemaVersion: CONFIG_SCHEMA_VERSION,
@@ -17,9 +17,9 @@ const PROJECT_ID_ALLOWED_CHARACTERS = new Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefg
 
 class RepositoryScopeConfigError extends Error {
   constructor(message) {
-    super(`Invalid Flowpeek repository scope configuration: ${message}`);
+    super(`Invalid Flopeek repository scope configuration: ${message}`);
     this.name = "RepositoryScopeConfigError";
-    this.code = "FLOWPEEK_INVALID_SCOPE_CONFIG";
+    this.code = "FLOPEEK_INVALID_SCOPE_CONFIG";
   }
 }
 
@@ -104,7 +104,7 @@ function readRepositoryScope(root) {
   try {
     parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
   } catch (error) {
-    throw new RepositoryScopeConfigError(`.flowpeek/config.json is not valid JSON (${error.message}).`);
+    throw new RepositoryScopeConfigError(`.flopeek/config.json is not valid JSON (${error.message}).`);
   }
   return { ...validateScopeConfig(parsed), source: "config", configPath: CONFIG_FILENAME };
 }

@@ -7,12 +7,12 @@ const { atomicWriteJson, readGraphCacheResult } = require("./graph-cache");
 const { listGraphDeltaHistory } = require("./graph-state");
 const { sourceBasis } = require("./durable-brief");
 
-const ARTIFACT_CACHE_SCHEMA = "flowpeek-derived-artifact/v1";
-const ARTIFACT_CACHE_REGISTRY_SCHEMA = "flowpeek-derived-artifact-registry/v1";
-const ARTIFACT_CACHE_AUDIT_SCHEMA = "flowpeek-derived-cache-audit/v1";
-const CACHE_HYGIENE_SCHEMA = "flowpeek-cache-hygiene/v1";
-const ARTIFACT_CACHE_REGISTRY_RELATIVE_PATH = ".flowpeek/cache/artifacts.json";
-const ARTIFACT_CACHE_DIRECTORY_RELATIVE_PATH = ".flowpeek/cache/artifacts";
+const ARTIFACT_CACHE_SCHEMA = "flopeek-derived-artifact/v1";
+const ARTIFACT_CACHE_REGISTRY_SCHEMA = "flopeek-derived-artifact-registry/v1";
+const ARTIFACT_CACHE_AUDIT_SCHEMA = "flopeek-derived-cache-audit/v1";
+const CACHE_HYGIENE_SCHEMA = "flopeek-cache-hygiene/v1";
+const ARTIFACT_CACHE_REGISTRY_RELATIVE_PATH = ".flopeek/cache/artifacts.json";
+const ARTIFACT_CACHE_DIRECTORY_RELATIVE_PATH = ".flopeek/cache/artifacts";
 const MAX_AUDIT_EVENTS = 1000;
 const VALID_TYPES = new Set(["context-packet", "flow-projection", "semantic-suggestion", "impact-index", "feature-summary"]);
 
@@ -230,7 +230,7 @@ function relativeCachePath(root, target) {
   return value && !value.startsWith("../") && value !== ".." ? value : null;
 }
 
-function collectCacheFiles(root, target = path.join(root, ".flowpeek")) {
+function collectCacheFiles(root, target = path.join(root, ".flopeek")) {
   const result = { files: 0, bytes: 0, paths: [] };
   if (!fs.existsSync(target)) return result;
   const visit = (current) => {
@@ -265,8 +265,8 @@ function cacheHygiene(root, graph = null) {
   const all = collectCacheFiles(root);
   const deltaHistory = listGraphDeltaHistory(root);
   const paths = {
-    graph: ".flowpeek/graph.json",
-    state: ".flowpeek/state.json",
+    graph: ".flopeek/graph.json",
+    state: ".flopeek/state.json",
     registry: ARTIFACT_CACHE_REGISTRY_RELATIVE_PATH,
   };
   const artifacts = read.status === "valid"
@@ -274,11 +274,11 @@ function cacheHygiene(root, graph = null) {
     : [];
   const knownBytes = artifacts.reduce((total, artifact) => total + artifact.bytes, 0);
   const userMetadataPaths = [
-    ".flowpeek/flow-verifications.json",
-    ".flowpeek/semantic-suggestion-feedback.json",
-    ".flowpeek/runtime-evidence.json",
-    ".flowpeek/test-runs.json",
-    ".flowpeek/descriptions.json",
+    ".flopeek/flow-verifications.json",
+    ".flopeek/semantic-suggestion-feedback.json",
+    ".flopeek/runtime-evidence.json",
+    ".flopeek/test-runs.json",
+    ".flopeek/descriptions.json",
   ];
   const userMetadata = userMetadataPaths
     .map((relativePath) => ({ relativePath, bytes: bytesFor(root, relativePath) }))
@@ -315,7 +315,7 @@ function cacheHygiene(root, graph = null) {
       staleReuse: "never-silent",
     },
     diagnostics: read.diagnostics,
-    limitation: "Cache hygiene measures local Flowpeek metadata only. It neither proves cross-version artifact reuse nor deletes user metadata or unclassified files.",
+    limitation: "Cache hygiene measures local Flopeek metadata only. It neither proves cross-version artifact reuse nor deletes user metadata or unclassified files.",
   };
 }
 

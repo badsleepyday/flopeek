@@ -21,13 +21,13 @@ function sourceFor(definition) {
 }
 
 test("renderer projection corpus pins small, medium, and dense bounded static maps", (t) => {
-  assert.equal(corpus.schemaVersion, "flowpeek-renderer-projection-corpus/v1");
+  assert.equal(corpus.schemaVersion, "flopeek-renderer-projection-corpus/v1");
   assert.deepEqual(corpus.fixtures.map((item) => item.id), ["small", "medium", "dense"]);
   assert.ok(corpus.fixtures[0].functions < corpus.fixtures[1].functions && corpus.fixtures[1].functions < corpus.fixtures[2].functions);
   assert.equal(corpus.projection.maxNodes, 100);
   assert.equal(corpus.projection.maxEdges, 200);
   for (const definition of corpus.fixtures) {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), `flowpeek-renderer-${definition.id}-`));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), `flopeek-renderer-${definition.id}-`));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     fs.mkdirSync(path.join(root, "src"), { recursive: true });
     fs.writeFileSync(path.join(root, "src", "projection.ts"), sourceFor(definition), "utf8");

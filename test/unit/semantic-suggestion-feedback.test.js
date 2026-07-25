@@ -15,7 +15,7 @@ function write(root, relativePath, content) {
 }
 
 function setup() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-semantic-feedback-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-semantic-feedback-"));
   write(root, "package.json", JSON.stringify({ name: "semantic-feedback-example" }));
   write(root, "src/orders.routes.ts", "import { submit } from './orders.service';\nrouter.post('/orders', () => submit());");
   write(root, "src/orders.service.ts", "export function submit() { return true; }");
@@ -127,7 +127,7 @@ test("invalid semantic feedback metadata is preserved and feedback is never flow
 
 test("synthetic feedback evaluation checks metric aggregation without claiming human calibration", () => {
   const corpus = {
-    schemaVersion: "flowpeek-semantic-suggestion-feedback-evaluation/v1",
+    schemaVersion: "flopeek-semantic-suggestion-feedback-evaluation/v1",
     interpretation: "Synthetic contract only.",
     records: [
       { id: "a", decision: "accepted", traceVerificationStatus: "passed" },

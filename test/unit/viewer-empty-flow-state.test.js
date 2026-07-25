@@ -72,7 +72,7 @@ test("Viewer Continue mode keeps planned delivery metadata opt-in and visually d
   assert.match(APP, /delivery plan · not found in source/);
   assert.match(APP, /does not create a source node, static call, impact result, Flow Lens step, parser-coverage fact, implementation result, or runtime observation/);
   assert.match(APP, /copy-planned-context/);
-  assert.match(APP, /flowpeek-viewer-planned-node-context\/v1/);
+  assert.match(APP, /flopeek-viewer-planned-node-context\/v1/);
   assert.match(APP, /record-plan-reconciliation/);
   assert.match(APP, /\/api\/plan-reconciliations/);
   assert.match(APP, /actorKind: "human"/);

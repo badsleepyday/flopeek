@@ -1,4 +1,4 @@
-const AGENT_BOOTSTRAP_SCHEMA = "flowpeek-agent-bootstrap/v1";
+const AGENT_BOOTSTRAP_SCHEMA = "flopeek-agent-bootstrap/v1";
 
 function coverageSummary(graph) {
   const coverage = graph.analysis?.coverage || {};
@@ -66,13 +66,13 @@ function createAgentBootstrap(graph) {
       { step: 3, action: "Inspect evidence", tools: ["get_node", "get_flow_projection", "get_flow_context_card", "get_related_tests"], purpose: "Resolve parser facts and Context Refs before planning a source change." },
       { step: 4, action: "Continue safely when a checkpoint exists", tools: ["get_continuation_context", "get_work_dependency_status"], purpose: "Resolve exact checkpoint context and declared dependency readiness before built-in implementation entry. Ready is local delivery metadata, not source or runtime proof." },
       { step: 5, action: "Inspect bounded Git evidence only when needed", tools: ["get_active_branch_git_evidence", "get_git_context_continuity"], purpose: "Read local path-touch commits or compare one Context Ref across two static Git snapshots. Neither result proves original rationale, runtime behavior, review, test success, release state, rename, or implementation equivalence." },
-      { step: 6, action: "Edit outside Flowpeek", tools: [], purpose: "Use the host agent's normal workspace tools. Flowpeek exposes no repository-source write or arbitrary shell tool." },
+      { step: 6, action: "Edit outside Flopeek", tools: [], purpose: "Use the host agent's normal workspace tools. Flopeek exposes no repository-source write or arbitrary shell tool." },
       { step: 7, action: "Refresh", tools: ["refresh_graph", "get_scan_status", "get_changed_contexts", "get_flow_comparison", "get_change_impact"], purpose: "Advance the graph, confirm source freshness, and inspect bounded before/current static evidence after source edits." },
-      { step: 8, action: "Verify outside Flowpeek", tools: ["get_related_tests", "record_agent_evidence_trace"], purpose: "Run repository-owned verification with approved host tools, then record only bounded declared evidence metadata." },
+      { step: 8, action: "Verify outside Flopeek", tools: ["get_related_tests", "record_agent_evidence_trace"], purpose: "Run repository-owned verification with approved host tools, then record only bounded declared evidence metadata." },
     ],
     policy: {
       strategy: "graph-first-with-source-fallback",
-      parserFactsAuthority: "flowpeek-deterministic-scanner",
+      parserFactsAuthority: "flopeek-deterministic-scanner",
       agentRole: "consumer-and-proposer",
       sourceWrites: "not-exposed",
       targetExecution: "not-exposed",
@@ -89,7 +89,7 @@ function createAgentBootstrap(graph) {
       packageSelection?.status === "selected"
         ? "This graph covers only the selected static package subtree. It does not prove workspace topology, dependency ownership, build activation, or runtime behavior outside that subtree."
         : "This graph covers the configured repository-wide static scope; it does not prove runtime topology or behavior.",
-      "Do not store source bodies, secrets, prompts, private reasoning, or raw command logs in Flowpeek metadata.",
+      "Do not store source bodies, secrets, prompts, private reasoning, or raw command logs in Flopeek metadata.",
     ],
   };
 }

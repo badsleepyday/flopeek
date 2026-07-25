@@ -6,7 +6,7 @@ Accepted for Iteration 16.
 
 ## Decision
 
-Flowpeek stores project handoff knowledge as immutable workspace versions. Creating a new version supersedes the current version without overwriting history. A workspace can contain project purpose, architecture summary, critical flows, owners, risks, important decisions, known limitations, unresolved questions, related tests, and recommended starting points.
+Flopeek stores project handoff knowledge as immutable workspace versions. Creating a new version supersedes the current version without overwriting history. A workspace can contain project purpose, architecture summary, critical flows, owners, risks, important decisions, known limitations, unresolved questions, related tests, and recommended starting points.
 
 Every human statement records author, timestamp, graph version, `human-authored` evidence class, and any supporting Context Refs. Selected flows and tests retain separate `static-parser-fact` records. Runtime evidence remains an unavailable, separately classified section unless a future opt-in sanitized runtime store is attached.
 
@@ -20,7 +20,7 @@ Every import is stored as a separate artifact and manifest with `read-only`, `fo
 
 ## Input safety
 
-Human text is bounded and single-line. Flowpeek rejects machine-specific paths, common credential/private-key patterns, code fences, NUL bytes, and clear source-declaration syntax. This is a strict input guard, not a claim that arbitrary text can be proven secret-free; the product itself never reads source bodies into handoff statements.
+Human text is bounded and single-line. Flopeek rejects machine-specific paths, common credential/private-key patterns, code fences, NUL bytes, and clear source-declaration syntax. This is a strict input guard, not a claim that arbitrary text can be proven secret-free; the product itself never reads source bodies into handoff statements.
 
 ## Consequences
 

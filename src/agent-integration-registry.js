@@ -1,4 +1,4 @@
-const AGENT_PLATFORM_REGISTRY_SCHEMA = "flowpeek-agent-platform-registry/v1";
+const AGENT_PLATFORM_REGISTRY_SCHEMA = "flopeek-agent-platform-registry/v1";
 
 const PLATFORMS = Object.freeze([
   {
@@ -6,7 +6,7 @@ const PLATFORMS = Object.freeze([
     label: "Claude Code",
     status: "supported",
     executables: ["claude"],
-    skillDirectory: ".claude/skills/flowpeek",
+    skillDirectory: ".claude/skills/flopeek",
     mcpConfig: ".mcp.json",
     configFormat: "json-mcp-servers",
     localStdio: true,
@@ -16,7 +16,7 @@ const PLATFORMS = Object.freeze([
     label: "Codex",
     status: "supported",
     executables: ["codex"],
-    skillDirectory: ".agents/skills/flowpeek",
+    skillDirectory: ".agents/skills/flopeek",
     mcpConfig: ".codex/config.toml",
     configFormat: "toml-managed-block",
     localStdio: true,
@@ -26,7 +26,7 @@ const PLATFORMS = Object.freeze([
     label: "Cursor",
     status: "supported",
     executables: ["cursor-agent", "cursor"],
-    skillDirectory: ".cursor/skills/flowpeek",
+    skillDirectory: ".cursor/skills/flopeek",
     mcpConfig: ".cursor/mcp.json",
     configFormat: "json-mcp-servers",
     localStdio: true,
@@ -36,7 +36,7 @@ const PLATFORMS = Object.freeze([
     label: "Gemini CLI",
     status: "supported",
     executables: ["gemini"],
-    skillDirectory: ".gemini/skills/flowpeek",
+    skillDirectory: ".gemini/skills/flopeek",
     mcpConfig: ".gemini/settings.json",
     configFormat: "json-mcp-servers",
     localStdio: true,

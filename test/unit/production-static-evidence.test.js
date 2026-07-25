@@ -9,8 +9,8 @@ const ROOT = path.resolve(__dirname, "../..");
 
 test("production static evidence remains pinned, complete, and explicit about its non-runtime boundary", () => {
   const evidence = JSON.parse(fs.readFileSync(path.join(ROOT, "benchmarks", "production-static-evidence.json"), "utf8"));
-  assert.equal(evidence.schemaVersion, "flowpeek-production-static-evidence/v1");
-  assert.equal(evidence.flowpeek.workingTree, "dirty");
+  assert.equal(evidence.schemaVersion, "flopeek-production-static-evidence/v1");
+  assert.equal(evidence.flopeek.workingTree, "dirty");
   assert.equal(evidence.externalRelationshipAudit.manifest, "benchmarks/real-repository-corpus.json");
   assert.equal(evidence.externalRelationshipAudit.completedRepositories, evidence.externalRelationshipAudit.totalRepositories);
   assert.equal(evidence.externalRelationshipAudit.auditedRelationships, 92);

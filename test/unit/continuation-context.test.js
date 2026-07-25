@@ -15,7 +15,7 @@ const { scanRepository } = require("../../src/scanner");
 function write(root, file, content) { const target = path.join(root, file); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, content, "utf8"); }
 
 test("continuation context is bounded, versioned, source-free, and explicit about stale selected refs", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-continuation-context-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-continuation-context-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "continuation-context" }));
     write(root, "src/app/api/orders/route.ts", "const PRIVATE_SOURCE_SENTINEL = 'omit'; export async function GET() { return { ok: true }; }\n");
@@ -29,7 +29,7 @@ test("continuation context is bounded, versioned, source-free, and explicit abou
     const first = createContinuationContext(root, baseline, { checkpointId: "checkpoint.context", overlayId: overlay.id, tokenBudget: 2048 }, { resolveContextRef: resolver });
     const second = createContinuationContext(root, baseline, { checkpointId: "checkpoint.context", overlayId: overlay.id, tokenBudget: 2048 }, { resolveContextRef: resolver });
     assert.deepEqual(first, second);
-    assert.equal(first.schemaVersion, "flowpeek-continuation-context/v1");
+    assert.equal(first.schemaVersion, "flopeek-continuation-context/v1");
     assert.equal(first.status, "ready");
     assert.equal(first.budget.status, "within-budget");
     assert.ok(first.budget.estimatedCharacterCount <= first.budget.characterBudget);

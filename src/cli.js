@@ -131,49 +131,49 @@ function openBrowser(url) {
 }
 
 function printHelp() {
-  console.log(`Flowpeek — project technical map
+  console.log(`Flopeek — project technical map
 
 Package identity:
-  flowpeek --version
+  flopeek --version
 
 Agent tools (MCP over stdio):
-  flowpeek mcp [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [--no-cache]
-  flowpeek bootstrap [repository] [--format summary|json]
+  flopeek mcp [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [--no-cache]
+  flopeek bootstrap [repository] [--format summary|json]
 
 Agent host integration (project-local and non-destructive):
-  flowpeek install [repository] [--platform auto|codex|claude|cursor|gemini|all] [--dry-run] [--format summary|json]
-  flowpeek doctor [repository] [--platform codex|claude|cursor|gemini|all] [--strict] [--format summary|json]
-  flowpeek uninstall [repository] [--platform auto|codex|claude|cursor|gemini|all] [--dry-run] [--format summary|json]
+  flopeek install [repository] [--platform auto|codex|claude|cursor|gemini|all] [--dry-run] [--format summary|json]
+  flopeek doctor [repository] [--platform codex|claude|cursor|gemini|all] [--strict] [--format summary|json]
+  flopeek uninstall [repository] [--platform auto|codex|claude|cursor|gemini|all] [--dry-run] [--format summary|json]
 
 Graph workflow:
-  flowpeek discover [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [--format summary|json]
-  flowpeek scan [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [--format summary|json|mermaid] [--no-cache]
-  flowpeek view [repository] [--mode overview|requests|dependencies] [--scope application|runtime|framework|devtool|all] [--level domain|feature|component|symbol] [--focus node-id] [--max-nodes number] [--max-edges number] [--format summary|json] [--no-cache]
-  flowpeek impact [repository] [--changed path[,path] | --base git-ref] [--format summary|json]
-  flowpeek snapshot [repository] [--commit git-ref] [--force] [--format summary|json]
-  flowpeek history [repository] [--from git-ref] [--to git-ref] [--format summary|json]
-  flowpeek git-evidence [repository] --context-ref fp://local/... [--limit 12] [--format summary|json]
-  flowpeek git-continuity [repository] --context-ref fp://local/... [--from git-ref] [--to git-ref] [--format summary|json]
-  flowpeek related-implementations [repository] --context-ref fp://local/... [--format summary|json]
-  flowpeek delta [repository] [--from-version number --to-version number] [--format summary|json]
-  flowpeek benchmark [repository] [--iterations 3] [--format summary|json]
-  flowpeek proof [repository] [--iterations 3] [--format summary|json]
-  flowpeek cache status [repository] [--format summary|json]
-  flowpeek cache prune [repository] [--keep-records number] [--dry-run] [--format summary|json]
-  flowpeek cache prune [repository] --history [--keep-deltas number] [--max-bytes number] [--apply] [--format summary|json]
-  flowpeek work list|timeline|workflows|dependencies [repository] [--record work-record-id] [--format summary|json]
-  flowpeek continue list|show|checkpoint [repository] [--checkpoint checkpoint-id] [--input checkpoint.json] [--format summary|json]
-  flowpeek continue plan list|show|create|resolve [repository] [--overlay overlay-id] [--plan-ref fpp://local/...] [--input planned-overlay.json] [--format summary|json]
-  flowpeek continue reconcile list|show|record [repository] [--reconciliation reconciliation-id] [--plan-ref fpp://local/...] [--input reconciliation.json] [--format summary|json]
-  flowpeek evaluate orientation [suite-root] --cases <file> [--condition baseline|flowpeek|both] [--format summary|json]
-  flowpeek evaluate agent-comparison [suite-root] --cases <file> --runs <file> [--format summary|json]
+  flopeek discover [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [--format summary|json]
+  flopeek scan [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [--format summary|json|mermaid] [--no-cache]
+  flopeek view [repository] [--mode overview|requests|dependencies] [--scope application|runtime|framework|devtool|all] [--level domain|feature|component|symbol] [--focus node-id] [--max-nodes number] [--max-edges number] [--format summary|json] [--no-cache]
+  flopeek impact [repository] [--changed path[,path] | --base git-ref] [--format summary|json]
+  flopeek snapshot [repository] [--commit git-ref] [--force] [--format summary|json]
+  flopeek history [repository] [--from git-ref] [--to git-ref] [--format summary|json]
+  flopeek git-evidence [repository] --context-ref fp://local/... [--limit 12] [--format summary|json]
+  flopeek git-continuity [repository] --context-ref fp://local/... [--from git-ref] [--to git-ref] [--format summary|json]
+  flopeek related-implementations [repository] --context-ref fp://local/... [--format summary|json]
+  flopeek delta [repository] [--from-version number --to-version number] [--format summary|json]
+  flopeek benchmark [repository] [--iterations 3] [--format summary|json]
+  flopeek proof [repository] [--iterations 3] [--format summary|json]
+  flopeek cache status [repository] [--format summary|json]
+  flopeek cache prune [repository] [--keep-records number] [--dry-run] [--format summary|json]
+  flopeek cache prune [repository] --history [--keep-deltas number] [--max-bytes number] [--apply] [--format summary|json]
+  flopeek work list|timeline|workflows|dependencies [repository] [--record work-record-id] [--format summary|json]
+  flopeek continue list|show|checkpoint [repository] [--checkpoint checkpoint-id] [--input checkpoint.json] [--format summary|json]
+  flopeek continue plan list|show|create|resolve [repository] [--overlay overlay-id] [--plan-ref fpp://local/...] [--input planned-overlay.json] [--format summary|json]
+  flopeek continue reconcile list|show|record [repository] [--reconciliation reconciliation-id] [--plan-ref fpp://local/...] [--input reconciliation.json] [--format summary|json]
+  flopeek evaluate orientation [suite-root] --cases <file> [--condition baseline|flopeek|both] [--format summary|json]
+  flopeek evaluate agent-comparison [suite-root] --cases <file> --runs <file> [--format summary|json]
 
 Guided product demonstration:
-  flowpeek showcase [--port 4780] [--strict-port] [--no-open] [--keep-workspace] [--format summary|json]
-  flowpeek showcase apply|reset|status <temporary-workspace> [--format summary|json]
+  flopeek showcase [--port 4780] [--strict-port] [--no-open] [--keep-workspace] [--format summary|json]
+  flopeek showcase apply|reset|status <temporary-workspace> [--format summary|json]
 
 Optional compact local viewer:
-  flowpeek serve [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [-g|--global] [--port 4780] [--strict-port] [--workspace id] [--service-label name] [--no-open]
+  flopeek serve [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [-g|--global] [--port 4780] [--strict-port] [--workspace id] [--service-label name] [--no-open]
 
 Global mode activates projects behind one workspace hub/web port. A later command
 using the same hub port adds or selects its project without stopping the hub.
@@ -187,7 +187,7 @@ function printSummary(graph, cacheWritten = true, cacheMessage = null) {
   console.log(`${project.name} (${project.git.branch})`);
   console.log(`${stats.scannedFiles} files / ${stats.nodes} nodes / ${stats.edges} edges`);
   console.log(`${stats.endpoints} HTTP entries / ${stats.commandEntries || 0} command entries / ${stats.scheduledEntries || 0} scheduled entries / ${stats.services} services / ${stats.calls || 0} direct calls / ${stats.tests} tests`);
-  console.log(cacheWritten ? `Cache: ${path.join(project.root, ".flowpeek", "graph.json")}` : cacheMessage || "Cache: not written (--no-cache)");
+  console.log(cacheWritten ? `Cache: ${path.join(project.root, ".flopeek", "graph.json")}` : cacheMessage || "Cache: not written (--no-cache)");
 }
 
 function printImpact(impact) {
@@ -450,7 +450,7 @@ async function main() {
         });
         const coordinated = await coordinator.refresh(null, "cli-bounded-scan", controller.signal);
         result = coordinated.boundedResult || {
-          schemaVersion: "flowpeek-bounded-scan-result/v1",
+          schemaVersion: "flopeek-bounded-scan-result/v1",
           status: coordinated.outcome.status,
           generatedAt: coordinated.outcome.completedAt,
           durationMs: coordinated.outcome.durationMs,
@@ -478,12 +478,12 @@ async function main() {
       else if (result.status === "failed") process.exitCode = 1;
       return;
     }
-    // `--no-cache` is the safe inspection mode: it must not leave Flowpeek
+    // `--no-cache` is the safe inspection mode: it must not leave Flopeek
     // metadata behind merely to obtain a generated project identity.
     const graph = scanRepository(options.root, { persistIdentity: options.cache });
     graph.analysis.cacheState = options.cache
       ? summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-scan" }))
-      : { status: "disabled", path: path.join(graph.project.root, ".flowpeek", "graph.json"), diagnostics: [], contract: null, migrated: false };
+      : { status: "disabled", path: path.join(graph.project.root, ".flopeek", "graph.json"), diagnostics: [], contract: null, migrated: false };
     if (options.format === "json") console.log(JSON.stringify(graph, null, 2));
     else if (options.format === "mermaid") console.log(graphToMermaid(graph));
     else if (options.format === "summary") printSummary(graph, options.cache);
@@ -508,7 +508,7 @@ async function main() {
     const changedPaths = options.changed.length ? options.changed : getGitChangedPaths(graph.project.root, options.base);
     graph.analysis.cacheState = options.cache
       ? summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-impact", changedPaths }))
-      : { status: "disabled", path: path.join(graph.project.root, ".flowpeek", "graph.json"), diagnostics: [], contract: null, migrated: false };
+      : { status: "disabled", path: path.join(graph.project.root, ".flopeek", "graph.json"), diagnostics: [], contract: null, migrated: false };
     const impact = getChangeImpact(graph, changedPaths, { previousGraph });
     if (options.format === "json") console.log(JSON.stringify(impact, null, 2));
     else if (options.format === "summary") printImpact(impact);
@@ -551,7 +551,7 @@ async function main() {
     const graph = scanRepository(options.root, { persistIdentity: true });
     graph.analysis.cacheState = options.cache
       ? summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-active-branch-git-evidence" }))
-      : { status: "disabled", path: path.join(graph.project.root, ".flowpeek", "graph.json"), diagnostics: [], contract: null, migrated: false };
+      : { status: "disabled", path: path.join(graph.project.root, ".flopeek", "graph.json"), diagnostics: [], contract: null, migrated: false };
     const result = getActiveBranchGitEvidence(graph, options.contextRef, { limit: options.limit });
     if (options.format === "json") console.log(JSON.stringify(result, null, 2));
     else if (options.format === "summary") printActiveBranchGitEvidence(result);
@@ -563,7 +563,7 @@ async function main() {
     const graph = scanRepository(options.root, { persistIdentity: true });
     graph.analysis.cacheState = options.cache
       ? summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-git-context-continuity" }))
-      : { status: "disabled", path: path.join(graph.project.root, ".flowpeek", "graph.json"), diagnostics: [], contract: null, migrated: false };
+      : { status: "disabled", path: path.join(graph.project.root, ".flopeek", "graph.json"), diagnostics: [], contract: null, migrated: false };
     const result = getGitContextContinuity(graph, options.contextRef, { from: options.from, to: options.to });
     if (options.format === "json") console.log(JSON.stringify(result, null, 2));
     else if (options.format === "summary") printGitContextContinuity(result);
@@ -595,7 +595,7 @@ async function main() {
     if (options.format === "json") console.log(JSON.stringify(result, null, 2));
     else if (options.format === "summary") {
       if (options.cacheAction === "prune") console.log(`${result.dryRun ? "Would prune" : "Pruned"} ${result.pruned.length} ${options.history ? "validated graph deltas" : "derived artifacts"} / ${result.reclaimedBytes} bytes reclaimed`);
-      else console.log(`${result.storage.total.files} Flowpeek cache files / ${result.storage.total.bytes} bytes / ${result.storage.deltaHistory.files} graph deltas / ${result.storage.derivedArtifacts.records} registered derived artifacts`);
+      else console.log(`${result.storage.total.files} Flopeek cache files / ${result.storage.total.bytes} bytes / ${result.storage.deltaHistory.files} graph deltas / ${result.storage.derivedArtifacts.records} registered derived artifacts`);
       console.log(result.limitation || result.retention?.destructiveScope || "Cache metadata only.");
     } else throw new Error("Cache output supports summary or json formats.");
     return;
@@ -704,7 +704,7 @@ async function main() {
       }],
     });
     const hubUrl = `http://127.0.0.1:${hub.port}`;
-    console.log(`Flowpeek workspace hub: ${hubUrl}`);
+    console.log(`Flopeek workspace hub: ${hubUrl}`);
     console.log(`Serve workspace: ${hub.workspaceId}`);
     console.log(`Active projects: ${hub.workspace().projectCount}`);
     if (hub.portBinding.fallback) console.log(`Port ${hub.portBinding.requestedPort} was occupied; the hub uses ${hub.port} without stopping the existing process.`);
@@ -729,6 +729,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`Flowpeek command failed: ${error.message}`);
+  console.error(`Flopeek command failed: ${error.message}`);
   process.exitCode = 1;
 });

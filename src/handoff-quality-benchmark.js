@@ -11,7 +11,7 @@ const { createRepositoryScanner, writeGraphCache } = require("./scanner");
 function runHandoffQualityBenchmark(projectRoot = path.join(__dirname, "..")) {
   const definition = JSON.parse(fs.readFileSync(path.join(projectRoot, "benchmarks", "handoff-quality.json"), "utf8"));
   const fixtureRoot = path.join(projectRoot, ...definition.fixture.split("/"));
-  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-handoff-quality-benchmark-"));
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-handoff-quality-benchmark-"));
   try {
     fs.cpSync(fixtureRoot, temporaryRoot, { recursive: true });
     const scanner = createRepositoryScanner(temporaryRoot);

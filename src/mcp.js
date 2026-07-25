@@ -11,7 +11,7 @@ function jsonResult(value) {
 }
 
 function errorResult(error) {
-  return { content: [{ type: "text", text: `Flowpeek error: ${error.message}` }], isError: true };
+  return { content: [{ type: "text", text: `Flopeek error: ${error.message}` }], isError: true };
 }
 
 async function createMcpServer(options) {
@@ -34,13 +34,13 @@ async function createMcpServer(options) {
     const result = await coordinator.refresh(changedPaths, reason);
     previousGraph = result.previousGraph;
     graph = result.graph;
-    if (!graph) throw new Error(`Flowpeek scan ${result.outcome.status}: ${result.outcome.failure?.message || result.outcome.reason || "no complete graph is available"}.`);
+    if (!graph) throw new Error(`Flopeek scan ${result.outcome.status}: ${result.outcome.failure?.message || result.outcome.reason || "no complete graph is available"}.`);
     return { graph, delta: getGraphDelta(previousGraph, graph), scanOutcome: result.outcome };
   };
   const currentGraph = () => graph;
   await refresh(null, "mcp-initial");
 
-  const server = new McpServer({ name: "flowpeek", version: packageInfo.version });
+  const server = new McpServer({ name: "flopeek", version: packageInfo.version });
   const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
   const metadataWrite = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
   const scanControl = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
@@ -57,25 +57,25 @@ async function createMcpServer(options) {
   const registerMetadataWrite = (name, config, handler) => registerWithAnnotations(name, config, metadataWrite, handler);
 
   register("get_agent_bootstrap", {
-    title: "Get the Flowpeek agent bootstrap",
+    title: "Get the Flopeek agent bootstrap",
     description: "Start here. Return the current graph identity, parser coverage, readiness, recommended evidence workflow, and non-overclaiming policy shared by every supported agent host.",
     inputSchema: {},
   }, () => getAgentBootstrap(currentGraph()));
 
   register("get_scan_status", {
-    title: "Get the current Flowpeek scan status",
+    title: "Get the current Flopeek scan status",
     description: "Return the shared terminal scan outcome, declared bounds, active complete-graph source, separate scoped-source and attached-Git-HEAD freshness, and cache-promotion state. A stale-unverified fallback is never a partial graph.",
     inputSchema: {},
   }, () => coordinator.currentOutcome());
 
   register("get_cache_hygiene", {
-    title: "Inspect local Flowpeek cache hygiene",
-    description: "Return local Flowpeek cache size, registered derived-artifact retention, stale-record counts, and the explicit manual-prune boundary. This is metadata only; it never deletes files or claims cross-version cache reuse.",
+    title: "Inspect local Flopeek cache hygiene",
+    description: "Return local Flopeek cache size, registered derived-artifact retention, stale-record counts, and the explicit manual-prune boundary. This is metadata only; it never deletes files or claims cross-version cache reuse.",
     inputSchema: {},
   }, () => getCacheHygiene(currentGraph()));
 
   registerWithAnnotations("cancel_scan", {
-    title: "Cancel the active bounded Flowpeek scan",
+    title: "Cancel the active bounded Flopeek scan",
     description: "Request cancellation of the active bounded scan. This does not modify repository source or promote an incomplete graph. Unbounded scans are explicitly not interruptible.",
     inputSchema: {},
   }, scanControl, () => coordinator.cancel());
@@ -182,7 +182,7 @@ async function createMcpServer(options) {
 
   register("get_agent_context", {
     title: "Get evidence and interpretation limits",
-    description: "Return Flowpeek's machine-readable interpretation rules, parser coverage, uncertainty policy, and the selected projection's meaning. Use this at the start of work and after refresh_graph.",
+    description: "Return Flopeek's machine-readable interpretation rules, parser coverage, uncertainty policy, and the selected projection's meaning. Use this at the start of work and after refresh_graph.",
     inputSchema: {
       mode: z.enum(["overview", "requests", "dependencies"]).optional(),
       scope: z.enum(["application", "runtime", "framework", "devtool", "all"]).optional(),
@@ -212,7 +212,7 @@ async function createMcpServer(options) {
       targetFlow: z.string().min(1).max(4096).optional(),
       tokenBudget: z.number().int().min(1024).max(65536).optional(),
       desiredEvidenceDepth: z.enum(["summary", "standard", "evidence"]).optional(),
-      tokenizerId: z.literal("flowpeek-char4-estimator/v1").optional(),
+      tokenizerId: z.literal("flopeek-char4-estimator/v1").optional(),
     },
   }, (input) => getHandoffContext(currentGraph(), input));
 
@@ -287,7 +287,7 @@ async function createMcpServer(options) {
 
   register("get_verified_semantic_memory", {
     title: "Get reusable verified semantic memory",
-    description: "Return a bounded project-local index backed by human flow-verification metadata in .flowpeek. Only current or compatible records are reusable by default. This is not an embedded model, training dataset claim, or authority to auto-verify another flow.",
+    description: "Return a bounded project-local index backed by human flow-verification metadata in .flopeek. Only current or compatible records are reusable by default. This is not an embedded model, training dataset claim, or authority to auto-verify another flow.",
     inputSchema: {
       query: z.string().max(240).optional(),
       limit: z.number().int().min(1).max(100).optional(),
@@ -297,7 +297,7 @@ async function createMcpServer(options) {
 
   register("get_test_runs", {
     title: "Get bounded test-run progress evidence",
-    description: "Return explicit runner-adapter events grouped into runs, including current static step or failing stop step. Flowpeek does not execute commands, capture raw logs, or infer runtime order from the static graph.",
+    description: "Return explicit runner-adapter events grouped into runs, including current static step or failing stop step. Flopeek does not execute commands, capture raw logs, or infer runtime order from the static graph.",
     inputSchema: {
       flowId: z.string().min(1).max(4096).optional(),
       status: z.enum(["running", "passed", "failed", "cancelled"]).optional(),
@@ -403,7 +403,7 @@ async function createMcpServer(options) {
 
   register("resolve_plan_ref", {
     title: "Resolve one versioned Plan Ref",
-    description: "Resolve only the exact fpp://local Plan Ref retained locally. A stale anchor remains explicit and Flowpeek never redirects it to a current Context Ref, source node, or another plan.",
+    description: "Resolve only the exact fpp://local Plan Ref retained locally. A stale anchor remains explicit and Flopeek never redirects it to a current Context Ref, source node, or another plan.",
     inputSchema: { planRef: z.string().min(1).max(8192) },
   }, ({ planRef }) => resolvePlanRef(currentGraph(), planRef));
 
@@ -491,7 +491,7 @@ async function createMcpServer(options) {
   }, (input) => recordPlanReconciliation(currentGraph(), input));
   registerMetadataWrite("create_work_record", {
     title: "Create a local delivery work record",
-    description: "Create a project-local planned work record linked to optional Context Refs. It writes only Flowpeek metadata and never changes source, graph facts, or workflow completion.",
+    description: "Create a project-local planned work record linked to optional Context Refs. It writes only Flopeek metadata and never changes source, graph facts, or workflow completion.",
     inputSchema: { operationId: z.string().min(1).max(240), id: z.string().min(1).max(120), kind: z.enum(["objective", "requirement", "decision", "task", "checkpoint", "approval", "test-result", "review", "release", "observation", "incident"]), title: z.string().min(1).max(240), owner: z.string().min(1).max(240).optional(), dependencies: z.array(z.string().min(1).max(120)).max(200).optional(), contextRefs: z.array(z.string().min(1).max(8192)).max(100).optional(), plannedStart: z.string().min(1).max(80).optional(), plannedEnd: z.string().min(1).max(80).optional(), createdBy: z.string().min(1).max(240), createdAt: z.string().min(1).max(80) },
   }, (input) => createWorkRecord(currentGraph(), input));
 
@@ -527,7 +527,7 @@ async function createMcpServer(options) {
   });
 
   register("resolve_context_ref", {
-    title: "Resolve a Flowpeek Context Ref",
+    title: "Resolve a Flopeek Context Ref",
     description: "Resolve a node or flow fp://local Context Ref against the current project. The result explicitly reports current, stale, historical, unresolved, or successor-candidate state and never silently redirects to unrelated evidence.",
     inputSchema: { contextRef: z.string().min(1).max(8192) },
   }, ({ contextRef }) => resolveContextRef(currentGraph(), contextRef));
@@ -543,7 +543,7 @@ async function createMcpServer(options) {
 
   register("get_agent_evidence_traces", {
     title: "Get agent evidence traces",
-    description: "Return bounded append-only agent-declared audit records linked to Flowpeek Context Refs. Records contain concise outcome summaries, repository-relative changed paths, and declared verification outcomes; callers must not put private reasoning or sensitive/source content in these fields.",
+    description: "Return bounded append-only agent-declared audit records linked to Flopeek Context Refs. Records contain concise outcome summaries, repository-relative changed paths, and declared verification outcomes; callers must not put private reasoning or sensitive/source content in these fields.",
     inputSchema: {
       contextRef: z.string().min(1).max(8192).optional(),
       contextId: z.string().min(1).max(4096).optional(),
@@ -631,7 +631,7 @@ async function createMcpServer(options) {
 
   registerMetadataWrite("record_agent_evidence_trace", {
     title: "Record agent evidence trace",
-    description: "Append idempotent local audit metadata for an agent action. This writes only .flowpeek/agent-evidence-traces.json and cannot write repository source or create human verification. Supply concise outcomes only; never submit prompts, private reasoning, source content, credentials, or raw logs. Reusing operationId with identical input returns the existing immutable record.",
+    description: "Append idempotent local audit metadata for an agent action. This writes only .flopeek/agent-evidence-traces.json and cannot write repository source or create human verification. Supply concise outcomes only; never submit prompts, private reasoning, source content, credentials, or raw logs. Reusing operationId with identical input returns the existing immutable record.",
     inputSchema: {
       operationId: z.string().min(1).max(240),
       contextRef: z.string().min(1).max(8192),
@@ -646,7 +646,7 @@ async function createMcpServer(options) {
 
   register("create_git_snapshot", {
     title: "Create persistent Git graph snapshot",
-    description: "Scan a Git commit through a temporary archive, then store its static graph locally in .flowpeek/history. The working tree is not checked out or modified.",
+    description: "Scan a Git commit through a temporary archive, then store its static graph locally in .flopeek/history. The working tree is not checked out or modified.",
     inputSchema: {
       ref: z.string().min(1).max(240).optional(),
       force: z.boolean().optional(),
@@ -682,8 +682,8 @@ async function createMcpServer(options) {
   }, ({ contextRef, from = "HEAD~1", to = "HEAD" }) => getGitContextContinuity(currentGraph(), contextRef, { from, to }));
 
   register("refresh_graph", {
-    title: "Refresh the local Flowpeek graph",
-    description: "Reconcile the configured repository after code changes, reusing parser facts whose file fingerprint is unchanged, persist a versioned static graph state and bounded adjacent delta, and return its identity. Supply changed repository-relative paths when known so topology-neutral source edits remain attributable. The source code is read-only to Flowpeek.",
+    title: "Refresh the local Flopeek graph",
+    description: "Reconcile the configured repository after code changes, reusing parser facts whose file fingerprint is unchanged, persist a versioned static graph state and bounded adjacent delta, and return its identity. Supply changed repository-relative paths when known so topology-neutral source edits remain attributable. The source code is read-only to Flopeek.",
     inputSchema: {
       paths: z.array(z.string().min(1).max(2048)).max(100).optional(),
     },
@@ -695,7 +695,7 @@ async function createMcpServer(options) {
       graphState: refreshed.state,
       stats: refreshed.stats,
       refresh: refreshed.analysis.refresh,
-      cache: options.cache === false ? "disabled" : path.join(root, ".flowpeek", "graph.json"),
+      cache: options.cache === false ? "disabled" : path.join(root, ".flopeek", "graph.json"),
       cacheState: refreshed.analysis.cacheState,
       derivedCacheInvalidation: refreshed.analysis.derivedCacheInvalidation,
       delta,
@@ -717,7 +717,7 @@ async function runMcpServer(options) {
   ]);
   const transport = new StdioServerTransport();
   await instance.server.connect(transport);
-  process.stderr.write(`Flowpeek MCP connected for ${instance.root}\n`);
+  process.stderr.write(`Flopeek MCP connected for ${instance.root}\n`);
   return instance;
 }
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Flopeek"
+  short_description: "Ground repository work in Flopeek evidence"
+  default_prompt: "Use $flopeek to orient this repository task with current evidence."

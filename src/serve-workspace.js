@@ -6,8 +6,8 @@ const os = require("node:os");
 const path = require("node:path");
 const { atomicWriteJson } = require("./graph-cache");
 
-const SERVE_WORKSPACE_MEMBER_SCHEMA = "flowpeek-serve-workspace-member/v1";
-const SERVE_WORKSPACE_SCHEMA = "flowpeek-serve-workspace/v1";
+const SERVE_WORKSPACE_MEMBER_SCHEMA = "flopeek-serve-workspace-member/v1";
+const SERVE_WORKSPACE_SCHEMA = "flopeek-serve-workspace/v1";
 const WORKSPACE_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,119}$/;
 
 class ServeWorkspaceError extends Error {
@@ -34,7 +34,7 @@ function normalizeWorkspaceId(value, projectId) {
 }
 
 function registryRoot(options = {}) {
-  return path.resolve(options.registryRoot || process.env.FLOWPEEK_SERVE_REGISTRY || path.join(os.homedir(), ".flowpeek", "serve-workspaces"));
+  return path.resolve(options.registryRoot || process.env.FLOPEEK_SERVE_REGISTRY || path.join(os.homedir(), ".flopeek", "serve-workspaces"));
 }
 
 function memberPath(root, instanceId) {
@@ -76,7 +76,7 @@ function readMembers(options = {}) {
     try {
       const record = JSON.parse(fs.readFileSync(target, "utf8"));
       if (!isMember(record)) {
-        diagnostics.push({ code: "invalid-serve-workspace-member", file: name, message: "Registry member does not match flowpeek-serve-workspace-member/v1." });
+        diagnostics.push({ code: "invalid-serve-workspace-member", file: name, message: "Registry member does not match flopeek-serve-workspace-member/v1." });
         continue;
       }
       records.push({ ...record, status: processStatus(record.process.pid) });

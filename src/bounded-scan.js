@@ -5,7 +5,7 @@ const { randomUUID } = require("node:crypto");
 const { Worker } = require("node:worker_threads");
 const { discoverRepository } = require("./repository-discovery");
 
-const BOUNDED_SCAN_SCHEMA = "flowpeek-bounded-scan-result/v1";
+const BOUNDED_SCAN_SCHEMA = "flopeek-bounded-scan-result/v1";
 
 function safeFailure(error) {
   return {

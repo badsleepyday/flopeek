@@ -1,18 +1,18 @@
-# Flowpeek documentation
+# Flopeek documentation
 
 Choose the shortest path for what you need now.
 
-## Use Flowpeek
+## Use Flopeek
 
 | Goal | Start here |
 | --- | --- |
 | See one source change in five minutes | [Checkout showcase](showcase-walkthrough.md) |
-| Scan a repository and read its map | [User guide](using-flowpeek.md) |
+| Scan a repository and read its map | [User guide](using-flopeek.md) |
 | Connect Codex, Claude Code, Cursor, or Gemini CLI | [Agent integration](agent-integration.md) |
 | Know what a parser can and cannot prove | [Support matrix](../SUPPORT.md) |
 | Resolve human descriptions and verification | [Human review](human-review-and-verification.md) |
 
-## Evaluate Flowpeek
+## Evaluate Flopeek
 
 | Question | Evidence |
 | --- | --- |
@@ -22,7 +22,7 @@ Choose the shortest path for what you need now.
 | Can the exact tarball install cleanly? | [Clean-room package protocol](clean-room-package.md) |
 | How is a handoff observation collected safely? | [Consented handoff study](consented-handoff-study.md) |
 
-## Extend or maintain Flowpeek
+## Extend or maintain Flopeek
 
 | Subject | Reference |
 | --- | --- |

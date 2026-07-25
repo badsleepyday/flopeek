@@ -46,7 +46,7 @@ function fixtureRecord(graph) {
 }
 
 test("Delivery Graph stores editable plans and append-only actual evidence without changing parser facts", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-delivery-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-delivery-"));
   try {
     const graph = buildGraph(root);
     const created = createWorkRecord(root, graph, fixtureRecord(graph));
@@ -110,7 +110,7 @@ test("Delivery Graph stores editable plans and append-only actual evidence witho
 });
 
 test("Delivery Graph rejects wrong-project Context Refs, circular plans, and invalid persisted stores", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-delivery-invalid-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-delivery-invalid-"));
   try {
     const graph = buildGraph(root);
     const wrongProjectRef = createContextRef("another-project", "flow", "flow:other", 1);

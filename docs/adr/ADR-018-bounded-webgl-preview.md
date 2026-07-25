@@ -5,13 +5,13 @@
 
 ## Context
 
-Flowpeek deliberately renders bounded technical projections, not whole-repository
+Flopeek deliberately renders bounded technical projections, not whole-repository
 canvases. Its current Cytoscape.js Canvas renderer preserves Flow Lens selection,
 directional focus, visible relationship labels, and the inspector/Context Ref
 workflow.
 
 Cytoscape.js offers an experimental WebGL preview. Its documented constraints
-matter to Flowpeek: sprite-backed labels can take time to buffer; `taxi` and
+matter to Flopeek: sprite-backed labels can take time to buffer; `taxi` and
 `segments` edge styles fall back poorly; and several visual features are not yet
 equivalent to Canvas. A faster renderer would not justify hiding evidence labels,
 changing a selected Context Ref, or widening the map beyond its projection budget.
@@ -33,7 +33,7 @@ and [WebGL preview notes](https://blog.js.cytoscape.org/2025/01/13/webgl-preview
 
 ## Local observation
 
-On 2026-07-18, the local Viewer loaded the same bounded Flowpeek projection in
+On 2026-07-18, the local Viewer loaded the same bounded Flopeek projection in
 Canvas and then in WebGL preview. The selector retained the graph and controls;
 the Viewer marked the map `WebGL preview: experimental`. This confirms only
 available local construction and selection parity. It is not a cross-device
@@ -41,7 +41,7 @@ benchmark, a first-paint result, a memory measurement, or a readability result.
 
 ## Consequences
 
-Flowpeek gains a safe way to evaluate WebGL without presenting it as current
+Flopeek gains a safe way to evaluate WebGL without presenting it as current
 dense-map support. Canvas accessibility and evidence-focused interaction remain
 the product baseline. Any default-renderer migration needs all of the following:
 

@@ -107,7 +107,7 @@ function deriveFeature(relativePath) {
   const first = segments[0] || "project";
   const second = segments[1];
   // Files directly under a source root belong to the project/core feature.
-  // This keeps a repository such as Flowpeek navigable without fabricating a
+  // This keeps a repository such as Flopeek navigable without fabricating a
   // feature per filename.
   if (path.extname(first)) return "project";
   if (first === "app") {

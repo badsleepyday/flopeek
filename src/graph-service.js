@@ -1,7 +1,7 @@
 const VALID_MODES = new Set(["overview", "requests", "dependencies"]);
 const VALID_SCOPES = new Set(["application", "runtime", "framework", "devtool", "all"]);
 const VALID_VIEW_LEVELS = new Set(["domain", "feature", "component", "symbol"]);
-const VIEW_PROJECTION_SCHEMA = "flowpeek-view-projection/v2";
+const VIEW_PROJECTION_SCHEMA = "flopeek-view-projection/v2";
 const DEFAULT_VIEW_MAX_NODES = 40;
 const DEFAULT_VIEW_MAX_EDGES = 80;
 const MAX_VIEW_NODES = 100;
@@ -144,7 +144,7 @@ function aggregateProjection(graph, sourceNodes, mode, scope, keyForNode = featu
       memberIds: members.map((member) => member.id),
       typeCounts,
       detectedResponsibility: `Feature summary of ${members.length} source node${members.length === 1 ? "" : "s"}.`,
-      analysis: { parser: "flowpeek-projection", status: "aggregate", confidence: "derived" },
+      analysis: { parser: "flopeek-projection", status: "aggregate", confidence: "derived" },
       hierarchy: {
         level: options.level || "feature",
         key,
@@ -436,7 +436,7 @@ function createAgentContext(graph, projection, mode, scope, focusId) {
       ? "Each visible node is a feature summary. Edges aggregate supported static entry, HTTP handler, static fetch, import, or usage facts; they do not prove command invocation or end-to-end runtime execution."
       : "Each visible node is an original graph node. Edges are direct parser facts for the selected node's neighborhood.";
   return {
-    schemaVersion: "flowpeek-agent-context/v1",
+    schemaVersion: "flopeek-agent-context/v1",
     mode,
     scope,
     level: projection.hierarchy?.level || (mode === "dependencies" ? "symbol" : "feature"),
@@ -757,11 +757,11 @@ function recordRuntimeEvidence(graph, input = {}) {
 
 function getHandoffWorkspace(graph, workspaceId = null) {
   const listed = listStoredHandoffWorkspaces(graph.project.root, graph);
-  if (listed.status !== "available") return { schemaVersion: "flowpeek-handoff-workspace-view/v1", status: "unavailable", workspace: null, notes: [], diagnostics: listed.diagnostics };
+  if (listed.status !== "available") return { schemaVersion: "flopeek-handoff-workspace-view/v1", status: "unavailable", workspace: null, notes: [], diagnostics: listed.diagnostics };
   const workspace = workspaceId ? listed.records.find((record) => record.id === workspaceId) : listed.current;
-  if (!workspace) return { schemaVersion: "flowpeek-handoff-workspace-view/v1", status: "missing", workspace: null, notes: [], diagnostics: [] };
+  if (!workspace) return { schemaVersion: "flopeek-handoff-workspace-view/v1", status: "missing", workspace: null, notes: [], diagnostics: [] };
   const notes = listStoredHandoffNotes(graph.project.root, graph, workspace.id);
-  return { schemaVersion: "flowpeek-handoff-workspace-view/v1", status: "available", workspace, notes: notes.records, diagnostics: notes.diagnostics };
+  return { schemaVersion: "flopeek-handoff-workspace-view/v1", status: "available", workspace, notes: notes.records, diagnostics: notes.diagnostics };
 }
 
 function listHandoffWorkspaces(graph) {
@@ -857,7 +857,7 @@ function getSemanticReviewQueue(graph, options = {}) {
   }).filter((item) => status === "all" || item.queueStatus === status)
     .sort((left, right) => left.flow.title.localeCompare(right.flow.title) || left.flow.id.localeCompare(right.flow.id));
   return {
-    schemaVersion: "flowpeek-semantic-review-queue/v1",
+    schemaVersion: "flopeek-semantic-review-queue/v1",
     status,
     endpointCount: graph.nodes.filter((node) => node.kind === "endpoint" && (node.sourceScope === "application" || !node.sourceScope)).length,
     entryCount: flows.length,
@@ -1008,9 +1008,9 @@ function getVerifiedSemanticMemory(graph, options = {}) {
   }
   records.sort((left, right) => Number(right.reusable) - Number(left.reusable) || right.verifiedAt.localeCompare(left.verifiedAt) || left.flow.id.localeCompare(right.flow.id));
   return {
-    schemaVersion: "flowpeek-verified-semantic-memory/v1",
+    schemaVersion: "flopeek-verified-semantic-memory/v1",
     project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion },
-    storage: { kind: "verification-backed-index", relativePath: ".flowpeek/flow-verifications.json", modelWeightsStored: false },
+    storage: { kind: "verification-backed-index", relativePath: ".flopeek/flow-verifications.json", modelWeightsStored: false },
     query: query || null,
     totalMatched: records.length,
     returned: Math.min(records.length, limit),
@@ -1120,7 +1120,7 @@ function getChangedContexts(graph, options = {}) {
   const fromGraphVersion = contextVersion(optionValue(options, "fromVersion", toGraphVersion - 1), toGraphVersion - 1);
   const delta = availableGraphDelta(graph, fromGraphVersion, toGraphVersion);
   const base = {
-    schemaVersion: "flowpeek-changed-contexts/v1",
+    schemaVersion: "flopeek-changed-contexts/v1",
     project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion, sourceRevision: graph.state.sourceRevision || null },
     fromGraphVersion,
     toGraphVersion,
@@ -1132,7 +1132,7 @@ function getChangedContexts(graph, options = {}) {
       nodes: [],
       flows: [],
       summary: { nodes: 0, flows: 0 },
-      limitation: "No retained adjacent delta exists for these graph versions. Flowpeek does not reconstruct changed contexts from runtime behavior or arbitrary history.",
+      limitation: "No retained adjacent delta exists for these graph versions. Flopeek does not reconstruct changed contexts from runtime behavior or arbitrary history.",
     };
   }
   const raw = delta.affectedContexts && !Array.isArray(delta.affectedContexts) ? delta.affectedContexts : { nodes: [], flows: [], truncated: false };

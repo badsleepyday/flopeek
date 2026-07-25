@@ -61,7 +61,7 @@ function renameWithRetry(source, destination, { attempts = 6, delayMs = 250, ren
 
 function cloneRepositoryAtRevision(repository, destination) {
   fs.mkdirSync(path.dirname(destination), { recursive: true });
-  const temporary = `${destination}.flowpeek-clone-${process.pid}-${Date.now()}`;
+  const temporary = `${destination}.flopeek-clone-${process.pid}-${Date.now()}`;
   try {
     execFileSync("git", ["clone", "--filter=blob:none", "--no-checkout", repository.url, temporary], { stdio: ["ignore", "pipe", "pipe"], maxBuffer: 16 * 1024 * 1024 });
     execFileSync("git", ["-C", temporary, "checkout", "--detach", repository.revision], { stdio: ["ignore", "pipe", "pipe"], maxBuffer: 16 * 1024 * 1024 });

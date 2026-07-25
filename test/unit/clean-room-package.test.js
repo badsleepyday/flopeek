@@ -9,14 +9,14 @@ const { sourceFingerprint, writeCleanRoomReport } = require("../../src/clean-roo
 
 const ROOT = path.resolve(__dirname, "..", "..");
 
-test("source fingerprint ignores Flowpeek cache while detecting source changes", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-clean-room-fingerprint-"));
+test("source fingerprint ignores Flopeek cache while detecting source changes", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-clean-room-fingerprint-"));
   try {
     fs.mkdirSync(path.join(root, "src"), { recursive: true });
     fs.writeFileSync(path.join(root, "src", "feature.ts"), "export const feature = true;\n");
     const before = sourceFingerprint(root);
-    fs.mkdirSync(path.join(root, ".flowpeek"), { recursive: true });
-    fs.writeFileSync(path.join(root, ".flowpeek", "graph.json"), "{}\n");
+    fs.mkdirSync(path.join(root, ".flopeek"), { recursive: true });
+    fs.writeFileSync(path.join(root, ".flopeek", "graph.json"), "{}\n");
     assert.deepEqual(sourceFingerprint(root), before);
     fs.writeFileSync(path.join(root, "src", "feature.ts"), "export const feature = false;\n");
     assert.notEqual(sourceFingerprint(root).value, before.value);
@@ -24,10 +24,10 @@ test("source fingerprint ignores Flowpeek cache while detecting source changes",
 });
 
 test("clean-room evidence writes atomically outside the package artifact", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-clean-room-report-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-clean-room-report-"));
   try {
     const file = path.join(root, "evidence", "report.json");
-    const report = { schemaVersion: "flowpeek-clean-room-package-report/v1", status: "passed" };
+    const report = { schemaVersion: "flopeek-clean-room-package-report/v1", status: "passed" };
     assert.equal(writeCleanRoomReport(file, report), file);
     assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), report);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
@@ -35,9 +35,9 @@ test("clean-room evidence writes atomically outside the package artifact", () =>
 
 test("checked clean-room evidence preserves package, source, cleanup, and publication boundaries", () => {
   const report = JSON.parse(fs.readFileSync(path.join(ROOT, "packaging", "evidence", "clean-room-current.json"), "utf8"));
-  const schema = JSON.parse(fs.readFileSync(path.join(ROOT, "docs", "schemas", "flowpeek-clean-room-package-report.schema.json"), "utf8"));
-  assert.equal(schema.properties.schemaVersion.const, "flowpeek-clean-room-package-report/v1");
-  assert.equal(report.schemaVersion, "flowpeek-clean-room-package-report/v1");
+  const schema = JSON.parse(fs.readFileSync(path.join(ROOT, "docs", "schemas", "flopeek-clean-room-package-report.schema.json"), "utf8"));
+  assert.equal(schema.properties.schemaVersion.const, "flopeek-clean-room-package-report/v1");
+  assert.equal(report.schemaVersion, "flopeek-clean-room-package-report/v1");
   assert.equal(report.status, "passed");
   assert.equal(report.packageAudit.status, "passed");
   assert.equal(report.packageAudit.package.private, false);

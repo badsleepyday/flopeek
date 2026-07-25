@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "flowpeek-semantic-flow-suggestion-evaluation/v1",
+  "schemaVersion": "flopeek-semantic-flow-suggestion-evaluation/v1",
   "interpretation": "This small deterministic contract corpus checks expected candidate fields and abstention behavior. It does not measure business-purpose correctness or general repository recall.",
   "cases": [
     {

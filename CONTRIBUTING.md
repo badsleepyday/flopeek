@@ -1,6 +1,6 @@
-# Contributing to Flowpeek
+# Contributing to Flopeek
 
-Thank you for improving Flowpeek. Contributions must preserve its core rule:
+Thank you for improving Flopeek. Contributions must preserve its core rule:
 static parser evidence, runtime observations, human verification, and agent
 proposals are different evidence classes.
 
@@ -24,11 +24,11 @@ and tests that distinguish supported syntax from excluded syntax.
 ## Security and privacy
 
 Do not include credentials, source bodies from private repositories, local
-paths, provider transcripts, or generated `.flowpeek` cache state in a pull
+paths, provider transcripts, or generated `.flopeek` cache state in a pull
 request. Follow [SECURITY.md](SECURITY.md) for vulnerability reports.
 
 ## Scope
 
-Flowpeek is a technical-evidence tool. It does not execute scanned target
+Flopeek is a technical-evidence tool. It does not execute scanned target
 applications, and a contribution must not silently turn a static fact into a
 runtime, ownership, or business-process claim.

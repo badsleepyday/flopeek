@@ -8,7 +8,7 @@ Accepted and implemented.
 
 `projectId` identifies the local project context, but it cannot tell a person or coding agent whether two reads used the same technical graph. `generatedAt` is only scan timing: it changes during a no-op scan and therefore cannot detect stale context.
 
-Flowpeek needs a local, deterministic state identity that is useful to the viewer, CLI, HTTP API, and MCP without claiming runtime execution, semantic intent, or a full source-history system.
+Flopeek needs a local, deterministic state identity that is useful to the viewer, CLI, HTTP API, and MCP without claiming runtime execution, semantic intent, or a full source-history system.
 
 ## Decision
 
@@ -18,8 +18,8 @@ Flowpeek needs a local, deterministic state identity that is useful to the viewe
 4. A no-op refresh retains the prior graph version when the material fingerprint is unchanged.
 5. A source-content or source-revision change advances the version even when node membership, edges, and flows are unchanged. Its delta must say `sourceChanged: true` and `topologyChanged: false`.
 6. A version advance creates an adjacent delta using the exact form `vN -> vN+1`. The delta contains changed paths, incremental-refresh work, node/edge/flow additions-removals-metadata changes, coverage change, affected technical nodes, truncation, and explicit limitations.
-7. Adjacent deltas are retained locally until an explicit history-prune operation is requested. The history-prune preview defaults to retaining the newest eight validated deltas within a 16 MiB delta-history budget, always protects the latest adjacent delta, and never selects malformed or unknown files. Applying the preview requires explicit `--apply`; Flowpeek does not silently prune delta history during a scan.
-8. `.flowpeek/graph.json` is the authoritative current graph. `.flowpeek/state.json` mirrors the durable version record so a valid graph cache can recover version state after an interrupted companion write. Every file is individually written with the existing same-directory temporary-file and atomic-replace protocol; the set of files is not a cross-file filesystem transaction.
+7. Adjacent deltas are retained locally until an explicit history-prune operation is requested. The history-prune preview defaults to retaining the newest eight validated deltas within a 16 MiB delta-history budget, always protects the latest adjacent delta, and never selects malformed or unknown files. Applying the preview requires explicit `--apply`; Flopeek does not silently prune delta history during a scan.
+8. `.flopeek/graph.json` is the authoritative current graph. `.flopeek/state.json` mirrors the durable version record so a valid graph cache can recover version state after an interrupted companion write. Every file is individually written with the existing same-directory temporary-file and atomic-replace protocol; the set of files is not a cross-file filesystem transaction.
 9. Cache consumers that know the active `projectId` must validate it as well as the repository root. A matching root with another project ID is invalid cache state, not a usable graph.
 10. Viewer and MCP return both project identity and graph state. MCP clients can request the retained current delta or one exact adjacent pair through `get_graph_delta`.
 

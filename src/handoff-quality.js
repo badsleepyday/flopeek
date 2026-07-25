@@ -3,7 +3,7 @@
 const { createHandoffContext } = require("./handoff-context");
 const { sourceBasis } = require("./durable-brief");
 
-const HANDOFF_QUALITY_SCHEMA = "flowpeek-handoff-quality/v1";
+const HANDOFF_QUALITY_SCHEMA = "flopeek-handoff-quality/v1";
 const MAX_CASES = 50;
 const HUMAN_HANDOFF_ROLES = new Set(["senior-developer", "inheriting-developer", "handoff-recipient", "agent-reviewer"]);
 
@@ -75,7 +75,7 @@ function normalizedAgentOutcome(value) {
     evidenceRef: typeof value.evidenceRef === "string" && value.evidenceRef.startsWith("fp://local/") ? value.evidenceRef : null,
     limitation: evidenceClass === "agent-declared"
       ? "An agent-declared result is audit metadata, not independent proof of task correctness."
-      : "The supplied evidence class and resolvable ref are auditable inputs; Flowpeek does not infer that they prove task correctness.",
+      : "The supplied evidence class and resolvable ref are auditable inputs; Flopeek does not infer that they prove task correctness.",
   };
 }
 
@@ -89,7 +89,7 @@ function normalizedHumanHandoffObservation(value, resolveContextRef, graph) {
   if (value.consent !== "confirmed") throw new HandoffQualityError("missing-human-handoff-consent", "humanHandoffObservation requires consent: confirmed.");
   if (!HUMAN_HANDOFF_ROLES.has(value.participantRole)) throw new HandoffQualityError("invalid-human-handoff-role", `participantRole must be one of: ${[...HUMAN_HANDOFF_ROLES].join(", ")}.`);
   if (!Number.isSafeInteger(value.observedDurationMs) || value.observedDurationMs < 0 || value.observedDurationMs > 86_400_000) throw new HandoffQualityError("invalid-human-handoff-duration", "observedDurationMs must be an integer from 0 to 86400000.");
-  if (typeof value.evidenceRef !== "string" || !value.evidenceRef.startsWith("fp://local/")) throw new HandoffQualityError("missing-human-handoff-evidence-ref", "humanHandoffObservation.evidenceRef must be a Flowpeek Context Ref.");
+  if (typeof value.evidenceRef !== "string" || !value.evidenceRef.startsWith("fp://local/")) throw new HandoffQualityError("missing-human-handoff-evidence-ref", "humanHandoffObservation.evidenceRef must be a Flopeek Context Ref.");
   const evidenceRefStatus = resolveContextRef(graph, value.evidenceRef).status;
   if (!["current", "stale", "historical"].includes(evidenceRefStatus)) throw new HandoffQualityError("unresolved-human-handoff-evidence", "humanHandoffObservation.evidenceRef must resolve in the current project history.");
   return {
@@ -141,7 +141,7 @@ function aggregate(cases) {
       suppliedEvidence: outcomes.filter((item) => item.status === "supplied-evidence").length,
       declared: outcomes.filter((item) => item.status === "declared").length,
       unavailable: outcomes.filter((item) => item.status === "unavailable").length,
-      limitation: "Flowpeek reports supplied outcomes and their evidence class; it does not infer an agent task result from context retrieval.",
+      limitation: "Flopeek reports supplied outcomes and their evidence class; it does not infer an agent task result from context retrieval.",
     },
     humanHandoffObservations: {
       observed: observedHuman.length,
@@ -242,7 +242,7 @@ function evaluateHandoffQuality(graph, input = {}, options = {}) {
       "The benchmark does not execute repository code or claim runtime behavior.",
       "Observed composition time depends on the host and is not used as a deterministic gate.",
       "Retrieval success is not an AI coding-task outcome; agent outcomes remain separately declared, verified, or unavailable.",
-      "Human handoff observations are opt-in, privacy-minimized inputs; Flowpeek does not identify participants or promote an observation to verification or runtime behavior.",
+      "Human handoff observations are opt-in, privacy-minimized inputs; Flopeek does not identify participants or promote an observation to verification or runtime behavior.",
     ],
   };
 }

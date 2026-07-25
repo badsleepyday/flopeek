@@ -45,7 +45,7 @@ function fixtureEvent(lens, fixture, entry, sequence) {
 }
 
 test("test-run journal reports current and failing Flow Lens step without executing a command", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-test-run-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-test-run-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "test-run-example" }));
     write(root, "src/app/api/orders/route.ts", "import { submit } from '../../../service';\nexport async function POST() { return submit(); }");
@@ -72,9 +72,9 @@ test("test-run journal reports current and failing Flow Lens step without execut
     assert.equal(listed.runs[0].status, "failed");
     assert.equal(listed.runs[0].events.length, 3);
     assert.match(listed.limitation, /does not execute commands/);
-    const stored = fs.readFileSync(path.join(root, ".flowpeek", "test-runs", "events.json"), "utf8");
+    const stored = fs.readFileSync(path.join(root, ".flopeek", "test-runs", "events.json"), "utf8");
     assert.equal(stored.includes("export function submit"), false);
-    const target = path.join(root, ".flowpeek", "test-runs", "events.json");
+    const target = path.join(root, ".flopeek", "test-runs", "events.json");
     const injected = JSON.parse(stored);
     injected.events[0].policy.hiddenPayload = "must-not-be-served";
     fs.writeFileSync(target, JSON.stringify(injected), "utf8");
@@ -86,7 +86,7 @@ test("test-run journal reports current and failing Flow Lens step without execut
 });
 
 test("test-run journal rejects stale flow context and invalid step transitions", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-test-run-stale-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-test-run-stale-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "test-run-stale" }));
     write(root, "src/route.ts", "router.get('/health', () => true);");
@@ -107,10 +107,10 @@ test("test-run journal rejects stale flow context and invalid step transitions",
 });
 
 test("published runner-adapter fixture reports a current and failing Flow Lens step", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-runner-fixture-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-runner-fixture-"));
   try {
     const fixture = JSON.parse(fs.readFileSync(RUNNER_FIXTURE, "utf8"));
-    assert.equal(fixture.schemaVersion, "flowpeek-runner-adapter-fixture/v1");
+    assert.equal(fixture.schemaVersion, "flopeek-runner-adapter-fixture/v1");
     assert.equal(Object.hasOwn(fixture, "command"), false);
     write(root, "package.json", JSON.stringify({ name: "runner-fixture-example" }));
     write(root, "src/app/api/reports/route.ts", "import { prepare } from '../../../report';\nexport async function GET() { return prepare(); }");

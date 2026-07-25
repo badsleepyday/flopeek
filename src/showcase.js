@@ -6,11 +6,11 @@ const os = require("node:os");
 const path = require("node:path");
 const { startServer } = require("./server");
 
-const SHOWCASE_SCHEMA = "flowpeek-showcase/v1";
-const SHOWCASE_WORKSPACE_SCHEMA = "flowpeek-showcase-workspace/v1";
-const SHOWCASE_STATE_FILE = ".flowpeek-showcase-workspace.json";
+const SHOWCASE_SCHEMA = "flopeek-showcase/v1";
+const SHOWCASE_WORKSPACE_SCHEMA = "flopeek-showcase-workspace/v1";
+const SHOWCASE_STATE_FILE = ".flopeek-showcase-workspace.json";
 const DEFAULT_SHOWCASE_ROOT = path.join(__dirname, "..", "examples", "commerce-showcase");
-const COPY_IGNORES = new Set([".flowpeek", ".git", "node_modules"]);
+const COPY_IGNORES = new Set([".flopeek", ".flowpeek", ".git", "node_modules"]);
 
 class ShowcaseError extends Error {
   constructor(code, message) {
@@ -47,7 +47,7 @@ function validateManifest(manifest) {
 
 function loadShowcase(sourceRoot = DEFAULT_SHOWCASE_ROOT) {
   const root = fs.realpathSync(sourceRoot);
-  const manifest = validateManifest(readJson(path.join(root, "flowpeek-showcase.json"), "invalid-showcase-manifest"));
+  const manifest = validateManifest(readJson(path.join(root, "flopeek-showcase.json"), "invalid-showcase-manifest"));
   const sourcePath = resolveInside(root, manifest.change.path, "change.path");
   const templatePath = resolveInside(root, manifest.change.template, "change.template");
   if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) throw new ShowcaseError("missing-showcase-source", `Declared showcase source does not exist: ${manifest.change.path}`);
@@ -70,7 +70,7 @@ function prepareShowcase(options = {}) {
   const source = loadShowcase(options.sourceRoot || DEFAULT_SHOWCASE_ROOT);
   const workspaceRoot = options.workspaceRoot
     ? path.resolve(options.workspaceRoot)
-    : fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-showcase-"));
+    : fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-showcase-"));
   if (options.workspaceRoot) {
     if (fs.existsSync(workspaceRoot) && fs.readdirSync(workspaceRoot).length) throw new ShowcaseError("showcase-workspace-not-empty", "An explicit showcase workspace must be empty.");
     fs.mkdirSync(workspaceRoot, { recursive: true });
@@ -194,9 +194,9 @@ async function startShowcase(options = {}) {
     graphState: app.getGraph().state,
     evidenceBoundaries: prepared.manifest.limitations,
     commands: {
-      apply: `flowpeek showcase apply "${prepared.workspaceRoot}"`,
-      reset: `flowpeek showcase reset "${prepared.workspaceRoot}"`,
-      status: `flowpeek showcase status "${prepared.workspaceRoot}"`,
+      apply: `flopeek showcase apply "${prepared.workspaceRoot}"`,
+      reset: `flopeek showcase reset "${prepared.workspaceRoot}"`,
+      status: `flopeek showcase status "${prepared.workspaceRoot}"`,
     },
     targetApplicationExecuted: false,
     demonstrationOnly: true,
@@ -223,7 +223,7 @@ function showcasePublicResult(instance) {
 
 function printShowcase(instance) {
   const result = showcasePublicResult(instance);
-  console.log(`Flowpeek showcase: ${result.url}`);
+  console.log(`Flopeek showcase: ${result.url}`);
   console.log(`Temporary workspace: ${result.workspaceRoot}`);
   console.log(`Primary static flow: ${result.primaryFlow.method} ${result.primaryFlow.route}`);
   console.log(`Apply the declared change: ${result.commands.apply}`);

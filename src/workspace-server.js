@@ -10,9 +10,9 @@ const { listenOnAvailablePort, startServer } = require("./server");
 const { normalizeWorkspaceId, registryRoot, workspaceIdForProject } = require("./serve-workspace");
 const { readWorkspaceContractReferences, resolveWorkspaceContractReferences, saveWorkspaceContractReference } = require("./workspace-contract-reference");
 
-const WORKSPACE_DEFINITION_SCHEMA = "flowpeek-serve-workspace-definition/v1";
-const WORKSPACE_HUB_SCHEMA = "flowpeek-workspace-hub/v1";
-const WORKSPACE_HUB_REGISTRATION_SCHEMA = "flowpeek-workspace-hub-registration/v1";
+const WORKSPACE_DEFINITION_SCHEMA = "flopeek-serve-workspace-definition/v1";
+const WORKSPACE_HUB_SCHEMA = "flopeek-workspace-hub/v1";
+const WORKSPACE_HUB_REGISTRATION_SCHEMA = "flopeek-workspace-hub-registration/v1";
 const MAX_REQUEST_BODY_BYTES = 100_000;
 
 function definitionPath(workspaceId, options = {}) {
@@ -295,9 +295,9 @@ async function startWorkspaceServer(options = {}) {
 
   const workspaceContracts = () => {
     const stored = readWorkspaceContractReferences(workspaceId, { registryRoot: options.registryRoot });
-    if (stored.status !== "available") return { schemaVersion: "flowpeek-workspace-contract-reference-list/v1", status: "unavailable", records: [], reason: stored.reason, limitation: "Unsafe or unreadable machine-local contract metadata was not reused." };
+    if (stored.status !== "available") return { schemaVersion: "flopeek-workspace-contract-reference-list/v1", status: "unavailable", records: [], reason: stored.reason, limitation: "Unsafe or unreadable machine-local contract metadata was not reused." };
     return {
-      schemaVersion: "flowpeek-workspace-contract-reference-list/v1",
+      schemaVersion: "flopeek-workspace-contract-reference-list/v1",
       status: "available",
       total: stored.records.length,
       records: resolveWorkspaceContractReferences(stored.records, resolveSnapshot),
@@ -320,7 +320,7 @@ async function startWorkspaceServer(options = {}) {
     });
     const omittedFlowIds = [...flows.slice(0, offset), ...flows.slice(end)].map((flow) => flow.id);
     return {
-      schemaVersion: "flowpeek-workspace-contract-catalog/v1",
+      schemaVersion: "flopeek-workspace-contract-catalog/v1",
       projectId: graph.project.projectId,
       graphVersion: graph.state.graphVersion,
       total: flows.length,
@@ -346,7 +346,7 @@ async function startWorkspaceServer(options = {}) {
     contractReferences: workspaceContracts(),
     diagnostics,
     boundaries: {
-      graphIsolation: "Each project retains an independent graph, projectId, graphVersion, watcher, and .flowpeek cache.",
+      graphIsolation: "Each project retains an independent graph, projectId, graphVersion, watcher, and .flopeek cache.",
       crossProjectEdges: "No cross-project edge is inferred from matching names or routes. Explicit contract/evidence references are required.",
       internalBackends: "Ephemeral loopback backends are implementation details; the hub port is the user-facing web source of truth.",
       portability: "The workspace definition is machine-local and excluded from handoff exports.",

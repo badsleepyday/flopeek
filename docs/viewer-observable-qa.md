@@ -29,7 +29,7 @@ screen-reader, browser zoom, or human readability observation.
 
 The current product-code evidence target is commit
 `beccef32af9b0a978d4463a90806aeb66a8f1a28`.
-Its [six-job CI matrix](https://github.com/badsleepyday/flowpeek/actions/runs/30161751505)
+Its [six-job CI matrix](https://github.com/badsleepyday/flopeek/actions/runs/30161751505)
 passed on Ubuntu, Windows, and macOS with Node 20 and 22, including the
 repository-owned Viewer, package, and clean-room MCP checks.
 
@@ -71,7 +71,7 @@ recording a manual review. Do not mix observations from different revisions.
 
 Record each outcome as `passed`, `failed`, or `unknown`, with the graph version
 and a screenshot or reproducible observation. Store a schema-valid
-[`flowpeek-independent-review/v1`](schemas/flowpeek-independent-review.schema.json)
+[`flopeek-independent-review/v1`](schemas/flopeek-independent-review.schema.json)
 artifact with the actual reviewer, provider/model/run identity, and evidence
 references. Missing manual evidence remains `unknown`; it must not be reported
 as a release-ready accessibility result. A provider name or reviewer persona

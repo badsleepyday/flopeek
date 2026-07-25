@@ -4,7 +4,7 @@ const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const GITHUB_RELEASE_APPROVAL_SCHEMA = "flowpeek-github-release-approval/v1";
+const GITHUB_RELEASE_APPROVAL_SCHEMA = "flopeek-github-release-approval/v1";
 const RELEASE_ROLES = ["Azka", "Bono", "Cuna", "Dana", "Hadi", "Iris"];
 const RELEASE_CHANNELS = new Map([["alpha", "alpha"], ["beta", "beta"], ["rc", "rc"]]);
 

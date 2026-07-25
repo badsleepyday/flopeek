@@ -68,18 +68,18 @@ function input(graph, planRef, overrides = {}) {
 }
 
 test("plan reconciliations are append-only and preserve planned metadata as distinct from parser facts", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-plan-reconciliation-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-plan-reconciliation-"));
   try {
     fixture(root);
     const graph = scanRepository(root, { persistIdentity: true });
     const { contextRef, planRef } = setupPlan(root, graph);
-    const beforeOverlay = fs.readFileSync(path.join(root, ".flowpeek", "delivery", "planned-overlays.json"), "utf8");
+    const beforeOverlay = fs.readFileSync(path.join(root, ".flopeek", "delivery", "planned-overlays.json"), "utf8");
     const created = recordPlanReconciliation(root, graph, input(graph, planRef), { now: "2026-07-18T00:02:00.000Z" });
     assert.equal(created.created, true);
     assert.equal(created.reconciliation.outcome, "confirmed-implemented");
     assert.equal(created.reconciliation.knowledgeClass, "human-assertion");
     assert.deepEqual(created.reconciliation.actualContextRefs, [contextRef]);
-    assert.equal(fs.readFileSync(path.join(root, ".flowpeek", "delivery", "planned-overlays.json"), "utf8"), beforeOverlay);
+    assert.equal(fs.readFileSync(path.join(root, ".flopeek", "delivery", "planned-overlays.json"), "utf8"), beforeOverlay);
     const superseding = recordPlanReconciliation(root, graph, input(graph, planRef, {
       operationId: "reconciliation-record-v2",
       id: "reconciliation.order-audit-v2",
@@ -98,7 +98,7 @@ test("plan reconciliations are append-only and preserve planned metadata as dist
 });
 
 test("positive reconciliation requires a human and current actual Context Refs while nonpositive agent proposals remain explicit", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-plan-reconciliation-policy-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-plan-reconciliation-policy-"));
   try {
     fixture(root);
     const graph = scanRepository(root, { persistIdentity: true });
@@ -125,11 +125,11 @@ test("positive reconciliation requires a human and current actual Context Refs w
 });
 
 test("invalid plan-reconciliation storage remains unavailable and is never overwritten", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-plan-reconciliation-invalid-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-plan-reconciliation-invalid-"));
   try {
     fixture(root);
     const graph = scanRepository(root, { persistIdentity: true });
-    const target = path.join(root, ".flowpeek", "delivery", "reconciliations.json");
+    const target = path.join(root, ".flopeek", "delivery", "reconciliations.json");
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, "{ invalid", "utf8");
     const before = fs.readFileSync(target, "utf8");

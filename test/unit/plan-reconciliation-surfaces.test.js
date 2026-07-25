@@ -89,7 +89,7 @@ async function connectMcp(root) {
 }
 
 test("HTTP, MCP, and CLI expose the same append-only plan-reconciliation projection", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-plan-reconciliation-surfaces-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-plan-reconciliation-surfaces-"));
   let app;
   let instance;
   let client;
@@ -124,7 +124,7 @@ test("HTTP, MCP, and CLI expose the same append-only plan-reconciliation project
     assert.ok(toolList.tools.some((tool) => tool.name === "get_checkpoint_divergence"));
     const mcpDivergence = payload(await client.callTool({ name: "get_checkpoint_divergence", arguments: { checkpointId } }));
     const httpContinuationContext = await (await fetch(`${baseUrl}/api/continuation-context?checkpointId=${encodeURIComponent(checkpointId)}&overlayId=${encodeURIComponent(overlayId)}&tokenBudget=2048`)).json();
-    assert.equal(httpContinuationContext.schemaVersion, "flowpeek-continuation-context/v1");
+    assert.equal(httpContinuationContext.schemaVersion, "flopeek-continuation-context/v1");
     assert.ok(toolList.tools.some((tool) => tool.name === "get_continuation_context"));
     const mcpContinuationContext = payload(await client.callTool({ name: "get_continuation_context", arguments: { checkpointId, overlayId, tokenBudget: 2048 } }));
     const cli = path.join(__dirname, "..", "..", "src", "cli.js");

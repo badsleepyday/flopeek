@@ -1,10 +1,10 @@
-# Flowpeek architecture
+# Flopeek architecture
 
-> **For contributors extending Flowpeek.** Users normally need the [user guide](docs/using-flowpeek.md), [support matrix](SUPPORT.md), and [evidence report](BENCHMARKS.md) instead.
+> **For contributors extending Flopeek.** Users normally need the [user guide](docs/using-flopeek.md), [support matrix](SUPPORT.md), and [evidence report](BENCHMARKS.md) instead.
 
 ## Document authority
 
-This document describes **how Flowpeek currently works, which technical invariants it must preserve, and the target architecture required by the product contract**.
+This document describes **how Flopeek currently works, which technical invariants it must preserve, and the target architecture required by the product contract**.
 
 - [PRODUCT.md](PRODUCT.md) is authoritative for product scope and trust rules.
 - [ROADMAP.md](ROADMAP.md) is authoritative for delivery order and status.
@@ -14,7 +14,7 @@ Sections are labeled `current`, `target`, or `decision required`. A target desig
 
 ## Architecture goals
 
-Flowpeek must remain:
+Flopeek must remain:
 
 - local-first;
 - deterministic at the evidence layer;
@@ -33,7 +33,7 @@ Flowpeek must remain:
                     Git hosting / CI / deploy / telemetry
                                    |
                                    v
-Developer or agent --> Flowpeek local process --> target repository
+Developer or agent --> Flopeek local process --> target repository
        |                    |                         |
        |                    |                         +-- source/config/Git
        |                    |
@@ -48,7 +48,7 @@ Developer or agent --> Flowpeek local process --> target repository
        +-- MCP over stdio
 ```
 
-Source analysis does not modify source code. Normal cache-enabled commands write only Flowpeek cache and metadata under `.flowpeek/`; `scan --no-cache` and `impact --no-cache` do not create cache or project-identity metadata. A `--package <relative/path>` scan is also session-only: it cannot read or replace the repository-wide cache because a static package subtree is not a repository-wide graph. No target application code is executed unless a separately configured external integration explicitly does so.
+Source analysis does not modify source code. Normal cache-enabled commands write only Flopeek cache and metadata under `.flopeek/`; `scan --no-cache` and `impact --no-cache` do not create cache or project-identity metadata. A `--package <relative/path>` scan is also session-only: it cannot read or replace the repository-wide cache because a static package subtree is not a repository-wide graph. No target application code is executed unless a separately configured external integration explicitly does so.
 
 ## Current implementation
 
@@ -58,9 +58,9 @@ Status: `current`
 
 - Node.js 20 or later.
 - CommonJS modules.
-- CLI binary name: `flowpeek`.
+- CLI binary name: `flopeek`.
 - Source is currently distributed directly; there is no build step.
-- `package.json#files` and `packaging/package-policy.json` bound the candidate tarball to runtime modules, Viewer assets, the Flowpeek integration skill, showcase, and public benchmark data. Repository governance, tests, CI, caches, credentials, logs, and source maps are rejected by the package audit.
+- `package.json#files` and `packaging/package-policy.json` bound the candidate tarball to runtime modules, Viewer assets, the Flopeek integration skill, showcase, and public benchmark data. Repository governance, tests, CI, caches, credentials, logs, and source maps are rejected by the package audit.
 - `scripts/verify-clean-room.js` packs and installs the exact source tarball into an operating-system temporary consumer with lifecycle scripts disabled, then checks the installed binary, bounded static scan, MCP bootstrap, fixture immutability, and cleanup.
 - The source repository is public. npm registry publishing remains intentionally separate from a source tag or GitHub Release; packaging evidence does not decide registry permission or release stage.
 - Public Core releases are created from immutable tags on `main` only after the
@@ -111,8 +111,8 @@ Status: `current`
 | `src/product-proof.js` | Validates pinned public benchmark evidence, combines it with current-repository facts and an optional explicit local benchmark, and preserves public claim boundaries. |
 | `src/agent-bootstrap.js` | Builds the provider-independent bootstrap contract that names graph identity, readiness, parser coverage, safe workflow, and evidence limits without source bodies or machine paths. |
 | `src/agent-integration-registry.js` | Versioned registry of supported local agent hosts, project-local skill/config paths, stdio capability, and explicit remote-only boundaries. |
-| `src/agent-integration.js` | Non-destructive install, uninstall, dry-run, host detection, ownership manifest, and integration diagnostics for the generated Flowpeek skill and MCP entries. |
-| `src/orientation-benchmark.js` | Source-pinned direct-repository versus Flowpeek deterministic orientation evaluator with separate evidence classes, bounded metrics, stale probes in temporary copies, and no provider or target execution. |
+| `src/agent-integration.js` | Non-destructive install, uninstall, dry-run, host detection, ownership manifest, and integration diagnostics for the generated Flopeek skill and MCP entries. |
+| `src/orientation-benchmark.js` | Source-pinned direct-repository versus Flopeek deterministic orientation evaluator with separate evidence classes, bounded metrics, stale probes in temporary copies, and no provider or target execution. |
 | `src/agent-comparison.js` | Provider-neutral validator and scorer for explicitly supplied paired agent outcomes; provider execution, target execution, source bodies, and machine-local paths remain outside the tool. |
 | `src/git-metadata.js` | One-command Git branch/revision/dirty metadata plus static Git directory, shallow-state, and origin-remote reads used to reduce cold scan overhead. |
 | `src/package-policy.js` | Strict npm pack inventory validation, runtime allowlist, denied cache/credential/governance content, size bounds, package identity, and prepared-publication/explicit-approval boundary. |
@@ -131,7 +131,7 @@ Status: `current`
 
 Status: `current`
 
-- `flowpeek showcase` validates `examples/commerce-showcase/flowpeek-showcase.json`, copies the example to a uniquely marked operating-system temporary directory, starts the ordinary local server with port fallback, and deep-links the viewer to the declared primary Flow Lens.
+- `flopeek showcase` validates `examples/commerce-showcase/flopeek-showcase.json`, copies the example to a uniquely marked operating-system temporary directory, starts the ordinary local server with port fallback, and deep-links the viewer to the declared primary Flow Lens.
 - The original example is never scanned in place. The generated workspace is removed when the server closes unless `--keep-workspace` is explicit.
 - `showcase apply`, `reset`, and `status` operate only on the manifest-declared source inside a valid marked workspace. Hash checks make baseline/changed operations idempotent and reject unexpected local divergence.
 - The deliberate source change is owned by the showcase CLI. Viewer, HTTP, and MCP remain graph/context surfaces and expose no general repository-source write or arbitrary shell operation.
@@ -143,7 +143,7 @@ Status: `current`
 Status: `current`
 
 - `benchmarks/public-proof.json` is the reviewed public evidence packet; its totals must match `benchmarks/real-repository-corpus.json`.
-- `flowpeek proof` runs an explicit local benchmark and combines it with the pinned public evidence.
+- `flopeek proof` runs an explicit local benchmark and combines it with the pinned public evidence.
 - `GET /api/product-proof` and MCP `get_product_proof` return the report without starting repository work beyond the graph already being served.
 - `POST /api/product-proof` is a trusted-loopback, explicit action that runs the local comparison before returning the same schema.
 - The local viewer is a renderer of this contract, not a separate analytics authority.
@@ -177,7 +177,7 @@ repository root
   -> build nodes and evidence edges
   -> build bounded supported static-entry flows
   -> summarize repository parse coverage and registry capabilities
-  -> optionally write .flowpeek/graph.json
+  -> optionally write .flopeek/graph.json
 ```
 
 The target repository's code and configuration are not executed. Some optional language adapters compile and run a local helper against source text, not the target application.
@@ -185,13 +185,13 @@ The target repository's code and configuration are not executed. Some optional l
 An optional bounded CLI path adds a read-only discovery contract before parsing:
 
 ```text
-flowpeek discover
+flopeek discover
   -> inventory candidate source and static manifests
   -> classify scope and adapter demand
   -> calculate an opaque source-plan and resolver-control fingerprint
   -> report whether declared time/file/byte bounds permit analysis
 
-flowpeek scan --budget-ms/--max-files/--max-bytes
+flopeek scan --budget-ms/--max-files/--max-bytes
   -> run the exact discovered source plan in a worker
   -> verify the same immutable plan after analysis
   -> re-read only planned directories plus source/resolver-control candidates
@@ -204,7 +204,7 @@ watcher refresh, Viewer/HTTP/SSE status, and MCP refresh:
 
 ```text
 scan request
-  -> publish one flowpeek-scan-outcome/v1 operation
+  -> publish one flopeek-scan-outcome/v1 operation
   -> expose running phase and declared bounds
   -> activate a complete current graph only after successful analysis
   -> otherwise retain the last complete graph as stale-unverified
@@ -285,7 +285,7 @@ The serialized graph uses schema version 5:
 }
 ```
 
-`analysis.adapterCapabilities` contains the versioned `flowpeek-adapter-capabilities/v1` registry. It is deterministic general adapter metadata and does not vary with the scanned repository. `analysis.coverage` remains separate: it reports what happened while parsing this repository and is not runtime coverage. The same registry identity is exposed through `/api/capabilities` and `get_agent_context`.
+`analysis.adapterCapabilities` contains the versioned `flopeek-adapter-capabilities/v1` registry. It is deterministic general adapter metadata and does not vary with the scanned repository. `analysis.coverage` remains separate: it reports what happened while parsing this repository and is not runtime coverage. The same registry identity is exposed through `/api/capabilities` and `get_agent_context`.
 
 `schemaVersion` identifies the file format. `projectId` identifies the local project context. `state.graphVersion` identifies one material static graph state within that project, while `generatedAt` only records a scan time. The material fingerprint includes the deterministic graph payload and source content/revision evidence, excluding transient refresh/cache fields. Thus a source-only edit can advance the graph version while its delta correctly reports no topology change. See [ADR-002](docs/adr/ADR-002-graph-version.md).
 
@@ -340,11 +340,11 @@ The exact set varies by adapter. Absence of an edge does not prove absence of ru
 - maximum depth 6;
 - test-layer steps are omitted.
 
-The stored flow remains a compact scanner traversal containing node ID, label, type, depth, and a `flowpeek-static-flow-entry/v1` entry contract. `src/flow-entry.js` defines the contract. `src/flow-lens.js` projects one stored flow into `flowpeek-flow-lens/v1` without changing parser facts. HTTP entries retain handler evidence; package scripts begin with an exact `declares-command-target` transition and retain only manifest, script, runner, and target declaration fields; the Python framework-command subsets begin with the same exact declaration edge to their direct class or function target and retain only adapter, command name, and target declaration fields; the narrow `node-cron` subset begins with an exact `schedules` transition and retains only adapter, literal schedule expression, local task name, and target declaration fields. The projection adds a graph-versioned entry, derived role per displayed step, Context Ref, deterministic edge evidence reference, bounded fan-out, supported static persistence/queue/external boundaries, ambiguity, and truncation metadata. `src/flow-lens-options.js` owns the shared strict display contract: 12 steps by default, an integer range of 1 through 24, and no silent clamping.
+The stored flow remains a compact scanner traversal containing node ID, label, type, depth, and a `flopeek-static-flow-entry/v1` entry contract. `src/flow-entry.js` defines the contract. `src/flow-lens.js` projects one stored flow into `flopeek-flow-lens/v1` without changing parser facts. HTTP entries retain handler evidence; package scripts begin with an exact `declares-command-target` transition and retain only manifest, script, runner, and target declaration fields; the Python framework-command subsets begin with the same exact declaration edge to their direct class or function target and retain only adapter, command name, and target declaration fields; the narrow `node-cron` subset begins with an exact `schedules` transition and retains only adapter, literal schedule expression, local task name, and target declaration fields. The projection adds a graph-versioned entry, derived role per displayed step, Context Ref, deterministic edge evidence reference, bounded fan-out, supported static persistence/queue/external boundaries, ambiguity, and truncation metadata. `src/flow-lens-options.js` owns the shared strict display contract: 12 steps by default, an integer range of 1 through 24, and no silent clamping.
 
-The Flow Lens does not infer command invocation, Django app registration or settings loading, scheduler initialization, task timing or execution, runtime order, branch conditions, control flow, business process, successful side effects, or flow-level human verification. `src/semantic-flow-suggestion.js` adds `flowpeek-semantic-flow-suggestion/v1` as a deterministic derived layer over literal HTTP entry, displayed roles, direct transitions, and static boundaries. It explicitly abstains for package-script, framework-command, and scheduler entries and never creates human verification. Raw node Context Cards remain the step-level evidence drill-down. `src/flow-context-card.js` packages the same suggestion with one current bounded Flow Lens as `kind: flow` in `flowpeek-context/v1`. Viewer, HTTP, MCP, JSON packets, and Markdown packets propagate the same requested limit and report requested, displayed, source, and truncation-reason metadata. Derived-cache keys include `flowId`, scope, and validated limit, so compact and expanded projections cannot alias.
+The Flow Lens does not infer command invocation, Django app registration or settings loading, scheduler initialization, task timing or execution, runtime order, branch conditions, control flow, business process, successful side effects, or flow-level human verification. `src/semantic-flow-suggestion.js` adds `flopeek-semantic-flow-suggestion/v1` as a deterministic derived layer over literal HTTP entry, displayed roles, direct transitions, and static boundaries. It explicitly abstains for package-script, framework-command, and scheduler entries and never creates human verification. Raw node Context Cards remain the step-level evidence drill-down. `src/flow-context-card.js` packages the same suggestion with one current bounded Flow Lens as `kind: flow` in `flopeek-context/v1`. Viewer, HTTP, MCP, JSON packets, and Markdown packets propagate the same requested limit and report requested, displayed, source, and truncation-reason metadata. Derived-cache keys include `flowId`, scope, and validated limit, so compact and expanded projections cannot alias.
 
-When an adjacent persisted delta affects a flow, `src/flow-comparison.js` retains only that flow's bounded Flow Lens snapshots (up to 12 affected flows and the Flow Lens step bound). `flowpeek-flow-comparison/v1` compares the retained before/current snapshots by step membership, depth, parser-edge transition IDs, displayed node metadata, and known changed source steps. It can distinguish a source-only change from a bounded static-structure change, but it cannot reconstruct an uncaptured historical flow, source contents, runtime history, or a historical Context Card.
+When an adjacent persisted delta affects a flow, `src/flow-comparison.js` retains only that flow's bounded Flow Lens snapshots (up to 12 affected flows and the Flow Lens step bound). `flopeek-flow-comparison/v1` compares the retained before/current snapshots by step membership, depth, parser-edge transition IDs, displayed node metadata, and known changed source steps. It can distinguish a source-only change from a bounded static-structure change, but it cannot reconstruct an uncaptured historical flow, source contents, runtime history, or a historical Context Card.
 
 ### Current projection service
 
@@ -418,14 +418,14 @@ Mutation endpoints require a trusted loopback-origin request. Per-project serve 
 
 ### Current central workspace hub
 
-The machine-local workspace definition is stored outside every scanned repository under the user Flowpeek serve registry. It may contain absolute project roots because it is explicitly non-portable operational state. It is never included in Handoff Workspace exports.
+The machine-local workspace definition is stored outside every scanned repository under the user Flopeek serve registry. It may contain absolute project roots because it is explicitly non-portable operational state. It is never included in Handoff Workspace exports.
 
 ```text
-flowpeek serve service-a -g --workspace commerce
+flopeek serve service-a -g --workspace commerce
   -> start hub on requested/next free port
   -> scan service-a into its own project graph
 
-flowpeek serve service-b -g --workspace commerce
+flopeek serve service-b -g --workspace commerce
   -> detect the existing hub on that port
   -> activate service-b in the same project tree
   -> keep service-a graph/cache intact
@@ -450,7 +450,7 @@ The graph event contains:
 - a bounded list of newly added file nodes;
 - an added/removed node-and-edge summary;
 - retained adjacent-delta identity when a material graph version advanced;
-- the matching bounded `flowpeek-changed-contexts/v1` projection when available.
+- the matching bounded `flopeek-changed-contexts/v1` projection when available.
 - server-side `refreshToAffectedContextMs` and `changedContextProjectionMs` timing, measured after watcher debounce and before SSE transport.
 
 The browser reloads its current projection after the event and preserves a selected Flow Lens when it still exists. Its live tray opens current affected nodes or flows, marks displayed Flow Lens steps whose IDs appear in `changedStepIds`, and can open a retained before/current Flow Lens comparison for a captured affected flow. Historical comparison steps are read-only; current steps drill into current raw-node evidence. The SSE envelope is not itself persisted; its delta identity and changed-context evidence are read from the durable retained adjacent delta.
@@ -493,20 +493,20 @@ MCP is read-only with respect to repository source. Current tools:
 - `compare_git_snapshots`;
 - `refresh_graph`.
 
-An agent reads and edits a returned source path with its existing workspace tools. Flowpeek does not expose source contents, a shell, source-write actions, deployment, or credentials. Metadata-write tools are non-destructive, idempotent, schema-bounded appends limited to local `.flowpeek` JSON. Agent proposals and runner events cannot create human verification; runner events report an external adapter's progress and never execute a command. All remaining agent evidence tools are read-only.
+An agent reads and edits a returned source path with its existing workspace tools. Flopeek does not expose source contents, a shell, source-write actions, deployment, or credentials. Metadata-write tools are non-destructive, idempotent, schema-bounded appends limited to local `.flopeek` JSON. Agent proposals and runner events cannot create human verification; runner events report an external adapter's progress and never execute a command. All remaining agent evidence tools are read-only.
 
 ### Current agent-host integration
 
-`flowpeek install` reads a versioned platform registry and writes only project-local host configuration plus a canonical generated tool-usage skill. JSON adapters preserve unrelated keys under `.mcp.json`, `.cursor/mcp.json`, or `.gemini/settings.json`. Codex uses an explicitly delimited managed block in `.codex/config.toml`; an unmanaged or modified Flowpeek entry is a conflict, never an overwrite. Skill targets are `.claude/skills/flowpeek`, `.agents/skills/flowpeek`, `.cursor/skills/flowpeek`, or `.gemini/skills/flowpeek`.
+`flopeek install` reads a versioned platform registry and writes only project-local host configuration plus a canonical generated tool-usage skill. JSON adapters preserve unrelated keys under `.mcp.json`, `.cursor/mcp.json`, or `.gemini/settings.json`. Codex uses an explicitly delimited managed block in `.codex/config.toml`; an unmanaged or modified Flopeek entry is a conflict, never an overwrite. Skill targets are `.claude/skills/flopeek`, `.agents/skills/flopeek`, `.cursor/skills/flopeek`, or `.gemini/skills/flopeek`.
 
-The installer preflights all selected platform changes before writing, supports dry-run, records ownership in `.flowpeek/agent-integrations.json`, and copies only the canonical `integrations/skills/flowpeek` tree. Reinstall is idempotent. Uninstall removes a skill only when its content hash still matches the canonical managed skill and removes an MCP entry only when it still matches the managed value. `doctor` inspects files and PATH without starting an AI host. ChatGPT web remains explicitly `remote-only` because it cannot consume project-local stdio configuration.
+The installer preflights all selected platform changes before writing, supports dry-run, records ownership in `.flopeek/agent-integrations.json`, and copies only the canonical `integrations/skills/flopeek` tree. Reinstall is idempotent. Uninstall removes a skill only when its content hash still matches the canonical managed skill and removes an MCP entry only when it still matches the managed value. `doctor` inspects files and PATH without starting an AI host. ChatGPT web remains explicitly `remote-only` because it cannot consume project-local stdio configuration.
 
-The generated skill is an adapter for using Flowpeek, not a developer persona team and not a source of parser facts. Providers consume `flowpeek-agent-bootstrap/v1`; they may inspect source and propose changes through their own authorized tools, but they cannot promote a proposal into extracted graph evidence or human verification.
+The generated skill is an adapter for using Flopeek, not a developer persona team and not a source of parser facts. Providers consume `flopeek-agent-bootstrap/v1`; they may inspect source and propose changes through their own authorized tools, but they cannot promote a proposal into extracted graph evidence or human verification.
 
 ### Current cache layout
 
 ```text
-.flowpeek/
+.flopeek/
 ├── project.json
 ├── graph.json
 ├── state.json
@@ -528,15 +528,15 @@ The generated skill is an adapter for using Flowpeek, not a developer persona te
     └── <full-git-sha>.json
 ```
 
-`graph.json` is schema-v5 validated before persistence and whenever Flowpeek attempts to reuse it. Invalid JSON, unsupported versions, malformed envelopes, a different resolved project root, or a different project ID return machine-readable diagnostics and no reusable graph. The migration harness accepts compatible v4 graph evidence and preserves current v5 state separately.
+`graph.json` is schema-v5 validated before persistence and whenever Flopeek attempts to reuse it. Invalid JSON, unsupported versions, malformed envelopes, a different resolved project root, or a different project ID return machine-readable diagnostics and no reusable graph. The migration harness accepts compatible v4 graph evidence and preserves current v5 state separately.
 
-Writes use a temporary file beside the destination, flush and close it when supported, then replace the cache through bounded retry for transient Windows lock errors. On a failure, Flowpeek removes the temporary file and preserves the prior destination. `project.json` records a generated local UUID when config does not provide an explicit `projectId`; see [ADR-001](docs/adr/ADR-001-project-identity.md).
+Writes use a temporary file beside the destination, flush and close it when supported, then replace the cache through bounded retry for transient Windows lock errors. On a failure, Flopeek removes the temporary file and preserves the prior destination. `project.json` records a generated local UUID when config does not provide an explicit `projectId`; see [ADR-001](docs/adr/ADR-001-project-identity.md).
 
 `project.json`, `state.json`, bounded adjacent `deltas/`, immutable `flow-verifications.json`, append-only `agent-evidence-traces.json`, append-only `semantic-suggestion-feedback.json`, durable Brief manifests, the `handoff/` workspace/note/import stores, the `delivery/` work-record/workflow stores, and the `cache/` derived-artifact registry belong beside `graph.json` and `descriptions.json` in this current layout. Heavy Briefs, imported handoffs, and derived values live in their own artifact directories; their minimal manifests remain auditable if an artifact expires. `config.json`, when present, remains the versionable scope/identity policy file; generated graph and project metadata remain local cache state.
 
 ### Current static history
 
-Git snapshots are produced through `git archive` in a temporary directory. Flowpeek does not check out or modify the working tree. Comparisons include:
+Git snapshots are produced through `git archive` in a temporary directory. Flopeek does not check out or modify the working tree. Comparisons include:
 
 - commit metadata;
 - changed Git paths;
@@ -551,7 +551,7 @@ This history excludes uncommitted changes and is not runtime history.
 then creates or reuses two static `git archive` snapshots. It reports exact
 static node or flow identity presence separately from bounded nodes found at
 the same current repository-relative paths. Same-path results are candidates
-only: Flowpeek does not follow renames, infer successors, reconstruct a
+only: Flopeek does not follow renames, infer successors, reconstruct a
 historical Context Card, or claim implementation/rationale/runtime equivalence.
 The projection is available through local HTTP, MCP, and CLI; it never checks
 out, fetches, merges, rebases, mutates refs, executes code, or returns source
@@ -597,13 +597,13 @@ The scanner integration suite is large and should be split into faster feedback 
 
 ### Repository scope configuration
 
-Iteration 1 adds a versioned, optional `.flowpeek/config.json` read before discovery. It controls `sourceRoots`, `testRoots`, `fixtureRoots`, `exclude`, optional `projectId`, and `flowEntries.tests`/`flowEntries.fixtures`. Classification precedence is `excluded`, `fixture`, `test`, `generated`, then `application`. No target configuration is executed.
+Iteration 1 adds a versioned, optional `.flopeek/config.json` read before discovery. It controls `sourceRoots`, `testRoots`, `fixtureRoots`, `exclude`, optional `projectId`, and `flowEntries.tests`/`flowEntries.fixtures`. Classification precedence is `excluded`, `fixture`, `test`, `generated`, then `application`. No target configuration is executed.
 
 The scanner retains test, fixture, and generated records in the graph as static diagnostic evidence. Only application endpoints are default flow entries; test or fixture entries require explicit policy. Scope changes invalidate retained source records and force a reconciled graph build. Invalid configuration throws before scan output or cache writing, preserving any previous valid graph cache.
 
 ### Versioned graph identity
 
-Flowpeek has a project identity and a monotonic static graph-state identity. `projectId` identifies the local project; `state.graphVersion` identifies its material static graph state. `generatedAt` remains scan timing only. A retained adjacent delta can explain one version advance. `getChangedContexts` exposes bounded current or historical technical contexts from that adjacent delta, while Context reference continuity across refactors remains limited to the explicit resolver states.
+Flopeek has a project identity and a monotonic static graph-state identity. `projectId` identifies the local project; `state.graphVersion` identifies its material static graph state. `generatedAt` remains scan timing only. A retained adjacent delta can explain one version advance. `getChangedContexts` exposes bounded current or historical technical contexts from that adjacent delta, while Context reference continuity across refactors remains limited to the explicit resolver states.
 
 ### Context Cards and path-based identity
 
@@ -611,7 +611,7 @@ Raw node Context Cards identify `{ projectId, nodeId, graphVersion }`; flow Cont
 
 Current IDs are excellent deterministic current-state keys but insufficient as long-term Context references across refactors.
 
-Repository-local reviewer skills are a development and validation layer, not part of the scanner graph. `AGENTS.md` routes explicitly requested reviews to role-specific skills under `.agents/skills/`; `docs/schemas/flowpeek-independent-review.schema.json` defines their portable output. These artifacts record provider/model/run provenance and current graph identity but remain advisory evidence. They cannot modify parser facts, establish provider independence by persona name, or create human verification.
+Repository-local reviewer skills are a development and validation layer, not part of the scanner graph. `AGENTS.md` routes explicitly requested reviews to role-specific skills under `.agents/skills/`; `docs/schemas/flopeek-independent-review.schema.json` defines their portable output. These artifacts record provider/model/run provenance and current graph identity but remain advisory evidence. They cannot modify parser facts, establish provider independence by persona name, or create human verification.
 
 ### Full graph JSON rewrite
 
@@ -619,7 +619,7 @@ Each refresh writes the complete graph. This is simple and correct for the curre
 
 ### Product schema ahead of implementation
 
-Deterministic HTTP/request semantic suggestions and the local `flowpeek-delivery-work-records/v1` store now have current runtime schemas. Delivery storage currently supports editable plan metadata and append-only actual events; workflow methods, transition gates, and user-facing delivery surfaces remain product commitments until their own contracts are implemented. Node and flow Context Cards/packets are implemented by ADR-003; immutable flow verification is implemented by ADR-004 and never modifies parser facts. `flowpeek-changed-contexts/v1` is an ephemeral service projection of retained adjacent-delta evidence, not a historical Context Card reconstruction. `flowpeek-flow-comparison/v1` is a retained bounded snapshot comparison for captured adjacent-delta flows, not full graph history or runtime reconstruction.
+Deterministic HTTP/request semantic suggestions and the local `flopeek-delivery-work-records/v1` store now have current runtime schemas. Delivery storage currently supports editable plan metadata and append-only actual events; workflow methods, transition gates, and user-facing delivery surfaces remain product commitments until their own contracts are implemented. Node and flow Context Cards/packets are implemented by ADR-003; immutable flow verification is implemented by ADR-004 and never modifies parser facts. `flopeek-changed-contexts/v1` is an ephemeral service projection of retained adjacent-delta evidence, not a historical Context Card reconstruction. `flopeek-flow-comparison/v1` is a retained bounded snapshot comparison for captured adjacent-delta flows, not full graph history or runtime reconstruction.
 
 ## Target architecture
 
@@ -730,7 +730,7 @@ Implemented configuration:
 }
 ```
 
-When configuration is absent, Flowpeek uses the same test and fixture defaults shown above with unrestricted application roots. Generated directories (`generated`, `__generated__`) and `.generated.` files remain diagnostic-only. `exclude` supports literal repository-relative paths and whole-segment `*`/`**` patterns. The effective rules, counts, precedence, policy, and limits are recorded at `analysis.repositoryScope`; viewer/API/MCP projections carry the same metadata.
+When configuration is absent, Flopeek uses the same test and fixture defaults shown above with unrestricted application roots. Generated directories (`generated`, `__generated__`) and `.generated.` files remain diagnostic-only. `exclude` supports literal repository-relative paths and whole-segment `*`/`**` patterns. The effective rules, counts, precedence, policy, and limits are recorded at `analysis.repositoryScope`; viewer/API/MCP projections carry the same metadata.
 
 ### Graph identity
 
@@ -742,7 +742,7 @@ Target graph envelope:
   "project": {
     "projectId": "project:81a4...",
     "root": "absolute local path",
-    "name": "flowpeek"
+    "name": "flopeek"
   },
   "state": {
     "graphVersion": 43,
@@ -775,7 +775,7 @@ Potential inputs, in priority order:
 
 1. explicit configured project ID;
 2. normalized Git remote identity plus repository-relative root;
-3. generated local UUID persisted under `.flowpeek/`;
+3. generated local UUID persisted under `.flopeek/`;
 4. path-derived temporary identity only for ephemeral scans.
 
 Forks and copied directories must not be silently treated as the same project without policy.
@@ -802,7 +802,7 @@ The URI is a local identifier, not a public network URL.
 
 ```json
 {
-  "schemaVersion": "flowpeek-context/v1",
+  "schemaVersion": "flopeek-context/v1",
   "contextRef": "fp://local/project%3A81a4/flow/flow%3Aendpoint%3Acheckout@43",
   "project": { "projectId": "project:81a4", "graphVersion": 43, "sourceRevision": "abc123" },
   "kind": "flow",
@@ -811,7 +811,7 @@ The URI is a local identifier, not a public network URL.
   "confidence": "exact-static-evidence",
   "flow": { "id": "flow:endpoint:checkout", "entryId": "endpoint:checkout" },
   "technicalSummary": { "text": "...", "knowledgeClass": "derived" },
-  "projection": { "schemaVersion": "flowpeek-flow-lens/v1", "steps": [], "staticBoundaries": [], "truncation": {} },
+  "projection": { "schemaVersion": "flopeek-flow-lens/v1", "steps": [], "staticBoundaries": [], "truncation": {} },
   "relatedTests": [],
   "limitations": [],
   "verification": null,
@@ -825,7 +825,7 @@ Context actions are navigation or recommendations. They do not grant source-writ
 
 ```json
 {
-  "schemaVersion": "flowpeek-delta/v1",
+  "schemaVersion": "flopeek-delta/v1",
   "projectId": "project:81a4",
   "fromGraphVersion": 42,
   "toGraphVersion": 43,
@@ -859,7 +859,7 @@ Context actions are navigation or recommendations. They do not grant source-writ
 }
 ```
 
-Adjacent deltas persist until an explicit dry-run-first history prune. Its default preview retains the newest eight validated deltas within a 16 MiB history budget and always protects the latest adjacent delta; malformed and unknown files are protected. `getChangedContexts` decorates this bounded evidence with current node/flow Context Refs, Flow Lens IDs, availability, changed static step IDs, and comparison availability. A captured affected flow also retains bounded before/current Flow Lens snapshots for `getFlowComparison`. Current flow refs resolve to `flowpeek-context/v1` cards; stale refs resolve to the current card with explicit stale status. Removed flows resolve as historical only when an adjacent retained delta proves removal; when the requested version predates retained evidence, resolution is explicitly `expired` rather than a fabricated history. A history prune stages candidates behind a recovery journal and never mutates current graph/state. Durable delivery-history retention remains future work.
+Adjacent deltas persist until an explicit dry-run-first history prune. Its default preview retains the newest eight validated deltas within a 16 MiB history budget and always protects the latest adjacent delta; malformed and unknown files are protected. `getChangedContexts` decorates this bounded evidence with current node/flow Context Refs, Flow Lens IDs, availability, changed static step IDs, and comparison availability. A captured affected flow also retains bounded before/current Flow Lens snapshots for `getFlowComparison`. Current flow refs resolve to `flopeek-context/v1` cards; stale refs resolve to the current card with explicit stale status. Removed flows resolve as historical only when an adjacent retained delta proves removal; when the requested version predates retained evidence, resolution is explicitly `expired` rather than a fabricated history. A history prune stages candidates behind a recovery journal and never mutates current graph/state. Durable delivery-history retention remains future work.
 
 ### Context continuity
 
@@ -891,7 +891,7 @@ Current versioned workflow definition:
 
 ```json
 {
-  "schemaVersion": "flowpeek-workflow/v1",
+  "schemaVersion": "flopeek-workflow/v1",
   "id": "agile-default",
   "states": ["backlog", "planned", "implementing", "verifying", "reviewing", "released", "observing"],
   "transitions": [
@@ -904,7 +904,7 @@ Current versioned workflow definition:
 }
 ```
 
-Agile, Waterfall, and custom methods are templates over this schema. Workflow state cannot fabricate technical evidence. Actual events must link to Flowpeek graph states, Git evidence, declared tests, or permissioned integrations.
+Agile, Waterfall, and custom methods are templates over this schema. Workflow state cannot fabricate technical evidence. Actual events must link to Flopeek graph states, Git evidence, declared tests, or permissioned integrations.
 
 ### Target work-continuation services
 
@@ -935,7 +935,7 @@ The deterministic inference service consumes graph features and returns suggesti
 
 ```json
 {
-  "schemaVersion": "flowpeek-semantic-flow-suggestion/v1",
+  "schemaVersion": "flopeek-semantic-flow-suggestion/v1",
   "status": "suggested",
   "knowledgeClass": "derived-suggestion",
   "candidate": {
@@ -953,7 +953,7 @@ The deterministic inference service consumes graph features and returns suggesti
 
 Human decisions over suggestions are versioned local feedback with exact current-suggestion fingerprint and optional same-Context-Ref trace binding. `accepted`, `edited`, `rejected`, and `abstained` are immutable labels, never flow verification. ML training is not introduced until real reviewed data can be split into training and held-out evaluation sets.
 
-`src/semantic-suggestion-reviewed-evaluation.js` evaluates a separately supplied `flowpeek-semantic-suggestion-reviewed-dataset/v1` cohort. The schema permits only opaque IDs, split assignment, decision, abstention verdict, and optional trace status; it rejects paths/URLs/free-text identifiers and any privacy declaration that allows source content, prompts, credentials, or raw logs. Its recommendation gate requires 20 held-out cases across three repository aliases and two reviewers, plus usefulness, rejection, abstention, and trace thresholds. The evaluator cannot prove reviewer identity or business correctness; no committed template or synthetic data can pass the gate.
+`src/semantic-suggestion-reviewed-evaluation.js` evaluates a separately supplied `flopeek-semantic-suggestion-reviewed-dataset/v1` cohort. The schema permits only opaque IDs, split assignment, decision, abstention verdict, and optional trace status; it rejects paths/URLs/free-text identifiers and any privacy declaration that allows source content, prompts, credentials, or raw logs. Its recommendation gate requires 20 held-out cases across three repository aliases and two reviewers, plus usefulness, rejection, abstention, and trace thresholds. The evaluator cannot prove reviewer identity or business correctness; no committed template or synthetic data can pass the gate.
 
 ### Target MCP additions
 
@@ -984,7 +984,7 @@ Do not add separate tools when one typed tool can handle the same concept predic
 Initial compatible target:
 
 ```text
-.flowpeek/
+.flopeek/
 ├── config.json
 ├── project.json
 ├── graph.json
@@ -1051,7 +1051,7 @@ Pull requests should receive a fast deterministic lane first. Slow toolchain and
 
 - Viewer server binds to loopback.
 - Each MCP stdio session and scanner backend uses one configured repository; the optional web hub only routes among isolated backends.
-- Repository source files are not modified by Flowpeek scan/MCP operations; explicit metadata operations may atomically update `.flowpeek/` stores.
+- Repository source files are not modified by Flopeek scan/MCP operations; explicit metadata operations may atomically update `.flopeek/` stores.
 - Git snapshots do not check out target revisions.
 - Repository configuration is interpreted only through documented static subsets.
 

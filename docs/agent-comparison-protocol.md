@@ -4,22 +4,22 @@
 
 Iteration 33 provides a provider-neutral A/B measurement contract for one question:
 
-> For the same pinned repository task and provider/model, how do supplied task outcomes differ when the agent works directly from the repository versus when it may use Flowpeek context?
+> For the same pinned repository task and provider/model, how do supplied task outcomes differ when the agent works directly from the repository versus when it may use Flopeek context?
 
-Flowpeek validates and scores supplied records. It does not invoke a provider, open a remote session, execute the target application, collect hidden prompts, or convert an agent answer into parser or human truth.
+Flopeek validates and scores supplied records. It does not invoke a provider, open a remote session, execute the target application, collect hidden prompts, or convert an agent answer into parser or human truth.
 
 ## Conditions
 
 Each `pairId` contains exactly two executions:
 
-1. `direct-repository` — the provider may inspect the repository with the host's ordinary read-only facilities but must not use Flowpeek data, Context Refs, Viewer, HTTP API, cache, skill, or MCP tools.
-2. `flowpeek` — the same provider and model may use Flowpeek MCP/context. The run must record its project ID, graph version, Context Refs, and supported Flowpeek tools used.
+1. `direct-repository` — the provider may inspect the repository with the host's ordinary read-only facilities but must not use Flopeek data, Context Refs, Viewer, HTTP API, cache, skill, or MCP tools.
+2. `flopeek` — the same provider and model may use Flopeek MCP/context. The run must record its project ID, graph version, Context Refs, and supported Flopeek tools used.
 
-The two executions require distinct provider sessions to prevent context carry-over. Their order should be randomized outside Flowpeek. A larger study should counterbalance order and repeat each case across providers or participants. Flowpeek does not infer randomization, blinding, provider independence, or consent.
+The two executions require distinct provider sessions to prevent context carry-over. Their order should be randomized outside Flopeek. A larger study should counterbalance order and repeat each case across providers or participants. Flopeek does not infer randomization, blinding, provider independence, or consent.
 
 ## Inputs
 
-Copy [`benchmarks/agent-comparison-runs.template.json`](../benchmarks/agent-comparison-runs.template.json) to a private study file and use `flowpeek-agent-comparison-runs/v1`, validated by [`flowpeek-agent-comparison-runs.schema.json`](schemas/flowpeek-agent-comparison-runs.schema.json).
+Copy [`benchmarks/agent-comparison-runs.template.json`](../benchmarks/agent-comparison-runs.template.json) to a private study file and use `flopeek-agent-comparison-runs/v1`, validated by [`flopeek-agent-comparison-runs.schema.json`](schemas/flopeek-agent-comparison-runs.schema.json).
 
 A completed file must declare explicit operator-supplied consent and privacy review. Every execution records only:
 
@@ -30,9 +30,9 @@ A completed file must declare explicit operator-supplied consent and privacy rev
 - separately reviewed claim IDs/categories/outcomes with evidence references, never claim prose;
 - verification status and evidence references;
 - optional numeric cost and currency;
-- for the Flowpeek condition only, graph identity, Context Refs, and supported MCP tools used.
+- for the Flopeek condition only, graph identity, Context Refs, and supported MCP tools used.
 
-The evaluator rejects unknown fields, absolute or upward-traversing paths, file URLs, multiline metadata, contaminated direct-repository records, unpaired conditions, reused sessions, provider/model mismatch inside a pair, unsupported Flowpeek tool names, and measured records without explicit consent.
+The evaluator rejects unknown fields, absolute or upward-traversing paths, file URLs, multiline metadata, contaminated direct-repository records, unpaired conditions, reused sessions, provider/model mismatch inside a pair, unsupported Flopeek tool names, and measured records without explicit consent.
 
 ## Privacy and evidence rules
 
@@ -57,7 +57,7 @@ The report gives each condition and the paired delta for:
 - stale Context Ref detection rate;
 - duration;
 - files inspected;
-- estimated context tokens using `flowpeek-char4-estimator/v1`;
+- estimated context tokens using `flopeek-char4-estimator/v1`;
 - separately reviewed unsupported-claim rate;
 - passed, failed, or unrun verification;
 - optional comparable cost.
@@ -70,19 +70,19 @@ The checked template intentionally reports `not-run`:
 
 ```powershell
 npm run evaluate:agent-comparison
-flowpeek evaluate agent-comparison . --cases benchmarks/orientation-cases.json --runs benchmarks/agent-comparison-runs.template.json
+flopeek evaluate agent-comparison . --cases benchmarks/orientation-cases.json --runs benchmarks/agent-comparison-runs.template.json
 ```
 
 Evaluate a separately collected private cohort:
 
 ```powershell
-flowpeek evaluate agent-comparison D:\study-suite `
+flopeek evaluate agent-comparison D:\study-suite `
   --cases D:\study-suite\orientation-cases.json `
   --runs D:\private\agent-comparison-runs.json `
   --format json
 ```
 
-The command reads and scores the supplied files. It starts no provider and target process. Review the output against [`flowpeek-agent-comparison-report.schema.json`](schemas/flowpeek-agent-comparison-report.schema.json) before publication.
+The command reads and scores the supplied files. It starts no provider and target process. Review the output against [`flopeek-agent-comparison-report.schema.json`](schemas/flopeek-agent-comparison-report.schema.json) before publication.
 
 ## Checked public status
 

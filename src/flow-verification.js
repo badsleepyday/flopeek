@@ -3,9 +3,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { atomicWriteJson } = require("./graph-cache");
 
-const FLOW_VERIFICATION_SCHEMA = "flowpeek-flow-verification/v1";
-const FLOW_VERIFICATION_STORE_SCHEMA = "flowpeek-flow-verifications/v1";
-const FLOW_VERIFICATIONS_RELATIVE_PATH = ".flowpeek/flow-verifications.json";
+const FLOW_VERIFICATION_SCHEMA = "flopeek-flow-verification/v1";
+const FLOW_VERIFICATION_STORE_SCHEMA = "flopeek-flow-verifications/v1";
+const FLOW_VERIFICATIONS_RELATIVE_PATH = ".flopeek/flow-verifications.json";
 const RISK_LEVELS = new Set(["low", "medium", "high", "critical", "unknown"]);
 
 class FlowVerificationError extends Error {
@@ -101,7 +101,7 @@ function readFlowVerificationStore(root, projectId) {
   try {
     const store = JSON.parse(fs.readFileSync(target, "utf8"));
     if (!store || typeof store !== "object" || Array.isArray(store) || store.schemaVersion !== FLOW_VERIFICATION_STORE_SCHEMA || store.projectId !== projectId || !Array.isArray(store.records) || !store.records.every(isRecord)) {
-      return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-verification-store", message: "Flow verification metadata does not match flowpeek-flow-verifications/v1." }] };
+      return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-verification-store", message: "Flow verification metadata does not match flopeek-flow-verifications/v1." }] };
     }
     return { status: "valid", path: target, store, diagnostics: [] };
   } catch (error) {
@@ -175,12 +175,12 @@ function changeReason(delta, record) {
 function resolveFlowVerification(root, graph, lens, options = {}) {
   const read = readFlowVerificationStore(root, graph.project.projectId);
   if (read.status === "invalid") {
-    return { schemaVersion: "flowpeek-flow-verification-resolution/v1", status: "unavailable", record: null, history: [], sourceGraphVersion: null, currentGraphVersion: graph.state.graphVersion, reason: read.diagnostics[0].message, diagnostics: read.diagnostics };
+    return { schemaVersion: "flopeek-flow-verification-resolution/v1", status: "unavailable", record: null, history: [], sourceGraphVersion: null, currentGraphVersion: graph.state.graphVersion, reason: read.diagnostics[0].message, diagnostics: read.diagnostics };
   }
   const record = latestRecord(read.store, lens.flow.id);
   const history = recordHistory(read.store, lens.flow.id);
   const base = {
-    schemaVersion: "flowpeek-flow-verification-resolution/v1",
+    schemaVersion: "flopeek-flow-verification-resolution/v1",
     record,
     history,
     sourceGraphVersion: record?.sourceGraphVersion ?? null,
@@ -196,7 +196,7 @@ function resolveFlowVerification(root, graph, lens, options = {}) {
   if (record.sourceGraphVersion > graph.state.graphVersion) return { ...base, status: "indeterminate", reason: "The verification references a graph version newer than the current local graph." };
   for (let version = record.sourceGraphVersion + 1; version <= graph.state.graphVersion; version += 1) {
     const delta = options.readDelta?.(version - 1, version) || null;
-    if (!delta) return { ...base, status: "indeterminate", reason: "The retained adjacent delta history is incomplete, so Flowpeek cannot prove whether this verification remains compatible." };
+    if (!delta) return { ...base, status: "indeterminate", reason: "The retained adjacent delta history is incomplete, so Flopeek cannot prove whether this verification remains compatible." };
     const reason = changeReason(delta, record);
     if (reason) return { ...base, status: "stale", reason };
   }
@@ -208,19 +208,19 @@ function resolveFlowVerification(root, graph, lens, options = {}) {
 function resolveDetachedFlowVerification(root, graph, flowId) {
   const read = readFlowVerificationStore(root, graph.project.projectId);
   if (read.status === "invalid") {
-    return { schemaVersion: "flowpeek-flow-verification-resolution/v1", status: "unavailable", record: null, history: [], sourceGraphVersion: null, currentGraphVersion: graph.state.graphVersion, reason: read.diagnostics[0].message, diagnostics: read.diagnostics };
+    return { schemaVersion: "flopeek-flow-verification-resolution/v1", status: "unavailable", record: null, history: [], sourceGraphVersion: null, currentGraphVersion: graph.state.graphVersion, reason: read.diagnostics[0].message, diagnostics: read.diagnostics };
   }
   const record = latestRecord(read.store, flowId);
   const history = recordHistory(read.store, flowId);
   return record
-    ? { schemaVersion: "flowpeek-flow-verification-resolution/v1", status: "detached", record, history, sourceGraphVersion: record.sourceGraphVersion, currentGraphVersion: graph.state.graphVersion, reason: "The verified flow is not present in the current static graph.", diagnostics: [] }
-    : { schemaVersion: "flowpeek-flow-verification-resolution/v1", status: "unverified", record: null, history: [], sourceGraphVersion: null, currentGraphVersion: graph.state.graphVersion, reason: "No flow-level human verification record exists.", diagnostics: [] };
+    ? { schemaVersion: "flopeek-flow-verification-resolution/v1", status: "detached", record, history, sourceGraphVersion: record.sourceGraphVersion, currentGraphVersion: graph.state.graphVersion, reason: "The verified flow is not present in the current static graph.", diagnostics: [] }
+    : { schemaVersion: "flopeek-flow-verification-resolution/v1", status: "unverified", record: null, history: [], sourceGraphVersion: null, currentGraphVersion: graph.state.graphVersion, reason: "No flow-level human verification record exists.", diagnostics: [] };
 }
 
 function getFlowVerificationHistory(root, graph, flowId) {
   const read = readFlowVerificationStore(root, graph.project.projectId);
-  if (read.status === "invalid") return { schemaVersion: "flowpeek-flow-verification-history/v1", status: "unavailable", flowId, records: [], diagnostics: read.diagnostics };
-  return { schemaVersion: "flowpeek-flow-verification-history/v1", status: "available", flowId, records: recordHistory(read.store, flowId), diagnostics: [] };
+  if (read.status === "invalid") return { schemaVersion: "flopeek-flow-verification-history/v1", status: "unavailable", flowId, records: [], diagnostics: read.diagnostics };
+  return { schemaVersion: "flopeek-flow-verification-history/v1", status: "available", flowId, records: recordHistory(read.store, flowId), diagnostics: [] };
 }
 
 module.exports = {

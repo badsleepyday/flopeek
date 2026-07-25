@@ -8,7 +8,7 @@ let helperPath = null;
 let helperAttempted = false;
 
 function helperTimeout(defaultTimeout) {
-  const value = Number(process.env.FLOWPEEK_TEST_MODE === "1" ? process.env.FLOWPEEK_TEST_HELPER_TIMEOUT_MS : null);
+  const value = Number(process.env.FLOPEEK_TEST_MODE === "1" ? process.env.FLOPEEK_TEST_HELPER_TIMEOUT_MS : null);
   return Number.isSafeInteger(value) && value > 0 ? value : defaultTimeout;
 }
 
@@ -21,7 +21,7 @@ function buildHelper() {
   const source = fs.readFileSync(sourcePath);
   const fingerprint = crypto.createHash("sha256").update(source).digest("hex").slice(0, 16);
   const extension = process.platform === "win32" ? ".exe" : "";
-  const target = path.join(os.tmpdir(), `flowpeek-go-facts-${fingerprint}${extension}`);
+  const target = path.join(os.tmpdir(), `flopeek-go-facts-${fingerprint}${extension}`);
   if (fs.existsSync(target)) return target;
   const temporary = `${target}.${process.pid}.${Date.now()}${extension}`;
   try {

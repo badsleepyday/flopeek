@@ -8,7 +8,7 @@ const { spawnSync } = require("node:child_process");
 const { atomicWriteJson } = require("./graph-cache");
 const { npmInvocation, runPackageAudit } = require("./package-policy");
 
-const CLEAN_ROOM_REPORT_SCHEMA = "flowpeek-clean-room-package-report/v1";
+const CLEAN_ROOM_REPORT_SCHEMA = "flopeek-clean-room-package-report/v1";
 
 class CleanRoomError extends Error {
   constructor(code, message, report = null) {
@@ -27,7 +27,7 @@ function sourceFingerprint(root) {
   const files = [];
   const walk = (directory) => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
-      if (entry.name === ".flowpeek" || entry.name === "node_modules") continue;
+      if (entry.name === ".flopeek" || entry.name === ".flowpeek" || entry.name === "node_modules") continue;
       const absolute = path.join(directory, entry.name);
       if (entry.isDirectory()) walk(absolute);
       else if (entry.isFile()) files.push(absolute);
@@ -106,7 +106,7 @@ async function inspectInstalledMcp(installedCli, fixture, consumer, timeoutMilli
     import("@modelcontextprotocol/sdk/client/stdio.js"),
   ]);
   const transport = new StdioClientTransport({ command: process.execPath, args: [installedCli, "mcp", fixture], cwd: consumer, stderr: "pipe" });
-  const client = new Client({ name: "flowpeek-clean-room-verifier", version: "1.0.0" });
+  const client = new Client({ name: "flopeek-clean-room-verifier", version: "1.0.0" });
   try {
     await withTimeout(client.connect(transport), timeoutMilliseconds, "MCP connection");
     const tools = await withTimeout(client.listTools(), timeoutMilliseconds, "MCP tools/list");
@@ -166,7 +166,7 @@ function cleanRoomReport() {
 async function verifyCleanRoomPackage(root, options = {}) {
   const repository = fs.realpathSync(root);
   const report = cleanRoomReport();
-  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-clean-room-"));
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-clean-room-"));
   const packDirectory = path.join(workspace, "pack");
   const consumer = path.join(workspace, "consumer");
   const fixture = path.join(workspace, "fixture");
@@ -183,28 +183,28 @@ async function verifyCleanRoomPackage(root, options = {}) {
 
     phase(report, "copy-fixture", () => {
       fs.cpSync(path.join(repository, "examples", "commerce-showcase"), fixture, { recursive: true, errorOnExist: true });
-      fs.writeFileSync(path.join(consumer, "package.json"), `${JSON.stringify({ name: "flowpeek-clean-room-consumer", private: true, version: "0.0.0" }, null, 2)}\n`, "utf8");
+      fs.writeFileSync(path.join(consumer, "package.json"), `${JSON.stringify({ name: "flopeek-clean-room-consumer", private: true, version: "0.0.0" }, null, 2)}\n`, "utf8");
     });
     const before = sourceFingerprint(fixture);
     const install = phase(report, "install-tarball", () => npmRun(["install", "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false", tarball], { cwd: consumer, timeoutMilliseconds: options.installTimeoutMilliseconds || 300_000 }));
     report.environment.installWarningsPresent = Boolean(install.stderr.trim());
-    const installedRoot = path.join(consumer, "node_modules", "flowpeek");
+    const installedRoot = path.join(consumer, "node_modules", "flopeek");
     const installedPackage = JSON.parse(fs.readFileSync(path.join(installedRoot, "package.json"), "utf8"));
-    const installedCli = path.join(installedRoot, installedPackage.bin?.flowpeek || "src/cli.js");
-    const binShim = path.join(consumer, "node_modules", ".bin", process.platform === "win32" ? "flowpeek.cmd" : "flowpeek");
-    if (!fs.existsSync(installedCli) || !fs.existsSync(binShim)) throw new CleanRoomError("missing-installed-binary", "The installed package did not expose the declared flowpeek binary.");
+    const installedCli = path.join(installedRoot, installedPackage.bin?.flopeek || "src/cli.js");
+    const binShim = path.join(consumer, "node_modules", ".bin", process.platform === "win32" ? "flopeek.cmd" : "flopeek");
+    if (!fs.existsSync(installedCli) || !fs.existsSync(binShim)) throw new CleanRoomError("missing-installed-binary", "The installed package did not expose the declared flopeek binary.");
 
-    const execFlowpeek = (argumentsList, label, timeoutMilliseconds = 120_000) => npmRun(["exec", "--offline", "--", "flowpeek", ...argumentsList], { cwd: consumer, label, timeoutMilliseconds });
-    const version = phase(report, "binary-version", () => execFlowpeek(["--version"], "installed flowpeek --version"));
-    const help = phase(report, "binary-help", () => execFlowpeek(["help"], "installed flowpeek help"));
-    const doctor = phase(report, "binary-doctor", () => parseJsonOutput(execFlowpeek(["doctor", fixture, "--platform", "all", "--format", "json"], "installed flowpeek doctor").stdout, "installed flowpeek doctor"));
-    const scan = phase(report, "bounded-static-scan", () => parseJsonOutput(execFlowpeek(["scan", fixture, "--format", "json", "--no-cache"], "installed flowpeek scan", 180_000).stdout, "installed flowpeek scan"));
+    const execFlopeek = (argumentsList, label, timeoutMilliseconds = 120_000) => npmRun(["exec", "--offline", "--", "flopeek", ...argumentsList], { cwd: consumer, label, timeoutMilliseconds });
+    const version = phase(report, "binary-version", () => execFlopeek(["--version"], "installed flopeek --version"));
+    const help = phase(report, "binary-help", () => execFlopeek(["help"], "installed flopeek help"));
+    const doctor = phase(report, "binary-doctor", () => parseJsonOutput(execFlopeek(["doctor", fixture, "--platform", "all", "--format", "json"], "installed flopeek doctor").stdout, "installed flopeek doctor"));
+    const scan = phase(report, "bounded-static-scan", () => parseJsonOutput(execFlopeek(["scan", fixture, "--format", "json", "--no-cache"], "installed flopeek scan", 180_000).stdout, "installed flopeek scan"));
     const mcp = await asyncPhase(report, "mcp-startup", () => inspectInstalledMcp(installedCli, fixture, consumer, options.mcpTimeoutMilliseconds || 60_000));
     const after = sourceFingerprint(fixture);
     report.smoke = {
-      packageIdentity: { expectedName: "flowpeek", actualName: installedPackage.name, expectedVersion: packed.packResult.version, actualVersion: installedPackage.version, binShimPresent: true },
+      packageIdentity: { expectedName: "flopeek", actualName: installedPackage.name, expectedVersion: packed.packResult.version, actualVersion: installedPackage.version, binShimPresent: true },
       version: { expected: installedPackage.version, actual: version.stdout.trim(), matched: version.stdout.trim() === installedPackage.version },
-      help: { rendered: help.stdout.includes("Flowpeek") && help.stdout.includes("flowpeek mcp") && help.stdout.includes("flowpeek scan") },
+      help: { rendered: help.stdout.includes("Flopeek") && help.stdout.includes("flopeek mcp") && help.stdout.includes("flopeek scan") },
       doctor: { schemaVersion: doctor.schemaVersion, ok: doctor.ok, errors: doctor.summary?.errors ?? null, warnings: doctor.summary?.warnings ?? null, strict: doctor.strict },
       scan: {
         schemaVersion: scan.schemaVersion,
@@ -219,7 +219,7 @@ async function verifyCleanRoomPackage(root, options = {}) {
       targetFixture: { copied: true, sourceFingerprintBefore: before, sourceFingerprintAfter: after, unchanged: before.value === after.value, applicationExecuted: false, testCommandExecuted: false },
     };
     const requiredSmoke = [
-      installedPackage.name === "flowpeek",
+      installedPackage.name === "flopeek",
       installedPackage.version === packed.packResult.version,
       report.smoke.version.matched,
       report.smoke.help.rendered,

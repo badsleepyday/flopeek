@@ -4,9 +4,9 @@ Status: accepted as a partial QA foundation.
 
 ## Decision
 
-Flowpeek exposes an append-only event protocol for explicit test-runner adapters. Events bind a run to the current Flow Context Ref and one displayed static Flow Lens step where applicable. A validated sequence reports run start, step start/pass/fail, and terminal pass/fail/cancel state. The grouped projection exposes the current step and failure stop step.
+Flopeek exposes an append-only event protocol for explicit test-runner adapters. Events bind a run to the current Flow Context Ref and one displayed static Flow Lens step where applicable. A validated sequence reports run start, step start/pass/fail, and terminal pass/fail/cancel state. The grouped projection exposes the current step and failure stop step.
 
-Flowpeek does not execute repository commands through MCP. Repository-owned test configuration remains executable truth. The journal accepts only sanitized single-line summaries and excludes source bodies, credentials, machine paths, and raw logs.
+Flopeek does not execute repository commands through MCP. Repository-owned test configuration remains executable truth. The journal accepts only sanitized single-line summaries and excludes source bodies, credentials, machine paths, and raw logs.
 
 ## Contract boundary
 

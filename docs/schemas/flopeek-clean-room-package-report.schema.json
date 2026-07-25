@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://flowpeek.dev/schemas/flowpeek-clean-room-package-report.schema.json",
-  "title": "Flowpeek Clean-Room Package Report",
+  "$id": "https://flopeek.dev/schemas/flopeek-clean-room-package-report.schema.json",
+  "title": "Flopeek Clean-Room Package Report",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "generatedAt", "status", "evidenceClass", "environment", "packageAudit", "artifact", "phases", "smoke", "cleanup", "publication", "limitations"],
   "properties": {
-    "schemaVersion": { "const": "flowpeek-clean-room-package-report/v1" },
+    "schemaVersion": { "const": "flopeek-clean-room-package-report/v1" },
     "generatedAt": { "type": "string", "format": "date-time" },
     "status": { "enum": ["passed", "failed"] },
     "evidenceClass": { "const": "clean-room-package-observation" },

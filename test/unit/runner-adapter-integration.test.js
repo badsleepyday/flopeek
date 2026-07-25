@@ -31,8 +31,8 @@ function runRepositoryCommand(command, args, options) {
   });
 }
 
-test("a repository-owned npm test command can report a current failing Flow Lens step without Flowpeek executing it", async () => {
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-runner-command-"));
+test("a repository-owned npm test command can report a current failing Flow Lens step without Flopeek executing it", async () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-runner-command-"));
   const root = path.join(temporary, "repository");
   const registryRoot = path.join(temporary, "registry");
   let app;
@@ -49,11 +49,11 @@ test("a repository-owned npm test command can report a current failing Flow Lens
     const args = process.platform === "win32" ? ["/d", "/s", "/c", "call npm.cmd test --silent"] : ["test", "--silent"];
     const runnerEnvironment = {
       ...process.env,
-      FLOWPEEK_EVENT_ENDPOINT: `http://127.0.0.1:${app.port}/api/test-run-events`,
-      FLOWPEEK_FLOW_ID: lens.flow.id,
-      FLOWPEEK_FLOW_CONTEXT_REF: lens.flow.contextRef,
-      FLOWPEEK_FLOW_STEP_ID: stepId,
-      FLOWPEEK_RUN_ID: runId,
+      FLOPEEK_EVENT_ENDPOINT: `http://127.0.0.1:${app.port}/api/test-run-events`,
+      FLOPEEK_FLOW_ID: lens.flow.id,
+      FLOPEEK_FLOW_CONTEXT_REF: lens.flow.contextRef,
+      FLOPEEK_FLOW_STEP_ID: stepId,
+      FLOPEEK_RUN_ID: runId,
     };
     delete runnerEnvironment.NODE_TEST_CONTEXT;
     const result = await runRepositoryCommand(command, args, {
@@ -69,7 +69,7 @@ test("a repository-owned npm test command can report a current failing Flow Lens
     assert.equal(run.status, "failed");
     assert.equal(run.stoppedAtStepId, stepId);
     assert.equal(run.events.length, 3);
-    const stored = fs.readFileSync(path.join(root, ".flowpeek", "test-runs", "events.json"), "utf8");
+    const stored = fs.readFileSync(path.join(root, ".flopeek", "test-runs", "events.json"), "utf8");
     assert.equal(stored.includes("Intentional fixture assertion failure"), false);
     if (result.stderr.trim()) assert.equal(stored.includes(result.stderr.trim()), false);
   } finally {

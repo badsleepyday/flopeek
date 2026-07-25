@@ -7,8 +7,8 @@ const { readLatestGraphDelta } = require("./graph-state");
 const { listHandoffWorkspaces } = require("./handoff-workspace");
 const { runtimeEvidenceSummary } = require("./runtime-evidence");
 
-const HANDOFF_CONTEXT_SCHEMA = "flowpeek-handoff-context/v1";
-const TOKENIZER_ID = "flowpeek-char4-estimator/v1";
+const HANDOFF_CONTEXT_SCHEMA = "flopeek-handoff-context/v1";
+const TOKENIZER_ID = "flopeek-char4-estimator/v1";
 const MIN_TOKEN_BUDGET = 1024;
 const MAX_TOKEN_BUDGET = 65536;
 const DEPTH_LIMITS = Object.freeze({

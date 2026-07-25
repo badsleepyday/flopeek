@@ -36,7 +36,7 @@ function proposal(lens, overrides = {}) {
 }
 
 test("agent proposal is an unverified current overlay, becomes stale, and enters the human review queue", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-agent-proposal-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-agent-proposal-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "agent-proposal" }));
     write(root, "src/orders.routes.ts", "router.post('/orders', () => submit());");
@@ -59,14 +59,14 @@ test("agent proposal is an unverified current overlay, becomes stale, and enters
     writeGraphCache(root, second, { reason: "filesystem", changedPaths: ["src/orders.routes.ts"] });
     assert.equal(getAgentSemanticProposal(second, flowId).status, "stale");
     assert.throws(() => recordAgentSemanticProposal(second, flowId, proposal(lens, { operationId: "stale-proposal" })), /current Flow Context Ref/);
-    assert.equal(fs.readFileSync(path.join(root, ".flowpeek", "agent-semantic-proposals.json"), "utf8").includes("submit({ changed"), false);
+    assert.equal(fs.readFileSync(path.join(root, ".flopeek", "agent-semantic-proposals.json"), "utf8").includes("submit({ changed"), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
 test("verified semantic memory is verification-backed and excludes stale records by default", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-semantic-memory-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-semantic-memory-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "semantic-memory" }));
     write(root, "src/orders.routes.ts", "router.post('/orders', () => submit());");
@@ -88,7 +88,7 @@ test("verified semantic memory is verification-backed and excludes stale records
     const memory = getVerifiedSemanticMemory(first, { query: "customer" });
     assert.equal(memory.records.length, 1);
     assert.equal(memory.records[0].reusable, true);
-    assert.equal(memory.storage.relativePath, ".flowpeek/flow-verifications.json");
+    assert.equal(memory.storage.relativePath, ".flopeek/flow-verifications.json");
     assert.equal(memory.storage.modelWeightsStored, false);
 
     write(root, "src/orders.routes.ts", "router.post('/orders', () => submit({ changed: true }));");
@@ -105,7 +105,7 @@ test("verified semantic memory is verification-backed and excludes stale records
 });
 
 test("agent proposal store rejects recursively unknown fields and is not overwritten", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-agent-proposal-schema-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-agent-proposal-schema-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "agent-proposal-schema" }));
     write(root, "src/route.ts", "router.get('/accounts', () => true);");
@@ -114,7 +114,7 @@ test("agent proposal store rejects recursively unknown fields and is not overwri
     const flowId = graph.flows[0].id;
     const lens = getFlowProjection(graph, flowId);
     recordAgentSemanticProposal(graph, flowId, proposal(lens));
-    const target = path.join(root, ".flowpeek", "agent-semantic-proposals.json");
+    const target = path.join(root, ".flopeek", "agent-semantic-proposals.json");
     const injected = JSON.parse(fs.readFileSync(target, "utf8"));
     injected.records[0].candidate.hiddenPayload = "must-not-be-served";
     fs.writeFileSync(target, JSON.stringify(injected), "utf8");

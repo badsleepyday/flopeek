@@ -24,7 +24,7 @@ async function post(baseUrl, pathname, body) {
 }
 
 test("local HTTP delivery surfaces share project identity and enforce workflow evidence gates", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-delivery-surfaces-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-delivery-surfaces-"));
   let app;
   try {
     write(root, "package.json", JSON.stringify({ name: "delivery-surfaces" }));
@@ -81,7 +81,7 @@ test("local HTTP delivery surfaces share project identity and enforce workflow e
 });
 
 test("MCP exposes the same local delivery workflow inventory without source bodies", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-delivery-mcp-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-delivery-mcp-"));
   let instance;
   let client;
   try {
@@ -110,19 +110,19 @@ test("MCP exposes the same local delivery workflow inventory without source bodi
   }
 });
 
-test("CLI workflow inventory does not scan a repository or create Flowpeek metadata", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-workflow-cli-"));
+test("CLI workflow inventory does not scan a repository or create Flopeek metadata", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-workflow-cli-"));
   try {
     const output = execFileSync(process.execPath, [path.join(__dirname, "..", "..", "src", "cli.js"), "work", "workflows", root, "--format", "json"], { encoding: "utf8" });
     assert.equal(JSON.parse(output).workflows[0].id, "agile-default");
-    assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false);
+    assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
 test("CLI reports one bounded dependency-readiness projection", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-work-dependencies-cli-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-work-dependencies-cli-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "dependency-cli" }));
     write(root, "src/app/api/orders/route.ts", "export async function GET() { return { ok: true }; }\n");
@@ -137,7 +137,7 @@ test("CLI reports one bounded dependency-readiness projection", () => {
     });
     const output = execFileSync(process.execPath, [path.join(__dirname, "..", "..", "src", "cli.js"), "work", "dependencies", root, "--record", "task.dependency-cli", "--format", "json"], { encoding: "utf8" });
     const result = JSON.parse(output);
-    assert.equal(result.schemaVersion, "flowpeek-work-dependency-status/v1");
+    assert.equal(result.schemaVersion, "flopeek-work-dependency-status/v1");
     assert.equal(result.summary.readyToStart, true);
     assert.match(result.limitation, /does not prove source implementation/);
   } finally {
@@ -146,15 +146,15 @@ test("CLI reports one bounded dependency-readiness projection", () => {
 });
 
 test("CLI work timeline reuses a current persistent graph for same-version Context Refs", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-work-timeline-cache-cli-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-work-timeline-cache-cli-"));
   try {
-    write(root, ".gitignore", ".flowpeek/\n");
+    write(root, ".gitignore", ".flopeek/\n");
     write(root, "package.json", JSON.stringify({ name: "timeline-cache-cli" }));
     write(root, "src/app/api/orders/route.ts", "export async function GET() { return { ok: true }; }\n");
     execFileSync("git", ["init", "--quiet"], { cwd: root });
     execFileSync("git", ["config", "core.autocrlf", "false"], { cwd: root });
-    execFileSync("git", ["config", "user.email", "flowpeek@example.test"], { cwd: root });
-    execFileSync("git", ["config", "user.name", "Flowpeek Test"], { cwd: root });
+    execFileSync("git", ["config", "user.email", "flopeek@example.test"], { cwd: root });
+    execFileSync("git", ["config", "user.name", "Flopeek Test"], { cwd: root });
     execFileSync("git", ["add", "."], { cwd: root });
     execFileSync("git", ["commit", "--quiet", "-m", "fixture"], { cwd: root });
 
@@ -170,7 +170,7 @@ test("CLI work timeline reuses a current persistent graph for same-version Conte
       createdBy: "developer",
       createdAt: "2026-07-24T00:00:00.000Z",
     });
-    const cachePath = path.join(root, ".flowpeek", "graph.json");
+    const cachePath = path.join(root, ".flopeek", "graph.json");
     const before = fs.readFileSync(cachePath, "utf8");
 
     const output = execFileSync(process.execPath, [path.join(__dirname, "..", "..", "src", "cli.js"), "work", "timeline", root, "--record", "task.timeline-cache-cli", "--format", "json"], { encoding: "utf8" });

@@ -17,7 +17,7 @@ function benchmarkCases(staleContextRef) {
 }
 
 test("legacy handoff quality gate measures bounded retrieval, stale detection, traceability, and honest outcome limits", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-handoff-quality-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-handoff-quality-"));
   try {
     fs.cpSync(FIXTURE, root, { recursive: true });
     const scanner = createRepositoryScanner(root);
@@ -30,7 +30,7 @@ test("legacy handoff quality gate measures bounded retrieval, stale detection, t
     writeGraphCache(root, current, { reason: "quality-benchmark-change", changedPaths: ["src/legacy/manager.ts"] });
     const report = getHandoffQuality(current, benchmarkCases(staleContextRef));
 
-    assert.equal(report.schemaVersion, "flowpeek-handoff-quality/v1");
+    assert.equal(report.schemaVersion, "flopeek-handoff-quality/v1");
     assert.equal(report.qualityGate.status, "passed");
     assert.equal(report.summary.retrievalOutcomes.passed, 2);
     assert.equal(report.summary.contextSize.withinBudget, true);
@@ -51,7 +51,7 @@ test("legacy handoff quality gate measures bounded retrieval, stale detection, t
 });
 
 test("handoff quality distinguishes declared agent outcomes from independent proof", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-handoff-outcome-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-handoff-outcome-"));
   try {
     fs.cpSync(FIXTURE, root, { recursive: true });
     const graph = scanRepository(root);
@@ -81,7 +81,7 @@ test("handoff quality distinguishes declared agent outcomes from independent pro
 });
 
 test("handoff quality measures a consented privacy-minimized human locating observation without promoting it to verification", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-handoff-human-observation-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-handoff-human-observation-"));
   try {
     fs.cpSync(FIXTURE, root, { recursive: true });
     const graph = scanRepository(root);

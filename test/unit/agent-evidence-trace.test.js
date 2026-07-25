@@ -35,13 +35,13 @@ function input(contextRef, overrides = {}) {
 }
 
 test("agent evidence traces are immutable, idempotent, and queryable by Context Ref", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-agent-evidence-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-agent-evidence-"));
   try {
     const current = graph(root);
     const contextRef = createContextRef(current.project.projectId, "flow", "flow:payment", current.state.graphVersion);
     const first = saveAgentEvidenceTrace(root, current, input(contextRef), { resolution: { status: "current" }, now: "2026-07-14T10:00:00.000Z" });
     assert.equal(first.created, true);
-    assert.equal(first.record.schemaVersion, "flowpeek-agent-evidence-trace/v1");
+    assert.equal(first.record.schemaVersion, "flopeek-agent-evidence-trace/v1");
     assert.equal(first.record.knowledgeClass, "agent-declared");
     assert.deepEqual(first.record.changedPaths, ["src/payment.ts", "test/payment.test.ts"]);
     assert.equal(first.record.project.evidenceGraphVersion, 3);
@@ -75,7 +75,7 @@ test("agent evidence traces are immutable, idempotent, and queryable by Context 
 });
 
 test("agent evidence traces reject unresolved refs and unsafe changed paths", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-agent-evidence-invalid-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-agent-evidence-invalid-"));
   try {
     const current = graph(root);
     const contextRef = createContextRef(current.project.projectId, "node", "file:src/payment.ts", 2);
@@ -91,7 +91,7 @@ test("agent evidence traces reject unresolved refs and unsafe changed paths", ()
 });
 
 test("invalid agent evidence metadata is preserved and reported unavailable", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-agent-evidence-store-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-agent-evidence-store-"));
   try {
     const current = graph(root);
     fs.mkdirSync(path.dirname(tracePath(root)), { recursive: true });

@@ -26,7 +26,7 @@ function evaluationInput(item) {
 }
 
 function evaluateSemanticSuggestionCorpus(corpus) {
-  if (corpus?.schemaVersion !== "flowpeek-semantic-flow-suggestion-evaluation/v1" || !Array.isArray(corpus.cases)) throw new Error("Invalid semantic suggestion evaluation corpus.");
+  if (corpus?.schemaVersion !== "flopeek-semantic-flow-suggestion-evaluation/v1" || !Array.isArray(corpus.cases)) throw new Error("Invalid semantic suggestion evaluation corpus.");
   const cases = corpus.cases.map((item) => {
     const { graph, lens } = evaluationInput(item);
     const actual = createSemanticFlowSuggestion(graph, lens);

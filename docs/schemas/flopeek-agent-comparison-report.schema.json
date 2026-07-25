@@ -1,17 +1,17 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://flowpeek.dev/schemas/flowpeek-agent-comparison-report.schema.json",
-  "title": "Flowpeek Agent Comparison Report",
+  "$id": "https://flopeek.dev/schemas/flopeek-agent-comparison-report.schema.json",
+  "title": "Flopeek Agent Comparison Report",
   "type": "object",
   "additionalProperties": true,
-  "required": ["schemaVersion", "studyId", "suite", "status", "evidenceClass", "providerExecutionInvokedByFlowpeek", "summary", "conclusionBoundary"],
+  "required": ["schemaVersion", "studyId", "suite", "status", "evidenceClass", "providerExecutionInvokedByFlopeek", "summary", "conclusionBoundary"],
   "properties": {
-    "schemaVersion": { "const": "flowpeek-agent-comparison-report/v1" },
+    "schemaVersion": { "const": "flopeek-agent-comparison-report/v1" },
     "studyId": { "type": "string", "minLength": 1 },
     "suite": { "type": "object", "required": ["id", "caseCount"], "properties": { "id": { "type": "string" }, "caseCount": { "type": "integer", "minimum": 1 }, "pairsMeasured": { "type": "integer", "minimum": 0 } } },
     "status": { "enum": ["not-run", "measured-from-supplied-provider-executions"] },
     "evidenceClass": { "enum": ["ai-provider-outcome", "ai-provider-outcome-with-committed-oracle"] },
-    "providerExecutionInvokedByFlowpeek": { "const": false },
+    "providerExecutionInvokedByFlopeek": { "const": false },
     "summary": { "type": ["object", "null"] },
     "conclusionBoundary": { "type": "string", "minLength": 1 }
   }

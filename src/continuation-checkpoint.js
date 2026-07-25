@@ -9,9 +9,9 @@ const { sourceBasis } = require("./durable-brief");
 const { readDeliveryStore } = require("./delivery-graph");
 const { listHandoffWorkspaces, portableText } = require("./handoff-workspace");
 
-const CONTINUATION_CHECKPOINT_SCHEMA = "flowpeek-continuation-checkpoint/v1";
-const CONTINUATION_CHECKPOINT_STORE_SCHEMA = "flowpeek-continuation-checkpoints/v1";
-const CONTINUATION_CHECKPOINT_STORE_RELATIVE_PATH = ".flowpeek/delivery/continuation-checkpoints.json";
+const CONTINUATION_CHECKPOINT_SCHEMA = "flopeek-continuation-checkpoint/v1";
+const CONTINUATION_CHECKPOINT_STORE_SCHEMA = "flopeek-continuation-checkpoints/v1";
+const CONTINUATION_CHECKPOINT_STORE_RELATIVE_PATH = ".flopeek/delivery/continuation-checkpoints.json";
 const MAX_CHECKPOINTS = 10_000;
 const MAX_WORK_RECORDS = 200;
 const MAX_CONTEXT_REFS = 100;
@@ -111,7 +111,7 @@ function normalizeContextRefs(graph, value) {
   const refs = value.map((contextRef, index) => {
     let parsed;
     try { parsed = parseContextRef(contextRef); } catch (error) { throw new ContinuationCheckpointError("invalid-context-ref", `selectedContextRefs[${index}] is invalid: ${error.message}`); }
-    if (parsed.projectId !== graph.project.projectId) throw new ContinuationCheckpointError("wrong-project-id", "A continuation checkpoint may reference only Context Refs from its current Flowpeek project.");
+    if (parsed.projectId !== graph.project.projectId) throw new ContinuationCheckpointError("wrong-project-id", "A continuation checkpoint may reference only Context Refs from its current Flopeek project.");
     if (parsed.graphVersion !== graph.state.graphVersion) throw new ContinuationCheckpointError("stale-context-ref", "Every selected Context Ref must target the current graph version when a checkpoint is created.", 409);
     return { contextRef: parsed.contextRef, kind: parsed.kind, contextId: parsed.contextId, graphVersion: parsed.graphVersion };
   });
@@ -213,7 +213,7 @@ function readContinuationCheckpointStore(root, projectId) {
       && new Set(operationIds).size === operationIds.length
       && new Set(supersededIds).size === supersededIds.length
       && store.records.every((record) => record.supersedes === null || (record.supersedes !== record.id && ids.includes(record.supersedes)));
-    if (!valid) return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-continuation-checkpoint-store", message: "Continuation checkpoint storage does not match flowpeek-continuation-checkpoints/v1." }] };
+    if (!valid) return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-continuation-checkpoint-store", message: "Continuation checkpoint storage does not match flopeek-continuation-checkpoints/v1." }] };
     return { status: "valid", path: target, store, diagnostics: [] };
   } catch (error) {
     return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-continuation-checkpoint-json", message: `Continuation checkpoint storage is not valid JSON (${error.message}).` }] };
@@ -279,7 +279,7 @@ function createContinuationCheckpoint(root, graph, input, options = {}) {
   const existingOperation = read.store.records.find((record) => record.operationId === normalized.operationId);
   if (existingOperation) {
     if (existingOperation.inputFingerprint !== inputFingerprint) throw new ContinuationCheckpointError("operation-id-conflict", "operationId already belongs to another continuation checkpoint.", 409);
-    return { schemaVersion: "flowpeek-continuation-checkpoint-create-result/v1", created: false, checkpoint: existingOperation };
+    return { schemaVersion: "flopeek-continuation-checkpoint-create-result/v1", created: false, checkpoint: existingOperation };
   }
   if (read.store.records.some((record) => record.id === normalized.id)) throw new ContinuationCheckpointError("checkpoint-exists", `Continuation checkpoint ${normalized.id} already exists.`, 409);
   if (read.store.records.length >= MAX_CHECKPOINTS) throw new ContinuationCheckpointError("checkpoint-store-full", `Continuation checkpoint storage reached its explicit ${MAX_CHECKPOINTS}-record limit.`, 507);
@@ -293,7 +293,7 @@ function createContinuationCheckpoint(root, graph, input, options = {}) {
     policy: { sourceBodies: "excluded", rawLogs: "excluded", credentials: "excluded", machinePaths: "excluded", privateReasoning: "excluded" },
   };
   atomicWriteJson(read.path, { ...read.store, records: [...read.store.records, checkpoint] });
-  return { schemaVersion: "flowpeek-continuation-checkpoint-create-result/v1", created: true, checkpoint };
+  return { schemaVersion: "flopeek-continuation-checkpoint-create-result/v1", created: true, checkpoint };
 }
 
 function freshness(graph, checkpoint) {
@@ -311,10 +311,10 @@ function lifecycleRecords(records) {
 
 function listContinuationCheckpoints(root, graph) {
   const read = readContinuationCheckpointStore(root, graph.project.projectId);
-  if (read.status === "invalid") return { schemaVersion: "flowpeek-continuation-checkpoint-list/v1", status: "unavailable", project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion }, records: [], diagnostics: read.diagnostics };
+  if (read.status === "invalid") return { schemaVersion: "flopeek-continuation-checkpoint-list/v1", status: "unavailable", project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion }, records: [], diagnostics: read.diagnostics };
   const records = lifecycleRecords(read.store.records).map((record) => ({ ...record, freshnessStatus: freshness(graph, record) }));
   return {
-    schemaVersion: "flowpeek-continuation-checkpoint-list/v1",
+    schemaVersion: "flopeek-continuation-checkpoint-list/v1",
     status: "available",
     project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion },
     storage: { relativePath: CONTINUATION_CHECKPOINT_STORE_RELATIVE_PATH, status: read.status },
@@ -326,11 +326,11 @@ function listContinuationCheckpoints(root, graph) {
 
 function getContinuationCheckpoint(root, graph, checkpointId) {
   const listed = listContinuationCheckpoints(root, graph);
-  if (listed.status !== "available") return { schemaVersion: "flowpeek-continuation-checkpoint-get/v1", status: "unavailable", checkpoint: null, diagnostics: listed.diagnostics };
+  if (listed.status !== "available") return { schemaVersion: "flopeek-continuation-checkpoint-get/v1", status: "unavailable", checkpoint: null, diagnostics: listed.diagnostics };
   const id = safeId(checkpointId, "checkpointId");
   const checkpoint = listed.records.find((record) => record.id === id);
   if (!checkpoint) throw new ContinuationCheckpointError("unknown-checkpoint", `Continuation checkpoint ${id} does not exist.`, 404);
-  return { schemaVersion: "flowpeek-continuation-checkpoint-get/v1", status: "available", checkpoint, diagnostics: [], limitation: listed.limitation };
+  return { schemaVersion: "flopeek-continuation-checkpoint-get/v1", status: "available", checkpoint, diagnostics: [], limitation: listed.limitation };
 }
 
 module.exports = {

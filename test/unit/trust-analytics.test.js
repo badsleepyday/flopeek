@@ -15,7 +15,7 @@ function write(root, relativePath, content) {
 }
 
 test("trust analytics reports independent evidence signals without inventing a truth score", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-trust-analytics-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-trust-analytics-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "trust-analytics-fixture" }));
     write(root, "src/orders/orders.routes.ts", "import { OrdersService } from './orders.service';\nrouter.post('/orders', () => OrdersService.create());");

@@ -12,7 +12,7 @@ References are machine-local workspace metadata outside scanned repositories. Th
 
 - A reference is human-authored metadata, not a parser fact, graph edge, runtime trace, verification, or automatic multi-project flow.
 - Equal names, routes, and symbols never create a reference.
-- The hub keeps project graphs, graph versions, watchers, and `.flowpeek` caches isolated.
+- The hub keeps project graphs, graph versions, watchers, and `.flopeek` caches isolated.
 - The viewer can declare and inspect a reference from one Flow Lens to another active project; it does not execute calls or tests.
 - Target Flow Lenses are exposed through deterministic catalog pages with total, returned, omitted IDs, and previous/next offsets, so a large target project never silently hides a selectable flow.
 

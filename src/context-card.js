@@ -1,5 +1,5 @@
-const CONTEXT_CARD_SCHEMA = "flowpeek-context/v1";
-const CONTEXT_PACKET_SCHEMA = "flowpeek-context-packet/v1";
+const CONTEXT_CARD_SCHEMA = "flopeek-context/v1";
+const CONTEXT_PACKET_SCHEMA = "flopeek-context-packet/v1";
 
 class ContextRefError extends Error {
   constructor(code, message) {
@@ -87,7 +87,7 @@ function createNodeContextCard(graph, detail) {
   const hasManualDescription = typeof node.manualDescription === "string" && node.manualDescription.trim();
   const limitations = [
     "This card summarizes static parser evidence. It is not a runtime trace, source diff, or business-intent claim.",
-    "Relationships are limited to Flowpeek's documented language and framework support.",
+    "Relationships are limited to Flopeek's documented language and framework support.",
   ];
   if (!tests.items.length) limitations.push("No direct related test relationship was found; that does not prove behavioral coverage is absent.");
   if (hasManualDescription) limitations.push("The local human description has no attributed verifier or lifecycle record yet.");
@@ -345,7 +345,7 @@ function resolveContextRef(graph, value, options = {}) {
   }
   const currentVersion = graph?.state?.graphVersion;
   if (!graph?.project?.projectId || !Number.isSafeInteger(currentVersion)) return { status: "unresolved", requestedRef: value, reason: "Current graph identity is unavailable.", code: "missing-graph-identity", card: null, successorCandidates: [] };
-  if (parsed.projectId !== graph.project.projectId) return { status: "unresolved", requestedRef: value, reason: "Context Ref belongs to a different Flowpeek project.", code: "wrong-project-id", card: null, successorCandidates: [] };
+  if (parsed.projectId !== graph.project.projectId) return { status: "unresolved", requestedRef: value, reason: "Context Ref belongs to a different Flopeek project.", code: "wrong-project-id", card: null, successorCandidates: [] };
   if (!["node", "flow"].includes(parsed.kind)) return { status: "unresolved", requestedRef: value, reason: `Context kind '${parsed.kind}' is not implemented.`, code: "unsupported-context-kind", card: null, successorCandidates: [] };
   if (parsed.graphVersion > currentVersion) return { status: "unresolved", requestedRef: value, reason: "Context Ref targets a graph version newer than the local graph.", code: "future-graph-version", card: null, successorCandidates: [] };
   return parsed.kind === "flow"

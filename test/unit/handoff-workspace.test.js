@@ -24,7 +24,7 @@ function fixture(root, name) {
 }
 
 test("handoff workspaces and human notes are append-only, versioned, attributed, and superseded explicitly", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-handoff-workspace-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-handoff-workspace-"));
   try {
     const graph = fixture(root, "handoff-workspace-fixture");
     const flow = graph.flows.find((item) => item.title === "POST /payments/approve");
@@ -75,15 +75,15 @@ test("handoff workspaces and human notes are append-only, versioned, attributed,
 });
 
 test("JSON and Markdown handoff exports import as foreign read-only artifacts without source bodies or machine roots", () => {
-  const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-handoff-export-"));
-  const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-handoff-import-"));
+  const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-handoff-export-"));
+  const targetRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-handoff-import-"));
   try {
     const sourceGraph = fixture(sourceRoot, "handoff-export-source");
     saveHandoffWorkspace(sourceRoot, sourceGraph, { operationId: "portable-v1", author: "Source team", purpose: "Explain the payment boundary to a receiving team.", unresolvedQuestions: ["Is provider retry behavior documented elsewhere?"] }, { now: "2026-07-14T06:00:00.000Z" });
     const json = exportHandoffWorkspace(sourceRoot, sourceGraph, { format: "json" });
     const markdown = exportHandoffWorkspace(sourceRoot, sourceGraph, { format: "markdown" });
-    assert.equal(json.schemaVersion, "flowpeek-handoff-export/v1");
-    assert.match(markdown.markdown, /flowpeek-handoff-json-base64:/);
+    assert.equal(json.schemaVersion, "flopeek-handoff-export/v1");
+    assert.match(markdown.markdown, /flopeek-handoff-json-base64:/);
     const serialized = JSON.stringify({ json, markdown });
     assert.equal(serialized.includes(sourceRoot), false);
     assert.equal(serialized.includes("SOURCE_BODY_SENTINEL"), false);
@@ -118,12 +118,12 @@ test("JSON and Markdown handoff exports import as foreign read-only artifacts wi
 });
 
 test("invalid handoff metadata is reported unavailable and never overwritten", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-handoff-invalid-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-handoff-invalid-"));
   try {
     const graph = fixture(root, "handoff-invalid-store");
-    const storePath = path.join(root, ".flowpeek", "handoff", "workspaces.json");
+    const storePath = path.join(root, ".flopeek", "handoff", "workspaces.json");
     fs.mkdirSync(path.dirname(storePath), { recursive: true });
-    fs.writeFileSync(storePath, JSON.stringify({ schemaVersion: "flowpeek-handoff-workspaces/v1", projectId: graph.project.projectId, records: [{ id: "broken" }] }));
+    fs.writeFileSync(storePath, JSON.stringify({ schemaVersion: "flopeek-handoff-workspaces/v1", projectId: graph.project.projectId, records: [{ id: "broken" }] }));
     const before = fs.readFileSync(storePath, "utf8");
     assert.equal(listHandoffWorkspaces(root, graph).status, "unavailable");
     assert.throws(() => saveHandoffWorkspace(root, graph, { operationId: "must-not-overwrite", author: "Test", purpose: "This should fail." }), /does not match/);

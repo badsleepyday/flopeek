@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "flowpeek-public-proof-evidence/v1",
+  "schemaVersion": "flopeek-public-proof-evidence/v1",
   "updatedAt": "2026-07-14T00:00:00.000Z",
   "relationshipAudit": {
     "manifest": "benchmarks/real-repository-corpus.json",
@@ -16,7 +16,7 @@
     "limitation": "This result covers only the manually audited outgoing relationships declared by the pinned manifest. It is not a global score for every edge, language construct, repository, or runtime behavior."
   },
   "incrementalPerformance": {
-    "benchmark": "flowpeek-incremental-scan/v1",
+    "benchmark": "flopeek-incremental-scan/v1",
     "runDates": ["2026-07-13", "2026-07-14"],
     "runtime": "Node.js 24.14.1",
     "iterationsPerRepository": 3,

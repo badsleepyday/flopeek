@@ -1,10 +1,10 @@
-# Flowpeek product contract
+# Flopeek product contract
 
-> **Use this document to judge scope and product decisions.** For installation and daily use, start with the [user guide](docs/using-flowpeek.md). For exact parser coverage, use [SUPPORT.md](SUPPORT.md).
+> **Use this document to judge scope and product decisions.** For installation and daily use, start with the [user guide](docs/using-flopeek.md). For exact parser coverage, use [SUPPORT.md](SUPPORT.md).
 
 ## Document authority
 
-This document is the canonical definition of **what Flowpeek is, who it serves, which problems it solves, and which product rules must remain true while it evolves**.
+This document is the canonical definition of **what Flopeek is, who it serves, which problems it solves, and which product rules must remain true while it evolves**.
 
 It is intentionally separate from the delivery roadmap:
 
@@ -34,11 +34,11 @@ Product prose must not make a `planned` or `exploratory` capability sound curren
 
 ### One sentence
 
-**Flowpeek turns an existing repository into small, evidence-backed, locally scoped technical-flow contexts that people can understand and coding agents can use through the same local cache.**
+**Flopeek turns an existing repository into small, evidence-backed, locally scoped technical-flow contexts that people can understand and coding agents can use through the same local cache.**
 
 ### Short description
 
-Flowpeek is a local-first code-intelligence and delivery-context tool. It scans supported source code without executing the target application, builds a technical evidence graph, projects bounded application flows, and exposes the result through a CLI, a lightweight local viewer, and an MCP server that is read-only for repository source.
+Flopeek is a local-first code-intelligence and delivery-context tool. It scans supported source code without executing the target application, builds a technical evidence graph, projects bounded application flows, and exposes the result through a CLI, a lightweight local viewer, and an MCP server that is read-only for repository source.
 
 The long-term product connects that technical evidence to requirements, decisions, implementation work, tests, review, release, and observation through configurable SDLC methods.
 
@@ -62,7 +62,7 @@ repository changes
 The following statements are the product-direction lock used during implementation,
 dogfooding, stress testing, and review:
 
-1. Flowpeek humanizes existing projects as bounded technical flows; it does not
+1. Flopeek humanizes existing projects as bounded technical flows; it does not
    replace the repository, IDE, project tracker, test runner, or coding agent.
 2. Deterministic repository evidence remains the foundation. AI, ML, generated
    wording, reviewer opinion, and workflow status may enrich or assess evidence,
@@ -77,7 +77,7 @@ dogfooding, stress testing, and review:
 6. SDLC methods remain templates over evidence-linked delivery records. Changing
    a task or checkpoint cannot fabricate implementation, verification, release,
    or runtime evidence.
-7. Flowpeek stays local-first and permission-bounded. It may coordinate approved
+7. Flopeek stays local-first and permission-bounded. It may coordinate approved
    evidence workflows later, but it does not become an unrestricted autonomous
    shell, source writer, deployment agent, or production control plane.
 
@@ -98,7 +98,7 @@ People commonly face these problems:
 - A project records tasks and releases without preserving which code-flow evidence supported them.
 - Documentation drifts because generated technical facts and human explanations are not distinguished.
 
-Flowpeek addresses these problems by making technical evidence navigable, shareable, versioned, and reusable across human and agent workflows.
+Flopeek addresses these problems by making technical evidence navigable, shareable, versioned, and reusable across human and agent workflows.
 
 ## Target users
 
@@ -149,11 +149,11 @@ Technical claims must originate in supported parser or repository evidence. Frie
 
 ### Static analysis is not runtime truth
 
-Flowpeek must never describe a stored static edge as proof that a call occurred in production. Runtime evidence may be integrated later, but it must remain a separate evidence type.
+Flopeek must never describe a stored static edge as proof that a call occurred in production. Runtime evidence may be integrated later, but it must remain a separate evidence type.
 
 ### Generated technical flow is not verified business flow
 
-Flowpeek can derive a technical path. It cannot infer an unwritten approval rule, original business reason, or operational exception as fact. Such knowledge remains `inferred`, `verified`, or `unknown`.
+Flopeek can derive a technical path. It cannot infer an unwritten approval rule, original business reason, or operational exception as fact. Such knowledge remains `inferred`, `verified`, or `unknown`.
 
 ### Local-first by default
 
@@ -181,15 +181,15 @@ An SDLC checkpoint can reference a technical flow, but changing a task status ca
 
 ### Developer governance remains outside the product runtime
 
-Portable reviewer roles and provider-diverse review runs govern how Flowpeek is designed, tested, and released. They are an external developer ecosystem, not Flowpeek graph nodes, runtime personas, evidence authorities, or customer-facing product dependencies. Flowpeek may consume a review outcome as release evidence only when its provenance and scope are explicit; a role name alone never proves independence or correctness.
+Portable reviewer roles and provider-diverse review runs govern how Flopeek is designed, tested, and released. They are an external developer ecosystem, not Flopeek graph nodes, runtime personas, evidence authorities, or customer-facing product dependencies. Flopeek may consume a review outcome as release evidence only when its provenance and scope are explicit; a role name alone never proves independence or correctness.
 
 ### Trust is evidence observability, not a score
 
-Flowpeek may summarize evidence availability, provenance, coverage denominators, and freshness. It must not collapse parser coverage, human verification, agent declarations, test events, runtime observations, or benchmark results into one project truth score. The active repository has no precision or recall value unless independently labeled ground truth for that repository is supplied.
+Flopeek may summarize evidence availability, provenance, coverage denominators, and freshness. It must not collapse parser coverage, human verification, agent declarations, test events, runtime observations, or benchmark results into one project truth score. The active repository has no precision or recall value unless independently labeled ground truth for that repository is supplied.
 
 ## Capability ladder
 
-Flowpeek evolves through four capability levels. Each level depends on the trustworthiness of the levels below it.
+Flopeek evolves through four capability levels. Each level depends on the trustworthiness of the levels below it.
 
 ### Level 1 — Observe
 
@@ -216,10 +216,10 @@ Status: `partial`
 - Preserve append-only agent evidence traces that request only concise declared outcomes and explicitly prohibit prompts, hidden state, source contents, credentials, raw logs, or chain-of-thought.
 - Preserve immutable local feedback labels for one exact deterministic suggestion, optionally linked to a same-context agent trace, without treating a label as human verification.
 - Accept an unverified provider/agent semantic proposal only for a current Flow Context Ref; let a person revise it or use it as a draft, and reject verification when the reviewed graph state changed.
-- Expose reusable semantic memory only from current/compatible human verification metadata; `.flowpeek` is not an embedded-model or model-weight directory.
+- Expose reusable semantic memory only from current/compatible human verification metadata; `.flopeek` is not an embedded-model or model-weight directory.
 - Preserve immutable Handoff Workspace versions and append-only attributed notes; export/import them portably while keeping every imported packet foreign, read-only, and unverified.
 - Group multiple independently identified projects behind one optional local workspace hub/web port without merging their graphs or inferring cross-project edges; allow only explicit current-Context-Ref human contract declarations between them.
-- Show interface-contract availability—including the narrow exact-Next.js literal-contract pilot—and explicit runner-adapter progress/failure evidence without turning MCP into a shell or Flowpeek into a second test framework.
+- Show interface-contract availability—including the narrow exact-Next.js literal-contract pilot—and explicit runner-adapter progress/failure evidence without turning MCP into a shell or Flopeek into a second test framework.
 - Keep graph, history, derived projections, semantic suggestions, Context Packets, and handoff metadata as separately auditable artifact classes with visible freshness and invalidation reasons.
 - Expose one shared Trust Analytics contract to people and agents, preserving independent evidence classes and returning unavailable instead of inventing repository accuracy.
 - Expose one validated public Product Proof contract that shows bounded audited accuracy, pinned incremental performance, current-repository facts, differentiating capabilities, reproduction commands, and explicit non-claims to people and agents.
@@ -233,7 +233,7 @@ Status: `partial`
 - Suggest technical roles and flow groupings with evidence (`current` for bounded HTTP/request flows; supported package-script, framework-command, and scheduler entries explicitly abstain until their own deterministic wording contract exists).
 - Accept bounded agent/provider draft proposals while keeping human review and verification authoritative (`current`).
 - Recommend inspection, testing, review, and documentation actions (`partial`).
-- Track explicit runner-adapter progress and failure at displayed static steps through a tested fixture (`partial`; Flowpeek does not execute tests or claim real-CI integration).
+- Track explicit runner-adapter progress and failure at displayed static steps through a tested fixture (`partial`; Flopeek does not execute tests or claim real-CI integration).
 - Attach Context Cards to requirements and SDLC checkpoints.
 - Enforce evidence requirements for local workflow transitions (`current` for built-in Agile/Waterfall and validated custom definitions; external evidence authority remains out of scope).
 - Preserve local Work records, planned windows, append-only actual events, owner/dependency metadata, and current/stale Context Ref status (`current`; the Viewer ledger is read-only).
@@ -246,7 +246,7 @@ Status: `planned`
 - Integrate evidence from Git hosting, CI, deployment, and observability systems.
 - Support permissioned actions only through explicit integrations and approval policies.
 
-Flowpeek does not become an unrestricted autonomous coding or deployment agent at Level 4.
+Flopeek does not become an unrestricted autonomous coding or deployment agent at Level 4.
 
 ## Core product loops
 
@@ -323,7 +323,7 @@ Goal or requirement
 
 ## Conceptual model
 
-Flowpeek uses three connected graph domains rather than mixing every relationship into one meaning.
+Flopeek uses three connected graph domains rather than mixing every relationship into one meaning.
 
 ### Evidence Graph
 
@@ -497,11 +497,11 @@ Status: `current` unless marked otherwise.
 - Versioned handoff quality reports over explicit legacy-style fixture cases, including bounded retrieval stages, observed composition time, token size, stale-context detection, evidence traceability, and separately classified agent outcomes without runtime claims.
 - Explicit opt-in runtime-observation metadata bound to Context Refs, with source/log/credential/path sanitization, separate local retention, and expired manifests; it never creates static graph edges or upgrades another evidence class.
 - Source-read-only MCP tools for overview, node search, evidence, node/flow Context Cards, flow verification, dependencies, static entry flows, Flow Lens, captured adjacent Flow Lens comparison, impact, tests, capabilities, graph delta, changed contexts, refresh, Git snapshots, bounded active-branch path-touch Git evidence, and exact Context Ref continuity across two static Git snapshots, plus bounded local agent-trace, semantic-feedback, Delivery Work-record, workflow-assignment, transition, actual-event, immutable continuation-checkpoint, and immutable planned-overlay/Plan Ref metadata tools. Flow Lens and Flow Context Card requests share one strict bounded-depth contract across MCP, HTTP, viewer copy actions, JSON, Markdown, and derived caching.
-- A provider-independent `flowpeek-agent-bootstrap/v1` contract plus project-local, non-destructive integration for Codex, Claude Code, Cursor, and Gemini CLI. The generated skill standardizes graph-first orientation, source fallback, post-edit refresh, and evidence limits without embedding provider personas or giving Flowpeek source-write authority.
-- A source-pinned repository-orientation retrieval benchmark that compares literal direct-repository retrieval with Flowpeek static context while keeping deterministic results, human observations, and provider outcomes separate. Missing baseline flow/stale capabilities remain unavailable rather than fabricated as failures.
-- A provider-neutral paired agent-comparison evaluator for explicitly supplied sessions with and without Flowpeek. It validates condition isolation, consent, graph identity, Context Refs, outcomes, separately reviewed claims, verification, and optional cost without invoking a provider or treating agent output as graph truth.
+- A provider-independent `flopeek-agent-bootstrap/v1` contract plus project-local, non-destructive integration for Codex, Claude Code, Cursor, and Gemini CLI. The generated skill standardizes graph-first orientation, source fallback, post-edit refresh, and evidence limits without embedding provider personas or giving Flopeek source-write authority.
+- A source-pinned repository-orientation retrieval benchmark that compares literal direct-repository retrieval with Flopeek static context while keeping deterministic results, human observations, and provider outcomes separate. Missing baseline flow/stale capabilities remain unavailable rather than fabricated as failures.
+- A provider-neutral paired agent-comparison evaluator for explicitly supplied sessions with and without Flopeek. It validates condition isolation, consent, graph identity, Context Refs, outcomes, separately reviewed claims, verification, and optional cost without invoking a provider or treating agent output as graph truth.
 - An explicit npm package allowlist and clean-room tarball verifier that installs the exact private artifact into an isolated temporary consumer, checks bounded CLI/scan/MCP contracts with lifecycle scripts disabled, fingerprints the copied fixture before and after, and cleans all temporary state. This is packaging evidence, not publication permission or release readiness.
-- Optional repository-local reviewer skills and a portable `flowpeek-independent-review/v1` artifact contract for UI/UX, implementation, system-flow, documentation, and release-readiness review. Reviewer output remains advisory evidence and never changes parser facts or creates human verification.
+- Optional repository-local reviewer skills and a portable `flopeek-independent-review/v1` artifact contract for UI/UX, implementation, system-flow, documentation, and release-readiness review. Reviewer output remains advisory evidence and never changes parser facts or creates human verification.
 - Incremental parser-fact reuse and global relationship rebuilding.
 - Static Git commit snapshots, flow/topology comparison, and Context Ref continuity projection across two snapshots.
 - Deterministic HTTP/request semantic suggestions with versioned candidate fields, reasons, evidence references, confidence, and explicit abstention.
@@ -517,7 +517,7 @@ Current limitations include:
 - repository scope configuration is path-based; it does not infer semantic ownership or execute project configuration;
 - deterministic route-oriented semantic suggestions and local immutable feedback capture are implemented, while trained models and business-purpose inference are not; the local SDLC workflow foundation, immutable continuation checkpoints, immutable planned overlays/Plan Refs with CLI/HTTP/MCP parity, an opt-in Viewer Continue mode, append-only human reconciliation records, deterministic baseline/plan/current comparison, read-only local checkpoint divergence, and bounded agent continuation packets exist, but checkpoint editing and external evidence authority are not current;
 - dynamic/runtime-only relationships remain outside static proof.
-- Runtime observations are caller-supplied metadata only; Flowpeek does not run probes, collect logs, or infer runtime behavior from them.
+- Runtime observations are caller-supplied metadata only; Flopeek does not run probes, collect logs, or infer runtime behavior from them.
 
 ## Target functional scope
 
@@ -615,13 +615,13 @@ Useful features include:
 - symbol-name tokens;
 - human corrections from previous graph versions.
 
-The first inference engine is deterministic. A trained model is permitted only after a versioned human-reviewed dataset and held-out evaluation exist. Flowpeek now provides a private cohort contract and recommendation gate, but no real cohort is committed and no model is approved. Every model must support abstention and publish calibration, precision, recall, coverage, and correction rates.
+The first inference engine is deterministic. A trained model is permitted only after a versioned human-reviewed dataset and held-out evaluation exist. Flopeek now provides a private cohort contract and recommendation gate, but no real cohort is committed and no model is approved. Every model must support abstention and publish calibration, precision, recall, coverage, and correction rates.
 
 An optional LLM may improve wording for a selected Context Card. It cannot create or modify extracted graph evidence, silently approve a business statement, or mark its own suggestion as verified.
 
 ## SDLC method model
 
-Flowpeek implements one generic workflow engine. Agile, Waterfall, and team-specific processes are templates over that engine.
+Flopeek implements one generic workflow engine. Agile, Waterfall, and team-specific processes are templates over that engine.
 
 Each workflow definition contains:
 
@@ -653,7 +653,7 @@ requires:
   - release evidence
 ```
 
-Flowpeek may integrate with issue trackers, Git hosting, CI, deployments, and observability. External writes or executions require explicit permissions and approval. A workflow status alone never proves that technical work succeeded.
+Flopeek may integrate with issue trackers, Git hosting, CI, deployments, and observability. External writes or executions require explicit permissions and approval. A workflow status alone never proves that technical work succeeded.
 
 ## Success measures
 
@@ -712,7 +712,7 @@ These decisions must be resolved through explicit ADRs before their dependent im
 - Default retention policy for local graph deltas and workflow events.
 - Storage backend after JSON cache size becomes a bottleneck.
 - Human identity model for local verification metadata.
-- Boundary between Flowpeek workflow guidance and permissioned workflow execution.
+- Boundary between Flopeek workflow guidance and permissioned workflow execution.
 - Integration authentication and secret-storage policy.
 - Licensing and public distribution model.
 

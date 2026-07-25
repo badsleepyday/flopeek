@@ -6,11 +6,11 @@ Accepted.
 
 ## Context
 
-Flow Lens already exposes bounded static HTTP/request steps, roles, parser-edge evidence, and boundaries. People still have to translate those technical facts into a short title and purpose before verification. Doing that with an opaque model would weaken Flowpeek's local, deterministic trust boundary and make unsupported interpretations difficult to distinguish from evidence.
+Flow Lens already exposes bounded static HTTP/request steps, roles, parser-edge evidence, and boundaries. People still have to translate those technical facts into a short title and purpose before verification. Doing that with an opaque model would weaken Flopeek's local, deterministic trust boundary and make unsupported interpretations difficult to distinguish from evidence.
 
 ## Decision
 
-`src/semantic-flow-suggestion.js` produces `flowpeek-semantic-flow-suggestion/v1` from one current Flow Lens. It uses only a literal HTTP method/route, displayed technical roles, direct transition IDs, static boundaries, and current Context Refs. It returns either:
+`src/semantic-flow-suggestion.js` produces `flopeek-semantic-flow-suggestion/v1` from one current Flow Lens. It uses only a literal HTTP method/route, displayed technical roles, direct transition IDs, static boundaries, and current Context Refs. It returns either:
 
 - `suggested`, with candidate title, technical purpose, request role, grouping, confidence, reasons, and evidence references; or
 - `abstained`, with a stable code, reason, and missing evidence.

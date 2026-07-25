@@ -13,10 +13,10 @@ record Output(List<FileFact> facts);
 
 public static class Program {
 static void TestLifecycleHook() {
-  if (Environment.GetEnvironmentVariable("FLOWPEEK_TEST_MODE") != "1") return;
-  var pidFile = Environment.GetEnvironmentVariable("FLOWPEEK_TEST_HELPER_PID_FILE");
+  if (Environment.GetEnvironmentVariable("FLOPEEK_TEST_MODE") != "1") return;
+  var pidFile = Environment.GetEnvironmentVariable("FLOPEEK_TEST_HELPER_PID_FILE");
   if (!string.IsNullOrWhiteSpace(pidFile)) File.WriteAllText(pidFile, Environment.ProcessId.ToString());
-  if (int.TryParse(Environment.GetEnvironmentVariable("FLOWPEEK_TEST_HELPER_DELAY_MS"), out var milliseconds) && milliseconds > 0) Thread.Sleep(milliseconds);
+  if (int.TryParse(Environment.GetEnvironmentVariable("FLOPEEK_TEST_HELPER_DELAY_MS"), out var milliseconds) && milliseconds > 0) Thread.Sleep(milliseconds);
 }
 
 static Range RangeOf(SyntaxNode node) {

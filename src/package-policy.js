@@ -4,8 +4,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
-const PACKAGE_POLICY_SCHEMA = "flowpeek-package-policy/v2";
-const PACKAGE_AUDIT_SCHEMA = "flowpeek-package-audit/v1";
+const PACKAGE_POLICY_SCHEMA = "flopeek-package-policy/v2";
+const PACKAGE_AUDIT_SCHEMA = "flopeek-package-audit/v1";
 
 class PackagePolicyError extends Error {
   constructor(code, message, details = null) {
@@ -41,7 +41,7 @@ function validatePolicy(input) {
   exactKeys(input, ["schemaVersion", "package", "allowedExactPaths", "allowedDirectories", "requiredPaths", "deniedPathSegments", "deniedBasenames", "deniedBasenamePrefixes", "deniedSuffixes", "maximumEntries", "maximumUnpackedBytes"], "policy");
   if (input.schemaVersion !== PACKAGE_POLICY_SCHEMA) throw new PackagePolicyError("invalid-schema", `policy.schemaVersion must be ${PACKAGE_POLICY_SCHEMA}.`);
   exactKeys(input.package, ["name", "publication", "bin", "minimumNodeMajor"], "policy.package");
-  if (input.package.name !== "flowpeek") throw new PackagePolicyError("invalid-package-name", "policy.package.name must be flowpeek.");
+  if (input.package.name !== "flopeek") throw new PackagePolicyError("invalid-package-name", "policy.package.name must be flopeek.");
   exactKeys(input.package.publication, ["state", "distTag", "approvalFile"], "policy.package.publication");
   if (input.package.publication.state !== "prepared") throw new PackagePolicyError("unsafe-release-policy", "The package publication state must remain prepared until a separate release approval.");
   if (input.package.publication.distTag !== "beta") throw new PackagePolicyError("unsafe-release-policy", "The prepared package must use the beta dist-tag.");
@@ -116,7 +116,7 @@ function auditPackageFiles(packResult, policyInput, packageJson) {
     errors.push({ code: "release-publication-metadata", expectedAccess: "public", expectedDistTag: policy.package.publication.distTag });
   }
   if (packageJson.scripts?.prepublishOnly !== "npm run verify:npm-publication") errors.push({ code: "release-approval-boundary", expectedScript: "npm run verify:npm-publication" });
-  if (packageJson.bin?.flowpeek !== policy.package.bin) errors.push({ code: "binary-path-mismatch", expected: policy.package.bin, actual: packageJson.bin?.flowpeek ?? null });
+  if (packageJson.bin?.flopeek !== policy.package.bin) errors.push({ code: "binary-path-mismatch", expected: policy.package.bin, actual: packageJson.bin?.flopeek ?? null });
   const declaredNode = Number(String(packageJson.engines?.node || "").match(/\d+/u)?.[0]);
   if (!Number.isSafeInteger(declaredNode) || declaredNode < policy.package.minimumNodeMajor) errors.push({ code: "node-engine-mismatch", minimum: policy.package.minimumNodeMajor, actual: packageJson.engines?.node ?? null });
   return {

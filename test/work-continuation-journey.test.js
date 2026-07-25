@@ -12,7 +12,7 @@ function write(root, file, content) { const target = path.join(root, file); fs.m
 function payload(result) { assert.equal(result.isError, undefined); return JSON.parse(result.content.find((item) => item.type === "text").text); }
 
 test("stdio MCP supports the bounded continuation handoff journey without source-write authority", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-continuation-journey-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-continuation-journey-"));
   let client;
   let transport;
   try {

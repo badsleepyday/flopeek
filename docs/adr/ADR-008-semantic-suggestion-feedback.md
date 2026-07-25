@@ -10,7 +10,7 @@ The deterministic semantic suggestion layer can offer conservative titles, techn
 
 ## Decision
 
-`src/semantic-suggestion-feedback.js` stores append-only `flowpeek-semantic-suggestion-feedback/v1` records in `.flowpeek/semantic-suggestion-feedback.json`. A record snapshots only the server-calculated suggestion's bounded fields, evidence references, Context Ref, graph version, and fingerprint. It is idempotent by operation ID and supersedes, rather than overwrites, the earlier feedback for the same flow.
+`src/semantic-suggestion-feedback.js` stores append-only `flopeek-semantic-suggestion-feedback/v1` records in `.flopeek/semantic-suggestion-feedback.json`. A record snapshots only the server-calculated suggestion's bounded fields, evidence references, Context Ref, graph version, and fingerprint. It is idempotent by operation ID and supersedes, rather than overwrites, the earlier feedback for the same flow.
 
 `accepted`, `edited`, `rejected`, and `abstained` are allowed only when compatible with the current suggestion status. Edited, rejected, and abstained labels require a concise reason; edited labels require a complete replacement candidate. An optional evidence-trace link is accepted only if its Context Ref exactly matches the suggestion flow Context Ref.
 
@@ -18,4 +18,4 @@ The API, MCP server, Flow Lens, and Flow Context Card expose the resolved feedba
 
 ## Consequences
 
-Flowpeek can now create an auditable local review loop for deterministic suggestions. The synthetic metric contract verifies storage/reporting arithmetic only. It is not a human dataset, model-training corpus, candidate-quality benchmark, calibration result, or evidence of business-process correctness. Any external evaluation or training requires separately consented, reviewed data with a held-out split.
+Flopeek can now create an auditable local review loop for deterministic suggestions. The synthetic metric contract verifies storage/reporting arithmetic only. It is not a human dataset, model-training corpus, candidate-quality benchmark, calibration result, or evidence of business-process correctness. Any external evaluation or training requires separately consented, reviewed data with a held-out split.

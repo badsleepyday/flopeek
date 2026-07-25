@@ -34,7 +34,7 @@ function input(graph, operationId, index = 0) {
 }
 
 test("runtime evidence is opt-in, sanitized, separated from graph facts, and retains expired manifests", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-runtime-evidence-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-runtime-evidence-"));
   try {
     const graph = fixture(root);
     const first = saveRuntimeEvidence(root, graph, input(graph, "runtime-0"), { now: "2026-07-15T00:00:00.000Z" });
@@ -71,11 +71,11 @@ test("runtime evidence is opt-in, sanitized, separated from graph facts, and ret
 });
 
 test("runtime evidence rejects unknown input and never serves a store with injected fields", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-runtime-evidence-invalid-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-runtime-evidence-invalid-"));
   try {
     const graph = fixture(root);
     saveRuntimeEvidence(root, graph, input(graph, "valid-runtime"), { now: "2026-07-15T00:00:00.000Z" });
-    const storePath = path.join(root, ".flowpeek", "runtime-evidence", "records.json");
+    const storePath = path.join(root, ".flopeek", "runtime-evidence", "records.json");
     const store = JSON.parse(fs.readFileSync(storePath, "utf8"));
     store.records[0].sourceBody = "not permitted";
     fs.writeFileSync(storePath, JSON.stringify(store));

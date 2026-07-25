@@ -3,7 +3,7 @@
 const { getFlowProjection } = require("./flow-lens");
 const { DEFAULT_FLOW_LENS_MAX_STEPS } = require("./flow-lens-options");
 
-const TRUST_ANALYTICS_SCHEMA = "flowpeek-trust-analytics/v1";
+const TRUST_ANALYTICS_SCHEMA = "flopeek-trust-analytics/v1";
 const DEFAULT_TRUST_ANALYTICS_MAX_FLOWS = 200;
 
 function ratio(numerator, denominator) {
@@ -232,7 +232,7 @@ function buildTrustAnalytics(graph, inputs = {}, options = {}) {
       businessIntentCorrectness: false,
       completeBehaviorCoverage: false,
       liveRepositoryPrecisionRecall: false,
-      statement: "Flowpeek indexes bounded evidence with explicit provenance and freshness. It is not the project, runtime, business, or organizational source of truth by itself.",
+      statement: "Flopeek indexes bounded evidence with explicit provenance and freshness. It is not the project, runtime, business, or organizational source of truth by itself.",
     },
     limitations: [
       "Absence of stored evidence is not evidence that behavior, tests, or review do not exist.",

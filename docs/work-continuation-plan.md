@@ -1,6 +1,6 @@
 # Versioned work-continuation execution plan
 
-This document is the detailed execution contract for the next Flowpeek Delivery
+This document is the detailed execution contract for the next Flopeek Delivery
 Graph sequence. `ROADMAP.md` remains the prioritized source of delivery status;
 this document makes its continuation sequence mechanical enough for a lower-
 cost implementation model to execute one bounded change at a time.
@@ -56,7 +56,7 @@ Every sequence item must preserve these rules:
 - Run its focused tests and `npm run test:fast` before committing.
 - Run `npm run test:full` at surface-parity milestones and final stabilization.
 - Update current/target documentation in the same commit series.
-- Record reproducible Flowpeek-on-Flowpeek observations under the dogfooding
+- Record reproducible Flopeek-on-Flopeek observations under the dogfooding
   protocol. Do not silently remediate unrelated findings.
 - Do not declare an item complete from prose or model confidence. Its tests and
   acceptance conditions must be present.
@@ -95,10 +95,10 @@ Add:
 
 - `src/continuation-checkpoint.js`
 - `test/unit/continuation-checkpoint.test.js`
-- `.flowpeek/delivery/continuation-checkpoints.json` as runtime-local storage,
+- `.flopeek/delivery/continuation-checkpoints.json` as runtime-local storage,
   never as a committed generated artifact.
 
-Define `flowpeek-continuation-checkpoint/v1` with:
+Define `flopeek-continuation-checkpoint/v1` with:
 
 - idempotent `operationId` and immutable content fingerprint;
 - project identity;
@@ -159,9 +159,9 @@ MCP:
 
 CLI:
 
-- `flowpeek continue list <repository>`
-- `flowpeek continue show <repository> --checkpoint <id>`
-- `flowpeek continue checkpoint <repository> --input <json-file>`
+- `flopeek continue list <repository>`
+- `flopeek continue show <repository> --checkpoint <id>`
+- `flopeek continue checkpoint <repository> --input <json-file>`
 
 Acceptance:
 
@@ -185,9 +185,9 @@ Add:
 
 - `src/planned-overlay.js`
 - `test/unit/planned-overlay.test.js`
-- local `.flowpeek/delivery/planned-overlays.json` storage
+- local `.flopeek/delivery/planned-overlays.json` storage
 
-Define `flowpeek-planned-overlay/v1` as an immutable version tied to one
+Define `flopeek-planned-overlay/v1` as an immutable version tied to one
 continuation checkpoint. Planned node kinds are bounded to endpoint, service,
 module, function, database, queue, external, test, boundary, and other.
 
@@ -239,7 +239,7 @@ Expose shared services through:
 - HTTP list/get/create and Plan Ref resolution;
 - MCP `list_planned_overlays`, `get_planned_overlay`, `resolve_plan_ref`, and
   `create_planned_overlay`;
-- CLI `flowpeek continue plan list|show|create|resolve`.
+- CLI `flopeek continue plan list|show|create|resolve`.
 
 Acceptance:
 
@@ -301,9 +301,9 @@ search, impact, Flow Lens, parser coverage, or technical-node identity.
 Status: `complete`.
 
 Add `src/plan-reconciliation.js`, unit tests, and local
-`.flowpeek/delivery/reconciliations.json` storage.
+`.flopeek/delivery/reconciliations.json` storage.
 
-Define `flowpeek-plan-reconciliation/v1` with one Plan Ref, zero/one/many actual
+Define `flopeek-plan-reconciliation/v1` with one Plan Ref, zero/one/many actual
 Context Refs, actor identity/class, evidence references, timestamp,
 supersession, and one outcome:
 
@@ -331,7 +331,7 @@ Acceptance:
 
 Suggested commit: `feat: add manual plan reconciliation`
 
-Implemented boundary: `flowpeek-plan-reconciliation/v1` records are immutable
+Implemented boundary: `flopeek-plan-reconciliation/v1` records are immutable
 local Delivery/Context metadata stored separately from planned overlays and the
 technical graph. CLI, HTTP, MCP, and the trusted local Viewer share one
 projection. A positive outcome requires a human actor and one or more current,
@@ -345,7 +345,7 @@ authority.
 Status: `complete`.
 
 Add `src/continuation-comparison.js` and tests. Produce
-`flowpeek-continuation-comparison/v1` deterministically from checkpoint evidence,
+`flopeek-continuation-comparison/v1` deterministically from checkpoint evidence,
 planned overlay, current resolvers, and current reconciliation.
 
 Per-plan statuses:
@@ -371,7 +371,7 @@ Acceptance:
 
 Suggested commit: `feat: compare baseline plan and current context`
 
-Implemented boundary: `flowpeek-continuation-comparison/v1` is a read-only,
+Implemented boundary: `flopeek-continuation-comparison/v1` is a read-only,
 deterministic projection of one exact retained checkpoint and planned overlay,
 the current graph, and append-only reconciliation records. HTTP, MCP, and the
 selected-node Continue-mode Viewer panel share this projection. It reports
@@ -411,7 +411,7 @@ Acceptance:
 
 Suggested commit: `feat: detect continuation baseline divergence`
 
-Implemented boundary: `flowpeek-continuation-divergence/v1` performs only
+Implemented boundary: `flopeek-continuation-divergence/v1` performs only
 read-only local Git and source inspection for one retained checkpoint. HTTP,
 MCP, and the selected-node Continue-mode Viewer share its bounded path and
 selected-context freshness result. It never fetches, checks out, merges,
@@ -450,7 +450,7 @@ Acceptance:
 
 Suggested commit: `feat: provide bounded continuation context to agents`
 
-Implemented boundary: `flowpeek-continuation-context/v1` is a deterministic
+Implemented boundary: `flopeek-continuation-context/v1` is a deterministic
 character-budgeted packet for one exact retained checkpoint and optional exact
 planned overlay. HTTP and MCP share current Context Ref resolution, divergence,
 linked delivery metadata, omissions, and safe next steps. It excludes source
@@ -463,13 +463,13 @@ Status: `in progress` after C10. The automated real-stdio-MCP journey is
 covered; manual observable and independent-provider review evidence remains
 open.
 
-Exercise Flowpeek on Flowpeek:
+Exercise Flopeek on Flopeek:
 
 1. create one current checkpoint;
 2. attach Handoff Workspace, work records, and Context Refs;
 3. create a small planned overlay;
 4. consume the continuation packet through real stdio MCP;
-5. make a bounded source change through the host, not Flowpeek;
+5. make a bounded source change through the host, not Flopeek;
 6. refresh the graph and inspect changed context;
 7. reconcile manually;
 8. verify stale checkpoint and divergence behavior;
@@ -511,7 +511,7 @@ has no source-write operation. This demonstrates the product contract without
 claiming a runtime flow, independent-provider review, or manual Viewer
 usability result.
 
-Local Flowpeek-on-Flowpeek observation (2026-07-24): a real stdio MCP session
+Local Flopeek-on-Flopeek observation (2026-07-24): a real stdio MCP session
 created a local agent-authored work record, checkpoint, Handoff Workspace, and
 planned overlay. After one temporary host-owned fixture change, the continuation
 packet required source fallback; the changed-context projection remained
@@ -561,7 +561,7 @@ the still-open C11 manual and provider evidence track.
 Work records already retained declared dependency IDs, but a person or agent
 could not determine whether a dependency was missing, active, ready, or outside
 the workflow semantics before beginning implementation. This item adds a
-read-only `flowpeek-work-dependency-status/v1` projection.
+read-only `flopeek-work-dependency-status/v1` projection.
 
 Contract:
 
@@ -576,7 +576,7 @@ Contract:
   one declared dependency is not ready; custom workflow transitions stay
   explicit rather than receiving an invented policy;
 - expose the same single-record projection through HTTP, MCP
-  `get_work_dependency_status`, and `flowpeek work dependencies`;
+  `get_work_dependency_status`, and `flopeek work dependencies`;
 - provide a bounded HTTP list projection for a future/read-only ledger view.
 
 Evidence boundary:
@@ -609,7 +609,7 @@ Status: `complete` for the bounded local evidence contract. It is independent
 of full-history archaeology and the still-open C11 manual/provider evidence
 track.
 
-Add `flowpeek-active-branch-git-evidence/v1` for one exact current or stale
+Add `flopeek-active-branch-git-evidence/v1` for one exact current or stale
 Context Ref. Resolve the Context Card first, derive only its current safe
 repository-relative paths, then list a bounded number of commits reachable from
 the current attached branch `HEAD` that touched each path.
@@ -618,7 +618,7 @@ Expose one shared projection through:
 
 - `GET /api/active-branch-git-evidence?contextRef=...&limit=...`;
 - MCP `get_active_branch_git_evidence`;
-- `flowpeek git-evidence <repository> --context-ref <fp://local/...>`.
+- `flopeek git-evidence <repository> --context-ref <fp://local/...>`.
 
 Contract:
 
@@ -649,7 +649,7 @@ Status: `complete` for a bounded static continuity projection. It does not
 replace historical-card reconstruction, all-ref archaeology, or the still-open
 C11 manual/provider evidence track.
 
-`flowpeek-git-context-continuity/v1` resolves one current or stale Context Ref,
+`flopeek-git-context-continuity/v1` resolves one current or stale Context Ref,
 then creates or reuses static snapshots for two selected local Git commits. It
 reports exact static node/flow identity separately from bounded nodes with the
 same current repository-relative paths.
@@ -658,7 +658,7 @@ The shared read-only contract is available through:
 
 - `GET /api/git-context-continuity?contextRef=...&from=...&to=...`;
 - MCP `get_git_context_continuity`;
-- `flowpeek git-continuity <repository> --context-ref <fp://local/...> --from <ref> --to <ref>`.
+- `flopeek git-continuity <repository> --context-ref <fp://local/...> --from <ref> --to <ref>`.
 
 Contract:
 

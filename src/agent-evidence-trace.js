@@ -6,10 +6,10 @@ const path = require("node:path");
 const { parseContextRef } = require("./context-card");
 const { atomicWriteJson } = require("./graph-cache");
 
-const AGENT_EVIDENCE_TRACE_SCHEMA = "flowpeek-agent-evidence-trace/v1";
-const AGENT_EVIDENCE_TRACE_STORE_SCHEMA = "flowpeek-agent-evidence-traces/v1";
-const AGENT_EVIDENCE_TRACE_LIST_SCHEMA = "flowpeek-agent-evidence-trace-list/v1";
-const AGENT_EVIDENCE_TRACES_RELATIVE_PATH = ".flowpeek/agent-evidence-traces.json";
+const AGENT_EVIDENCE_TRACE_SCHEMA = "flopeek-agent-evidence-trace/v1";
+const AGENT_EVIDENCE_TRACE_STORE_SCHEMA = "flopeek-agent-evidence-traces/v1";
+const AGENT_EVIDENCE_TRACE_LIST_SCHEMA = "flopeek-agent-evidence-trace-list/v1";
+const AGENT_EVIDENCE_TRACES_RELATIVE_PATH = ".flopeek/agent-evidence-traces.json";
 const ACTION_TYPES = new Set(["inspect", "plan", "edit", "refactor", "test", "verify", "document", "other"]);
 const VERIFICATION_STATUSES = new Set(["not-run", "passed", "failed", "partial", "unknown"]);
 const RESOLUTION_STATUSES = new Set(["current", "stale", "historical"]);
@@ -122,7 +122,7 @@ function readAgentEvidenceTraceStore(root, projectId) {
     const recordIds = Array.isArray(store?.records) ? store.records.map((record) => record.id) : [];
     const operationIds = Array.isArray(store?.records) ? store.records.map((record) => record.operationId) : [];
     if (!store || typeof store !== "object" || Array.isArray(store) || store.schemaVersion !== AGENT_EVIDENCE_TRACE_STORE_SCHEMA || store.projectId !== projectId || !Array.isArray(store.records) || !store.records.every(isRecord) || new Set(recordIds).size !== recordIds.length || new Set(operationIds).size !== operationIds.length) {
-      return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-agent-evidence-trace-store", message: "Agent evidence trace metadata does not match flowpeek-agent-evidence-traces/v1." }] };
+      return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-agent-evidence-trace-store", message: "Agent evidence trace metadata does not match flopeek-agent-evidence-traces/v1." }] };
     }
     return { status: "valid", path: target, store, diagnostics: [] };
   } catch (error) {
@@ -144,7 +144,7 @@ function saveAgentEvidenceTrace(root, graph, input, options = {}) {
   } catch (error) {
     throw new AgentEvidenceTraceError(error.code || "invalid-context-ref", error.message);
   }
-  if (parsed.projectId !== graph.project.projectId) throw new AgentEvidenceTraceError("wrong-project-id", "Context Ref belongs to a different Flowpeek project.");
+  if (parsed.projectId !== graph.project.projectId) throw new AgentEvidenceTraceError("wrong-project-id", "Context Ref belongs to a different Flopeek project.");
   if (!["node", "flow"].includes(parsed.kind)) throw new AgentEvidenceTraceError("unsupported-context-kind", "Agent evidence currently supports node and flow Context Refs.");
   if (parsed.graphVersion > graph.state.graphVersion) throw new AgentEvidenceTraceError("future-graph-version", "Context Ref targets a graph version newer than the current local graph.");
   const read = readAgentEvidenceTraceStore(root, graph.project.projectId);
@@ -154,11 +154,11 @@ function saveAgentEvidenceTrace(root, graph, input, options = {}) {
   const existing = store.records.find((record) => record.operationId === normalized.operationId);
   if (existing) {
     if (existing.inputFingerprint !== inputFingerprint) throw new AgentEvidenceTraceError("operation-id-conflict", "operationId already belongs to a different immutable agent evidence record.");
-    return { schemaVersion: "flowpeek-agent-evidence-trace-result/v1", created: false, record: existing, path: tracePath(root), limitation: "The existing immutable record was returned for this idempotent operationId." };
+    return { schemaVersion: "flopeek-agent-evidence-trace-result/v1", created: false, record: existing, path: tracePath(root), limitation: "The existing immutable record was returned for this idempotent operationId." };
   }
 
   const resolutionStatus = options.resolution?.status;
-  if (!RESOLUTION_STATUSES.has(resolutionStatus)) throw new AgentEvidenceTraceError("unresolved-context-ref", "New agent evidence must reference a Context Ref resolved by Flowpeek as current, stale, or retained historical evidence.");
+  if (!RESOLUTION_STATUSES.has(resolutionStatus)) throw new AgentEvidenceTraceError("unresolved-context-ref", "New agent evidence must reference a Context Ref resolved by Flopeek as current, stale, or retained historical evidence.");
 
   const createdAt = options.now || new Date().toISOString();
   if (typeof createdAt !== "string" || Number.isNaN(Date.parse(createdAt))) throw new AgentEvidenceTraceError("invalid-created-at", "Agent evidence createdAt must be an ISO-compatible timestamp.");
@@ -187,7 +187,7 @@ function saveAgentEvidenceTrace(root, graph, input, options = {}) {
   };
   const next = { ...store, records: [...store.records, record] };
   atomicWriteJson(tracePath(root), next);
-  return { schemaVersion: "flowpeek-agent-evidence-trace-result/v1", created: true, record, path: tracePath(root), limitation: "The record is append-only and can be superseded only by a new operationId, never overwritten." };
+  return { schemaVersion: "flopeek-agent-evidence-trace-result/v1", created: true, record, path: tracePath(root), limitation: "The record is append-only and can be superseded only by a new operationId, never overwritten." };
 }
 
 function listAgentEvidenceTraces(root, graph, options = {}) {
@@ -218,7 +218,7 @@ function listAgentEvidenceTraces(root, graph, options = {}) {
 function agentEvidenceTracePolicy(root, graph) {
   const listed = listAgentEvidenceTraces(root, graph, { limit: 5 });
   return {
-    schemaVersion: "flowpeek-agent-evidence-trace-policy/v1",
+    schemaVersion: "flopeek-agent-evidence-trace-policy/v1",
     status: listed.status,
     storeSchemaVersion: AGENT_EVIDENCE_TRACE_STORE_SCHEMA,
     recordTool: "record_agent_evidence_trace",

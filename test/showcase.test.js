@@ -41,7 +41,7 @@ test("showcase preparation, apply, reset, and cleanup are confined to a marked t
   try {
     assert.notEqual(prepared.workspaceRoot, DEFAULT_SHOWCASE_ROOT);
     assert.equal(fs.existsSync(path.join(prepared.workspaceRoot, SHOWCASE_STATE_FILE)), true);
-    assert.equal(fs.existsSync(path.join(DEFAULT_SHOWCASE_ROOT, ".flowpeek")), false);
+    assert.equal(fs.existsSync(path.join(DEFAULT_SHOWCASE_ROOT, ".flopeek")), false);
     assert.equal(showcaseStatus(prepared.workspaceRoot).status, "baseline");
     const cliStatus = JSON.parse(execFileSync(process.execPath, [path.join(__dirname, "..", "src", "cli.js"), "showcase", "status", prepared.workspaceRoot, "--format", "json"], { encoding: "utf8" }));
     assert.equal(cliStatus.status, "baseline");
@@ -82,7 +82,7 @@ test("showcase demonstrates one shared Viewer, HTTP, and MCP context before and 
     assert.match(instance.url, /flow=flow%3Aendpoint/);
 
     const page = await (await fetch(instance.url)).text();
-    assert.match(page, /Flowpeek showcase walkthrough/);
+    assert.match(page, /Flopeek showcase walkthrough/);
     assert.match(page, /The target application is not executed/);
 
     const view = await waitForGraphVersion(baseUrl, 1);
@@ -114,7 +114,7 @@ test("showcase demonstrates one shared Viewer, HTTP, and MCP context before and 
       cwd: path.join(__dirname, ".."),
       stderr: "pipe",
     });
-    client = new Client({ name: "flowpeek-showcase-test", version: "1.0.0" });
+    client = new Client({ name: "flopeek-showcase-test", version: "1.0.0" });
     await client.connect(transport);
     const bootstrap = mcpPayload(await client.callTool({ name: "get_agent_bootstrap", arguments: {} }));
     const mcpLens = mcpPayload(await client.callTool({ name: "get_flow_projection", arguments: { flowId: PRIMARY_FLOW_ID } }));

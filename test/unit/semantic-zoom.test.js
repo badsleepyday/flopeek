@@ -22,7 +22,7 @@ function mcpPayload(result) {
 }
 
 test("semantic zoom retains every selected ancestor and never promotes root files into invented domains", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-semantic-zoom-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-semantic-zoom-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "semantic-zoom" }));
     write(root, "src/orders/api.ts", "import { processOrder } from './service';\nexport const order = () => processOrder();\n");
@@ -63,7 +63,7 @@ test("semantic zoom retains every selected ancestor and never promotes root file
 });
 
 test("semantic hierarchy projection has the same constrained result through HTTP and MCP", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-semantic-surfaces-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-semantic-surfaces-"));
   let app;
   let instance;
   let client;

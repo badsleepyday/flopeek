@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://flowpeek.local/schemas/flowpeek-independent-review.schema.json",
-  "title": "Flowpeek independent review artifact",
+  "$id": "https://flopeek.local/schemas/flopeek-independent-review.schema.json",
+  "title": "Flopeek independent review artifact",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "reviewId", "reviewer", "provider", "subject", "scope", "evidence", "checks", "verdict", "limitations", "createdAt"],
   "properties": {
-    "schemaVersion": { "const": "flowpeek-independent-review/v1" },
+    "schemaVersion": { "const": "flopeek-independent-review/v1" },
     "reviewId": { "type": "string", "minLength": 1, "maxLength": 240 },
     "reviewer": {
       "type": "object",

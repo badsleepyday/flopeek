@@ -1,6 +1,6 @@
 # Private dogfooding protocol
 
-This protocol records scale and safety observations from repositories that cannot be published with Flowpeek. It protects the target repository while still producing useful product evidence.
+This protocol records scale and safety observations from repositories that cannot be published with Flopeek. It protects the target repository while still producing useful product evidence.
 
 ## What is retained
 
@@ -20,14 +20,14 @@ This protocol records scale and safety observations from repositories that canno
 Use an in-memory scan with identity and cache persistence disabled. Do not run the target application, install dependencies, invoke its test suite, or write into its worktree.
 
 ```powershell
-npm exec -- flowpeek scan D:\path\to\repository --format json --no-cache
+npm exec -- flopeek scan D:\path\to\repository --format json --no-cache
 ```
 
-`--no-cache` does not create `.flowpeek` cache or project-identity metadata. Existing Flowpeek configuration can still be read to determine the intended source scope.
+`--no-cache` does not create `.flopeek` cache or project-identity metadata. Existing Flopeek configuration can still be read to determine the intended source scope.
 
 ## How to interpret an empty Flow Lens catalog
 
-A Flow Lens exists only when Flowpeek extracts a supported static entry: an HTTP/request endpoint, a literal package script, or the narrow literal node-cron schedule subset. A repository with zero Flow Lenses can still have a useful technical map: use Feature overview, Find code, and Direct dependencies. It does not imply that the application has no behavior or no runtime entry point.
+A Flow Lens exists only when Flopeek extracts a supported static entry: an HTTP/request endpoint, a literal package script, or the narrow literal node-cron schedule subset. A repository with zero Flow Lenses can still have a useful technical map: use Feature overview, Find code, and Direct dependencies. It does not imply that the application has no behavior or no runtime entry point.
 
 ## Current anonymous observation
 

@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://flowpeek.local/schemas/flowpeek-specialist-work-product.schema.json",
-  "title": "Flowpeek specialist work product",
+  "$id": "https://flopeek.local/schemas/flopeek-specialist-work-product.schema.json",
+  "title": "Flopeek specialist work product",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "artifactId", "kind", "specialist", "provider", "subject", "question", "facts", "unknowns", "options", "recommendation", "limitations", "createdAt"],
   "properties": {
-    "schemaVersion": { "const": "flowpeek-specialist-work-product/v1" },
+    "schemaVersion": { "const": "flopeek-specialist-work-product/v1" },
     "artifactId": { "type": "string", "minLength": 1, "maxLength": 240 },
     "kind": { "enum": ["brainstorming", "research-development"] },
     "specialist": {

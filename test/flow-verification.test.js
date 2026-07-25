@@ -14,7 +14,7 @@ function write(root, relativePath, content) {
 }
 
 function setup() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-verification-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-verification-"));
   write(root, "package.json", JSON.stringify({ name: "verification-example" }));
   write(root, "src/orders.routes.ts", "import { submit } from './orders.service';\nrouter.post('/orders', () => submit());");
   write(root, "src/orders.service.ts", "export function submit() { return true; }");
@@ -97,7 +97,7 @@ test("flow verification is compatible for unrelated changes, stale for participa
 test("invalid verification metadata is not overwritten and invalid human input is rejected", () => {
   const { root, graph, flowId } = setup();
   try {
-    const target = path.join(root, ".flowpeek", "flow-verifications.json");
+    const target = path.join(root, ".flopeek", "flow-verifications.json");
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, "{ not valid json");
     assert.equal(readFlowVerificationStore(root, graph.project.projectId).status, "invalid");

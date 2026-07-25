@@ -11,7 +11,7 @@ const { createRepositoryScanner, writeGraphCache } = require("./scanner");
 const { readRepositoryScope } = require("./scope");
 const { advanceSessionGraph } = require("./session-graph-state");
 
-const SCAN_OUTCOME_SCHEMA = "flowpeek-scan-outcome/v1";
+const SCAN_OUTCOME_SCHEMA = "flopeek-scan-outcome/v1";
 
 function hasBounds(options) {
   return options.timeBudgetMs !== null && options.timeBudgetMs !== undefined
@@ -27,7 +27,7 @@ function disabledCacheState(root, reason = "cache-disabled") {
   return {
     status: "disabled",
     reason,
-    path: path.join(root, ".flowpeek", "graph.json"),
+    path: path.join(root, ".flopeek", "graph.json"),
     diagnostics: [],
     contract: null,
     migrated: false,
@@ -182,8 +182,8 @@ function createScanCoordinator(inputRoot, options = {}) {
 
   const refresh = async (changedPaths = null, reason = "scan", signal = null) => {
     if (activeController) {
-      const error = new Error("A Flowpeek scan is already running for this coordinator.");
-      error.code = "FLOWPEEK_SCAN_IN_PROGRESS";
+      const error = new Error("A Flopeek scan is already running for this coordinator.");
+      error.code = "FLOPEEK_SCAN_IN_PROGRESS";
       throw error;
     }
     const operationId = `scan:${randomUUID()}`;

@@ -1,6 +1,6 @@
 {
-  "schemaVersion": "flowpeek-monorepo-package-selection-benchmark/v1",
-  "suiteId": "flowpeek-monorepo-package-selection-suite",
+  "schemaVersion": "flopeek-monorepo-package-selection-benchmark/v1",
+  "suiteId": "flopeek-monorepo-package-selection-suite",
   "fixture": {
     "id": "monorepo-package-selection",
     "path": "test/fixtures/monorepo-package-selection",

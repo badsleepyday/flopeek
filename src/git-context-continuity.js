@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const { contextPaths } = require("./active-branch-git-evidence");
 const { createGitSnapshot } = require("./history");
 
-const GIT_CONTEXT_CONTINUITY_SCHEMA = "flowpeek-git-context-continuity/v1";
+const GIT_CONTEXT_CONTINUITY_SCHEMA = "flopeek-git-context-continuity/v1";
 const MAX_PATH_CANDIDATES_PER_PATH = 12;
 
 function nodeSummary(node) {

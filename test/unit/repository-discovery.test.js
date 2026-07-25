@@ -9,7 +9,7 @@ const test = require("node:test");
 const { RepositoryDiscoveryError, discoverRepository, verifyAnalysisPlan } = require("../../src/repository-discovery");
 
 function fixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-discovery-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-discovery-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "apps", "api", "src"), { recursive: true });
   fs.mkdirSync(path.join(root, "packages", "core", "src"), { recursive: true });
@@ -27,7 +27,7 @@ function fixture(t) {
 test("repository discovery reports deterministic adapters, packages, scope, and scan readiness", (t) => {
   const root = fixture(t);
   const result = discoverRepository(root);
-  assert.equal(result.schemaVersion, "flowpeek-repository-discovery/v1");
+  assert.equal(result.schemaVersion, "flopeek-repository-discovery/v1");
   assert.equal(result.status, "complete");
   assert.equal(result.decision.safeToStartFullScan, true);
   assert.equal(result.inventory.candidateFiles, 2);
@@ -79,8 +79,8 @@ test("package-scoped discovery rejects parent traversal and paths without a loca
 
 test("package selection remains subject to the repository-owned static source scope", (t) => {
   const root = fixture(t);
-  fs.mkdirSync(path.join(root, ".flowpeek"));
-  fs.writeFileSync(path.join(root, ".flowpeek", "config.json"), JSON.stringify({
+  fs.mkdirSync(path.join(root, ".flopeek"));
+  fs.writeFileSync(path.join(root, ".flopeek", "config.json"), JSON.stringify({
     schemaVersion: 1,
     sourceRoots: ["apps/api"],
     testRoots: [],
@@ -145,7 +145,7 @@ test("shared-plan verification detects source and directory changes without re-r
   const root = fixture(t);
   const discovery = discoverRepository(root, { includeAnalysisPlan: true });
   const unchanged = verifyAnalysisPlan(root, discovery.analysisPlan);
-  assert.equal(unchanged.schemaVersion, "flowpeek-analysis-plan-verification/v1");
+  assert.equal(unchanged.schemaVersion, "flopeek-analysis-plan-verification/v1");
   assert.equal(unchanged.valid, true);
   assert.equal(unchanged.actualFingerprint, discovery.inventory.fingerprint);
 
@@ -222,7 +222,7 @@ test("repository discovery validates all resource limits", (t) => {
   }
 });
 
-test("discover CLI reports bounded preflight without writing Flowpeek metadata", (t) => {
+test("discover CLI reports bounded preflight without writing Flopeek metadata", (t) => {
   const root = fixture(t);
   const cli = path.join(__dirname, "..", "..", "src", "cli.js");
   const result = spawnSync(process.execPath, [cli, "discover", root, "--max-files", "1", "--format", "json"], { encoding: "utf8" });
@@ -230,7 +230,7 @@ test("discover CLI reports bounded preflight without writing Flowpeek metadata",
   const report = JSON.parse(result.stdout);
   assert.equal(report.status, "bounded");
   assert.equal(report.decision.safeToStartFullScan, false);
-  assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false);
+  assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
 });
 
 test("discover CLI summary makes package overlap with total manifests explicit", (t) => {

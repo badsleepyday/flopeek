@@ -27,7 +27,7 @@ function fixture(root) {
 }
 
 test("project home never invents purpose and exposes evidence-linked human and deterministic cards", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-project-home-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-project-home-"));
   try {
     const graph = fixture(root);
     const before = projectHome(graph);
@@ -77,11 +77,11 @@ test("project home never invents purpose and exposes evidence-linked human and d
 });
 
 test("concept index uses exact deterministic token reasons and does not claim semantic or runtime proof", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-concept-index-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-concept-index-"));
   try {
     const graph = fixture(root);
     const home = projectHome(graph, { concept: "authentication" });
-    assert.equal(home.conceptIndex.schemaVersion, "flowpeek-concept-index/v1");
+    assert.equal(home.conceptIndex.schemaVersion, "flopeek-concept-index/v1");
     assert.match(home.conceptIndex.policy, /exact deterministic token matches/);
     assert.ok(home.conceptSearch.results.some((item) => item.reasons.some((reason) => reason.includes("'login'"))));
     assert.equal(home.conceptSearch.results.some((item) => item.label.includes("payments")), false);
@@ -101,7 +101,7 @@ test("concept index uses exact deterministic token reasons and does not claim se
 });
 
 test("project home falls back to evidence-linked features when no application flow is available", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-project-home-no-flow-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-project-home-no-flow-"));
   try {
     const graph = fixture(root);
     graph.flows = [];

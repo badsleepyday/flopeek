@@ -53,13 +53,13 @@ function mcpPayload(result) {
 }
 
 test("HTTP continuation checkpoint surfaces share one graph identity and trusted local mutation gate", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-continuation-http-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-continuation-http-"));
   let app;
   try {
     fixture(root, "continuation-http");
     app = await startServer({ root, port: 0, registerServeWorkspace: false });
     const baseUrl = `http://127.0.0.1:${app.port}`;
-    const storage = path.join(root, ".flowpeek", "delivery", "continuation-checkpoints.json");
+    const storage = path.join(root, ".flopeek", "delivery", "continuation-checkpoints.json");
     const initial = await (await fetch(`${baseUrl}/api/continuation-checkpoints`)).json();
     assert.equal(initial.status, "available");
     assert.equal(initial.records.length, 0);
@@ -100,7 +100,7 @@ test("HTTP continuation checkpoint surfaces share one graph identity and trusted
 });
 
 test("MCP continuation checkpoint tools expose strict bounded metadata contracts", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-continuation-mcp-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-continuation-mcp-"));
   let instance;
   let client;
   try {
@@ -143,7 +143,7 @@ test("MCP continuation checkpoint tools expose strict bounded metadata contracts
 });
 
 test("CLI continuation list, show, and checkpoint share the persisted graph state", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-continuation-cli-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-continuation-cli-"));
   try {
     fixture(root, "continuation-cli");
     const graph = scanRepository(root, { persistIdentity: true });
@@ -166,7 +166,7 @@ test("CLI continuation list, show, and checkpoint share the persisted graph stat
 });
 
 test("HTTP, MCP, and CLI return the same continuation checkpoint projection for one repository", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-continuation-parity-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-continuation-parity-"));
   let app;
   let instance;
   let client;

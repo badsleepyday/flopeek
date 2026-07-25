@@ -4,7 +4,7 @@ const { execFileSync } = require("node:child_process");
 const { getContinuationCheckpoint } = require("./continuation-checkpoint");
 const { parseContextRef } = require("./context-card");
 
-const CONTINUATION_DIVERGENCE_SCHEMA = "flowpeek-continuation-divergence/v1";
+const CONTINUATION_DIVERGENCE_SCHEMA = "flopeek-continuation-divergence/v1";
 const MAX_CHANGED_PATHS = 100;
 
 function git(root, args, options = {}) {
@@ -66,7 +66,7 @@ function result(graph, checkpoint, status, detail, options = {}) {
 
 function getCheckpointDivergence(root, graph, checkpointId) {
   const checkpointResult = getContinuationCheckpoint(root, graph, checkpointId);
-  if (checkpointResult.status !== "available") return { schemaVersion: CONTINUATION_DIVERGENCE_SCHEMA, status: "unknown", project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion }, baseline: null, current: null, changedPaths: { items: [], total: 0, truncated: false }, selectedContextFreshness: [], diagnostics: checkpointResult.diagnostics || [], limitation: "Checkpoint evidence is unavailable; Flowpeek does not infer local divergence." };
+  if (checkpointResult.status !== "available") return { schemaVersion: CONTINUATION_DIVERGENCE_SCHEMA, status: "unknown", project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion }, baseline: null, current: null, changedPaths: { items: [], total: 0, truncated: false }, selectedContextFreshness: [], diagnostics: checkpointResult.diagnostics || [], limitation: "Checkpoint evidence is unavailable; Flopeek does not infer local divergence." };
   const checkpoint = checkpointResult.checkpoint;
   const metadata = graph.project.git || {};
   if (metadata.availability === "not-a-repository") return result(graph, checkpoint, "non-git", "The current project is not a readable Git repository.");

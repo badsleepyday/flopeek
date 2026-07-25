@@ -16,7 +16,7 @@ async function main() {
   if (output) writeCleanRoomReport(output, report);
   console.log(`Clean-room package verification: ${report.status}`);
   console.log(`${report.packageAudit.package.entries} files / ${report.artifact.packedBytes} packed bytes / ${report.packageAudit.package.unpackedBytes} unpacked bytes`);
-  console.log(`Installed Flowpeek ${report.smoke.version.actual}; scanned ${report.smoke.scan.files} files and exposed ${report.smoke.mcp.toolCount} MCP tools.`);
+  console.log(`Installed Flopeek ${report.smoke.version.actual}; scanned ${report.smoke.scan.files} files and exposed ${report.smoke.mcp.toolCount} MCP tools.`);
   console.log(`Lifecycle scripts: disabled; target application executed: ${report.smoke.targetFixture.applicationExecuted}; publication attempted: ${report.publication.attempted}.`);
   if (output) console.log(`Evidence: ${output}`);
 }

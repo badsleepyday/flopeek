@@ -25,7 +25,7 @@ const MIME_TYPES = {
   ".svg": "image/svg+xml",
 };
 const MAX_REQUEST_BODY_BYTES = 1_000_000;
-const WATCH_IGNORED_DIRECTORIES = new Set([".flowpeek", ".git", ".next", ".nuxt", ".project-flow", ".turbo", "build", "coverage", "dist", "node_modules", "out", "target", "vendor"]);
+const WATCH_IGNORED_DIRECTORIES = new Set([".flopeek", ".flowpeek", ".git", ".next", ".nuxt", ".project-flow", ".turbo", "build", "coverage", "dist", "node_modules", "out", "target", "vendor"]);
 
 function send(response, statusCode, body, contentType = "application/json; charset=utf-8") {
   response.writeHead(statusCode, { "content-type": contentType, "cache-control": "no-store" });
@@ -96,7 +96,7 @@ function isTrustedMutation(request) {
 function shouldRefreshForChange(filename) {
   if (!filename) return true;
   const normalized = String(filename).replaceAll("\\", "/");
-  if (normalized === ".flowpeek/config.json") return true;
+  if (normalized === ".flopeek/config.json") return true;
   return !normalized.split("/").some((segment) => WATCH_IGNORED_DIRECTORIES.has(segment));
 }
 
@@ -229,14 +229,14 @@ async function startServer(options) {
     graph = result.graph;
     if (!graph) {
       const failure = result.outcome.failure?.message || result.outcome.reason || "No complete graph is available.";
-      throw new Error(`Flowpeek scan ${result.outcome.status}: ${failure}`);
+      throw new Error(`Flopeek scan ${result.outcome.status}: ${failure}`);
     }
     if (reason && result.outcome.status === "complete") broadcastGraphUpdate(reason, refreshStartedAt);
     return graph;
   };
   const scanFailureMessage = (currentOutcome) => {
     const detail = currentOutcome.failure?.message || currentOutcome.reason || "The current source was not promoted.";
-    return `Flowpeek scan ${currentOutcome.status}: ${detail}`;
+    return `Flopeek scan ${currentOutcome.status}: ${detail}`;
   };
   const sendManualScanResult = async (response, changedPaths = null) => {
     const refreshedGraph = await refresh("manual", changedPaths);
@@ -251,7 +251,7 @@ async function startServer(options) {
     return send(response, 200, refreshedGraph);
   };
   const currentGraph = () => {
-    if (!graph) throw new Error("No complete Flowpeek graph is available.");
+    if (!graph) throw new Error("No complete Flopeek graph is available.");
     return graph;
   };
   const scheduleRefresh = (changedPath = null) => {
@@ -272,7 +272,7 @@ async function startServer(options) {
         await refresh("filesystem", changedPaths);
         if (coordinator.currentOutcome().failure?.code === "repository-changed-during-analysis") refreshQueued = true;
       } catch (error) {
-        if (error?.code === "FLOWPEEK_SCAN_IN_PROGRESS") refreshQueued = true;
+        if (error?.code === "FLOPEEK_SCAN_IN_PROGRESS") refreshQueued = true;
         broadcast("graph-error", { message: error.message || "Unable to refresh graph." });
       } finally {
         refreshInProgress = false;
@@ -474,7 +474,7 @@ async function startServer(options) {
         return send(response, result.transitioned ? 201 : 200, result);
       }
       if (request.method === "POST" && url.pathname === "/api/runtime-evidence") {
-        if (!isTrustedMutation(request)) throw requestError(403, "Runtime evidence writes must come from the local Flowpeek viewer or trusted local caller.");
+        if (!isTrustedMutation(request)) throw requestError(403, "Runtime evidence writes must come from the local Flopeek viewer or trusted local caller.");
         return send(response, 201, recordRuntimeEvidence(currentGraph(), await readBody(request)));
       }
       if (request.method === "POST" && url.pathname === "/api/test-run-events") {
@@ -549,13 +549,13 @@ async function startServer(options) {
         return send(response, 200, getVerifiedSemanticMemory(currentGraph(), { query: url.searchParams.get("query"), limit: url.searchParams.get("limit"), includeStale: url.searchParams.get("includeStale") }));
       }
       if (request.method === "POST" && url.pathname === "/api/benchmark") {
-        if (!isTrustedMutation(request)) throw requestError(403, "Benchmark requests must come from the local Flowpeek viewer.");
+        if (!isTrustedMutation(request)) throw requestError(403, "Benchmark requests must come from the local Flopeek viewer.");
         const body = await readBody(request);
         const iterations = body.iterations === undefined ? 3 : Number(body.iterations);
         return send(response, 200, benchmarkRepository(root, { iterations }));
       }
       if (request.method === "POST" && url.pathname === "/api/product-proof") {
-        if (!isTrustedMutation(request)) throw requestError(403, "Product proof benchmark requests must come from the local Flowpeek viewer.");
+        if (!isTrustedMutation(request)) throw requestError(403, "Product proof benchmark requests must come from the local Flopeek viewer.");
         const body = await readBody(request);
         const iterations = body.iterations === undefined ? 3 : Number(body.iterations);
         return send(response, 200, getProductProof(currentGraph(), { localBenchmark: benchmarkRepository(root, { iterations }) }));
@@ -585,7 +585,7 @@ async function startServer(options) {
         return detail ? send(response, 200, detail) : send(response, 404, { error: "Node not found." });
       }
       if (request.method === "POST" && url.pathname === "/api/scan") {
-        if (!isTrustedMutation(request)) throw requestError(403, "Mutating requests must come from the local Flowpeek viewer.");
+        if (!isTrustedMutation(request)) throw requestError(403, "Mutating requests must come from the local Flopeek viewer.");
         const body = await readBody(request);
         if (body.root) {
           if (coordinator.isRunning()) throw requestError(409, "Wait for or cancel the active bounded scan before switching repositories.");
@@ -625,18 +625,18 @@ async function startServer(options) {
         return sendManualScanResult(response);
       }
       if (request.method === "POST" && url.pathname === "/api/scan/cancel") {
-        if (!isTrustedMutation(request)) throw requestError(403, "Scan cancellation must come from the local Flowpeek viewer or trusted local caller.");
+        if (!isTrustedMutation(request)) throw requestError(403, "Scan cancellation must come from the local Flopeek viewer or trusted local caller.");
         const result = coordinator.cancel();
         return send(response, result.accepted ? 202 : 409, result);
       }
       if (request.method === "POST" && url.pathname === "/api/snapshots") {
-        if (!isTrustedMutation(request)) throw requestError(403, "Mutating requests must come from the local Flowpeek viewer.");
+        if (!isTrustedMutation(request)) throw requestError(403, "Mutating requests must come from the local Flopeek viewer.");
         const body = await readBody(request);
         const result = createGitSnapshot(root, { ref: typeof body.ref === "string" ? body.ref : "HEAD", force: body.force === true });
         return send(response, 200, { created: result.created, path: result.path, commit: result.snapshot.commit, stats: result.snapshot.graph.stats });
       }
       if (request.method === "POST" && url.pathname === "/api/flow-verifications") {
-        if (!isTrustedMutation(request)) throw requestError(403, "Mutating requests must come from the local Flowpeek viewer.");
+        if (!isTrustedMutation(request)) throw requestError(403, "Mutating requests must come from the local Flopeek viewer.");
         const body = await readBody(request);
         if (typeof body.flowId !== "string" || !body.flowId) return send(response, 400, { error: "flowId is required." });
         if (!Number.isSafeInteger(body.expectedGraphVersion) || typeof body.expectedFlowContextRef !== "string" || !body.expectedFlowContextRef) return send(response, 400, { error: "expectedGraphVersion and expectedFlowContextRef are required to verify the latest reviewed state." });
@@ -681,7 +681,7 @@ async function startServer(options) {
           return result;
         });
         broadcast("semantic-suggestion-feedback-batch", { count: results.length, flowIds: body.items.map((item) => item.flowId) });
-        return send(response, 201, { schemaVersion: "flowpeek-semantic-suggestion-feedback-batch-result/v1", results, limitation: "Batch feedback appends one immutable local human-feedback record per item. It does not create human verification." });
+        return send(response, 201, { schemaVersion: "flopeek-semantic-suggestion-feedback-batch-result/v1", results, limitation: "Batch feedback appends one immutable local human-feedback record per item. It does not create human verification." });
       }
       if (request.method === "POST" && url.pathname === "/api/briefs/materialize") {
         if (!isTrustedMutation(request)) throw requestError(403, "Brief materialization requests must come from a trusted local client.");
@@ -707,7 +707,7 @@ async function startServer(options) {
         return send(response, result.created ? 201 : 200, result);
       }
       if (request.method === "POST" && url.pathname === "/api/descriptions") {
-        if (!isTrustedMutation(request)) throw requestError(403, "Mutating requests must come from the local Flowpeek viewer.");
+        if (!isTrustedMutation(request)) throw requestError(403, "Mutating requests must come from the local Flopeek viewer.");
         const body = await readBody(request);
         if (typeof body.id !== "string" || typeof body.description !== "string") return send(response, 400, { error: "id and description are required." });
         const activeGraph = currentGraph();

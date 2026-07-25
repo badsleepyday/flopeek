@@ -36,7 +36,7 @@ function shell(title, description, content, height = 520) {
   </defs>
   <rect width="1200" height="${height}" rx="28" fill="#f6f8fc"/>
   <rect x="28" y="28" width="1144" height="${height - 56}" rx="22" fill="url(#panel)" filter="url(#shadow)"/>
-  <text x="72" y="82" fill="#9fb4ff" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" letter-spacing="2">FLOWPEEK · EVIDENCE SNAPSHOT</text>
+  <text x="72" y="82" fill="#9fb4ff" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" letter-spacing="2">FLOPEEK · EVIDENCE SNAPSHOT</text>
   <text x="72" y="122" fill="#ffffff" font-family="Inter,Segoe UI,sans-serif" font-size="28" font-weight="750">${escapeXml(title)}</text>
   <text x="72" y="151" fill="#b9c4dc" font-family="Inter,Segoe UI,sans-serif" font-size="15">${escapeXml(description)}</text>
   ${content}
@@ -45,12 +45,12 @@ function shell(title, description, content, height = 520) {
 
 function capabilityAsset() {
   const baseline = readJson("benchmarks/orientation-baseline.json").summary;
-  const flowpeek = readJson("benchmarks/orientation-flowpeek.json").summary;
+  const flopeek = readJson("benchmarks/orientation-flopeek.json").summary;
   const metrics = [
-    ["Target paths", `${baseline.correctTargetRetrieval.matched}/${baseline.correctTargetRetrieval.expected}`, `${flowpeek.correctTargetRetrieval.matched}/${flowpeek.correctTargetRetrieval.expected}`],
-    ["Ordered flow steps", "Not available", `${flowpeek.flowSteps.matchedInExpectedOrder}/${flowpeek.flowSteps.expected}`],
-    ["Related tests", `${baseline.relatedTests.matched}/${baseline.relatedTests.expected}`, `${flowpeek.relatedTests.matched}/${flowpeek.relatedTests.expected}`],
-    ["Versioned stale refs", "Not available", `${flowpeek.staleContextDetection.detected}/${flowpeek.staleContextDetection.requested}`],
+    ["Target paths", `${baseline.correctTargetRetrieval.matched}/${baseline.correctTargetRetrieval.expected}`, `${flopeek.correctTargetRetrieval.matched}/${flopeek.correctTargetRetrieval.expected}`],
+    ["Ordered flow steps", "Not available", `${flopeek.flowSteps.matchedInExpectedOrder}/${flopeek.flowSteps.expected}`],
+    ["Related tests", `${baseline.relatedTests.matched}/${baseline.relatedTests.expected}`, `${flopeek.relatedTests.matched}/${flopeek.relatedTests.expected}`],
+    ["Versioned stale refs", "Not available", `${flopeek.staleContextDetection.detected}/${flopeek.staleContextDetection.requested}`],
   ];
   const cards = metrics.map(([label, direct, graph], index) => {
     const x = 72 + index * 267;
@@ -60,13 +60,13 @@ function capabilityAsset() {
       <text x="18" y="76" fill="#8592aa" font-family="Inter,Segoe UI,sans-serif" font-size="12">Literal retrieval</text>
       <text x="18" y="104" fill="${direct === "Not available" ? "#e3a7ad" : "#ffffff"}" font-family="Inter,Segoe UI,sans-serif" font-size="21" font-weight="750">${escapeXml(direct)}</text>
       <line x1="18" x2="221" y1="124" y2="124" stroke="#ffffff" stroke-opacity=".12"/>
-      <text x="18" y="151" fill="#9fb4ff" font-family="Inter,Segoe UI,sans-serif" font-size="12">Flowpeek graph</text>
+      <text x="18" y="151" fill="#9fb4ff" font-family="Inter,Segoe UI,sans-serif" font-size="12">Flopeek graph</text>
       <text x="18" y="181" fill="#8ef0cf" font-family="Inter,Segoe UI,sans-serif" font-size="24" font-weight="800">${escapeXml(graph)}</text>
     </g>`;
   }).join("");
   const content = `${cards}
     <text x="72" y="425" fill="#b9c4dc" font-family="Inter,Segoe UI,sans-serif" font-size="13">Three source-pinned fixtures · deterministic retrieval · no human or AI outcome claim</text>`;
-  writeAsset("orientation-capabilities.svg", shell("What the graph adds", "Literal retrieval finds files; Flowpeek adds ordered static flow and versioned context.", content, 470));
+  writeAsset("orientation-capabilities.svg", shell("What the graph adds", "Literal retrieval finds files; Flopeek adds ordered static flow and versioned context.", content, 470));
 }
 
 function performanceAsset() {

@@ -43,7 +43,7 @@ function withTestEnvironment(values, action) {
 }
 
 function fixture(kind) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), `flowpeek-helper-${kind}-`));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `flopeek-helper-${kind}-`));
   const source = path.join(root, kind === "go" ? "main.go" : "Program.cs");
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: `helper-${kind}` }));
   fs.writeFileSync(source, kind === "go" ? "package main\nfunc main() {}\n" : "public class Program { static void Main() {} }\n");
@@ -55,13 +55,13 @@ function invoke(kind, source) { return kind === "go" ? goFacts([source]) : cshar
 async function probeNormalAndTimeout(kind) {
   const item = fixture(kind);
   try {
-    const normal = await withTestEnvironment({ FLOWPEEK_TEST_MODE: "1", FLOWPEEK_TEST_HELPER_PID_FILE: item.pidFile, FLOWPEEK_TEST_HELPER_DELAY_MS: "40", FLOWPEEK_TEST_HELPER_TIMEOUT_MS: "5000" }, async () => {
+    const normal = await withTestEnvironment({ FLOPEEK_TEST_MODE: "1", FLOPEEK_TEST_HELPER_PID_FILE: item.pidFile, FLOPEEK_TEST_HELPER_DELAY_MS: "40", FLOPEEK_TEST_HELPER_TIMEOUT_MS: "5000" }, async () => {
       const facts = invoke(kind, item.source);
       const pid = fs.existsSync(item.pidFile) ? fs.readFileSync(item.pidFile, "utf8").trim() : null;
       return { factCount: facts.size, pid, pidObserved: Boolean(pid), stopped: pid ? await processStopped(pid) : true };
     });
     fs.rmSync(item.pidFile, { force: true });
-    const timeout = await withTestEnvironment({ FLOWPEEK_TEST_MODE: "1", FLOWPEEK_TEST_HELPER_PID_FILE: item.pidFile, FLOWPEEK_TEST_HELPER_DELAY_MS: "1500", FLOWPEEK_TEST_HELPER_TIMEOUT_MS: "80" }, async () => {
+    const timeout = await withTestEnvironment({ FLOPEEK_TEST_MODE: "1", FLOPEEK_TEST_HELPER_PID_FILE: item.pidFile, FLOPEEK_TEST_HELPER_DELAY_MS: "1500", FLOPEEK_TEST_HELPER_TIMEOUT_MS: "80" }, async () => {
       const facts = invoke(kind, item.source);
       const pid = await waitForFile(item.pidFile, 1_000);
       return { factCount: facts.size, pid, pidObserved: Boolean(pid), stopped: pid ? await processStopped(pid) : true };
@@ -74,7 +74,7 @@ async function probeBoundedAbort(kind) {
   const item = fixture(kind);
   try {
     const controller = new AbortController();
-    const resultPromise = withTestEnvironment({ FLOWPEEK_TEST_MODE: "1", FLOWPEEK_TEST_HELPER_PID_FILE: item.pidFile, FLOWPEEK_TEST_HELPER_DELAY_MS: "1500" }, () => scanRepositoryBounded(item.root, { signal: controller.signal, persistIdentity: false }));
+    const resultPromise = withTestEnvironment({ FLOPEEK_TEST_MODE: "1", FLOPEEK_TEST_HELPER_PID_FILE: item.pidFile, FLOPEEK_TEST_HELPER_DELAY_MS: "1500" }, () => scanRepositoryBounded(item.root, { signal: controller.signal, persistIdentity: false }));
     const pid = await waitForFile(item.pidFile);
     controller.abort("helper-process-matrix");
     const result = await resultPromise;
@@ -85,7 +85,7 @@ async function probeBoundedAbort(kind) {
 async function probeConcurrent(kind) {
   const probes = [fixture(kind), fixture(kind)];
   try {
-    const results = await Promise.all(probes.map(async (item) => withTestEnvironment({ FLOWPEEK_TEST_MODE: "1", FLOWPEEK_TEST_HELPER_PID_FILE: item.pidFile, FLOWPEEK_TEST_HELPER_DELAY_MS: "100", FLOWPEEK_TEST_HELPER_TIMEOUT_MS: "5000" }, async () => {
+    const results = await Promise.all(probes.map(async (item) => withTestEnvironment({ FLOPEEK_TEST_MODE: "1", FLOPEEK_TEST_HELPER_PID_FILE: item.pidFile, FLOPEEK_TEST_HELPER_DELAY_MS: "100", FLOPEEK_TEST_HELPER_TIMEOUT_MS: "5000" }, async () => {
       const facts = invoke(kind, item.source);
       const pid = fs.existsSync(item.pidFile) ? fs.readFileSync(item.pidFile, "utf8").trim() : null;
       return { factCount: facts.size, pid, pidObserved: Boolean(pid), stopped: pid ? await processStopped(pid) : true };
@@ -106,7 +106,7 @@ async function runHelperProcessMatrix() {
       concurrent: await probeConcurrent(kind),
     };
   }
-  return { schemaVersion: "flowpeek-helper-process-matrix/v1", platform: process.platform, toolchains, results, limitation: "This fixture-only matrix observes direct parser helper lifecycle. It does not execute a target application or constitute macOS evidence when run elsewhere." };
+  return { schemaVersion: "flopeek-helper-process-matrix/v1", platform: process.platform, toolchains, results, limitation: "This fixture-only matrix observes direct parser helper lifecycle. It does not execute a target application or constitute macOS evidence when run elsewhere." };
 }
 
 if (require.main === module) runHelperProcessMatrix().then((result) => console.log(JSON.stringify(result, null, 2))).catch((error) => { console.error(error.stack || error.message); process.exitCode = 1; });

@@ -32,9 +32,9 @@ jobs:
         if: contains(github.ref_name, '-')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --target "$GITHUB_SHA" --title "Flowpeek $GITHUB_REF_NAME" --generate-notes --prerelease
+        run: gh release create "$GITHUB_REF_NAME" --target "$GITHUB_SHA" --title "Flopeek $GITHUB_REF_NAME" --generate-notes --prerelease
       - name: Create stable release
         if: ${{ !contains(github.ref_name, '-') }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --target "$GITHUB_SHA" --title "Flowpeek $GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" --target "$GITHUB_SHA" --title "Flopeek $GITHUB_REF_NAME" --generate-notes

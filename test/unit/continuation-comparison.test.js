@@ -63,7 +63,7 @@ function input(graph, planRef, id, outcome, overrides = {}) {
 }
 
 test("continuation comparison keeps baseline, plan, reconciliation, and unavailable evidence explicit", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-continuation-comparison-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-continuation-comparison-"));
   try {
     fixture(root);
     const baselineGraph = scanRepository(root, { persistIdentity: true });
@@ -93,14 +93,14 @@ test("continuation comparison keeps baseline, plan, reconciliation, and unavaila
     assert.equal(comparison.baseline.freshnessStatus, "stale");
     assert.match(comparison.limitation, /Missing or unavailable retained evidence is unknown or unavailable/u);
 
-    const reconciliationStore = path.join(root, ".flowpeek", "delivery", "reconciliations.json");
+    const reconciliationStore = path.join(root, ".flopeek", "delivery", "reconciliations.json");
     fs.writeFileSync(reconciliationStore, "{ invalid", "utf8");
     const reconciliationUnavailable = compareContinuation(root, currentGraph, { checkpointId: "checkpoint.comparison-v1", overlayId });
     assert.equal(reconciliationUnavailable.status, "available");
     assert.equal(reconciliationUnavailable.summary.reconciliationAvailability, "unavailable");
     assert.equal(reconciliationUnavailable.plans.every((item) => item.status === "unresolved"), true);
 
-    const overlayStore = path.join(root, ".flowpeek", "delivery", "planned-overlays.json");
+    const overlayStore = path.join(root, ".flopeek", "delivery", "planned-overlays.json");
     fs.writeFileSync(overlayStore, "{ invalid", "utf8");
     const unavailable = compareContinuation(root, currentGraph, { checkpointId: "checkpoint.comparison-v1", overlayId });
     assert.equal(unavailable.status, "unavailable");

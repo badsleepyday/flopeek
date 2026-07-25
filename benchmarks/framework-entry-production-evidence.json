@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "flowpeek-framework-entry-production-evidence/v1",
+  "schemaVersion": "flopeek-framework-entry-production-evidence/v1",
   "capturedAt": "2026-07-18T00:00:00.000Z",
   "repository": {
     "name": "django/django",

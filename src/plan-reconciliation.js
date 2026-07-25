@@ -8,9 +8,9 @@ const { parseContextRef } = require("./context-card");
 const { parsePlanRef, resolvePlanRef } = require("./planned-overlay");
 const { portableText } = require("./handoff-workspace");
 
-const PLAN_RECONCILIATION_SCHEMA = "flowpeek-plan-reconciliation/v1";
-const PLAN_RECONCILIATION_STORE_SCHEMA = "flowpeek-plan-reconciliations/v1";
-const PLAN_RECONCILIATION_STORE_RELATIVE_PATH = ".flowpeek/delivery/reconciliations.json";
+const PLAN_RECONCILIATION_SCHEMA = "flopeek-plan-reconciliation/v1";
+const PLAN_RECONCILIATION_STORE_SCHEMA = "flopeek-plan-reconciliations/v1";
+const PLAN_RECONCILIATION_STORE_RELATIVE_PATH = ".flopeek/delivery/reconciliations.json";
 const MAX_RECONCILIATIONS = 10_000;
 const MAX_CONTEXT_REFS = 100;
 const MAX_EVIDENCE_REFERENCES = 100;
@@ -74,7 +74,7 @@ function emptyStore(projectId) {
 function resolveTechnicalContext(graph, value) {
   let parsed;
   try { parsed = parseContextRef(value); } catch (error) { return { status: "unresolved", requestedRef: value, resolvedRef: null, reason: error.message, code: error.code || "invalid-context-ref" }; }
-  if (parsed.projectId !== graph.project.projectId) return { status: "unresolved", requestedRef: value, resolvedRef: null, reason: "Context Ref belongs to a different Flowpeek project.", code: "wrong-project-id" };
+  if (parsed.projectId !== graph.project.projectId) return { status: "unresolved", requestedRef: value, resolvedRef: null, reason: "Context Ref belongs to a different Flopeek project.", code: "wrong-project-id" };
   if (parsed.graphVersion > graph.state.graphVersion) return { status: "unresolved", requestedRef: value, resolvedRef: null, reason: "Context Ref targets a graph version newer than the local graph.", code: "future-graph-version" };
   const present = parsed.kind === "node"
     ? graph.nodes.some((node) => node.id === parsed.contextId)
@@ -89,7 +89,7 @@ function resolveTechnicalContext(graph, value) {
 function normalizePlanRef(root, graph, value) {
   let parsed;
   try { parsed = parsePlanRef(value); } catch (error) { throw new PlanReconciliationError(error.code || "invalid-plan-ref", error.message, error.statusCode || 400); }
-  if (parsed.projectId !== graph.project.projectId) throw new PlanReconciliationError("wrong-project-id", "planRef must belong to the current Flowpeek project.");
+  if (parsed.projectId !== graph.project.projectId) throw new PlanReconciliationError("wrong-project-id", "planRef must belong to the current Flopeek project.");
   const resolution = resolvePlanRef(root, graph, parsed.planRef);
   if (!["current", "stale", "future"].includes(resolution.status)) throw new PlanReconciliationError("unavailable-plan-ref", "planRef must resolve to one retained planned node before reconciliation can be recorded.", 409);
   return parsed.planRef;
@@ -102,7 +102,7 @@ function normalizeActualContextRefs(graph, value, outcome, actorKind) {
   const resolutions = refs.map((contextRef) => {
     let parsed;
     try { parsed = parseContextRef(contextRef); } catch (error) { throw new PlanReconciliationError(error.code || "invalid-context-ref", `actualContextRefs must contain technical Context Refs: ${error.message}`); }
-    if (parsed.projectId !== graph.project.projectId) throw new PlanReconciliationError("wrong-project-id", "actualContextRefs must belong to the current Flowpeek project.");
+    if (parsed.projectId !== graph.project.projectId) throw new PlanReconciliationError("wrong-project-id", "actualContextRefs must belong to the current Flopeek project.");
     return resolveTechnicalContext(graph, parsed.contextRef);
   });
   if (POSITIVE_OUTCOMES.has(outcome)) {
@@ -209,7 +209,7 @@ function readPlanReconciliationStore(root, projectId) {
       && new Set(ids).size === ids.length
       && new Set(operationIds).size === operationIds.length
       && records.every((record) => record.supersedes === null || records.some((candidate) => candidate.id === record.supersedes && candidate.planRef === record.planRef));
-    if (!valid) return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-plan-reconciliation-store", message: "Plan-reconciliation storage does not match flowpeek-plan-reconciliations/v1." }] };
+    if (!valid) return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-plan-reconciliation-store", message: "Plan-reconciliation storage does not match flopeek-plan-reconciliations/v1." }] };
     return { status: "valid", path: target, store, diagnostics: [] };
   } catch (error) {
     return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-plan-reconciliation-json", message: `Plan-reconciliation storage is not valid JSON (${error.message}).` }] };
@@ -224,7 +224,7 @@ function recordPlanReconciliation(root, graph, input, options = {}) {
   const existingOperation = read.store.records.find((record) => record.operationId === normalized.operationId);
   if (existingOperation) {
     if (existingOperation.inputFingerprint !== inputFingerprint) throw new PlanReconciliationError("operation-id-conflict", "operationId already belongs to another plan reconciliation.", 409);
-    return { schemaVersion: "flowpeek-plan-reconciliation-record-result/v1", created: false, reconciliation: existingOperation };
+    return { schemaVersion: "flopeek-plan-reconciliation-record-result/v1", created: false, reconciliation: existingOperation };
   }
   if (read.store.records.some((record) => record.id === normalized.id)) throw new PlanReconciliationError("plan-reconciliation-exists", `Plan reconciliation ${normalized.id} already exists.`, 409);
   if (read.store.records.length >= MAX_RECONCILIATIONS) throw new PlanReconciliationError("plan-reconciliation-store-full", `Plan-reconciliation storage reached its explicit ${MAX_RECONCILIATIONS}-record limit.`, 507);
@@ -240,7 +240,7 @@ function recordPlanReconciliation(root, graph, input, options = {}) {
     policy: { sourceBodies: "excluded", rawLogs: "excluded", credentials: "excluded", machinePaths: "excluded", privateReasoning: "excluded" },
   };
   atomicWriteJson(read.path, { ...read.store, records: [...read.store.records, reconciliation] });
-  return { schemaVersion: "flowpeek-plan-reconciliation-record-result/v1", created: true, reconciliation };
+  return { schemaVersion: "flopeek-plan-reconciliation-record-result/v1", created: true, reconciliation };
 }
 
 function projectReconciliation(root, graph, record) {
@@ -259,14 +259,14 @@ function projectReconciliation(root, graph, record) {
 
 function listPlanReconciliations(root, graph, options = {}) {
   const read = readPlanReconciliationStore(root, graph.project.projectId);
-  if (read.status === "invalid") return { schemaVersion: "flowpeek-plan-reconciliation-list/v1", status: "unavailable", project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion }, records: [], diagnostics: read.diagnostics };
+  if (read.status === "invalid") return { schemaVersion: "flopeek-plan-reconciliation-list/v1", status: "unavailable", project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion }, records: [], diagnostics: read.diagnostics };
   const planRef = options.planRef === undefined || options.planRef === null ? null : safeText(options.planRef, "planRef", { required: true, maximum: 8_192 });
   const records = read.store.records
     .filter((record) => !planRef || record.planRef === planRef)
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id))
     .map((record) => projectReconciliation(root, graph, record));
   return {
-    schemaVersion: "flowpeek-plan-reconciliation-list/v1",
+    schemaVersion: "flopeek-plan-reconciliation-list/v1",
     status: "available",
     project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion },
     storage: { relativePath: PLAN_RECONCILIATION_STORE_RELATIVE_PATH, status: read.status },
@@ -278,11 +278,11 @@ function listPlanReconciliations(root, graph, options = {}) {
 
 function getPlanReconciliation(root, graph, reconciliationId) {
   const listed = listPlanReconciliations(root, graph);
-  if (listed.status !== "available") return { schemaVersion: "flowpeek-plan-reconciliation-get/v1", status: "unavailable", reconciliation: null, diagnostics: listed.diagnostics };
+  if (listed.status !== "available") return { schemaVersion: "flopeek-plan-reconciliation-get/v1", status: "unavailable", reconciliation: null, diagnostics: listed.diagnostics };
   const id = safeId(reconciliationId, "reconciliationId");
   const reconciliation = listed.records.find((record) => record.id === id);
   if (!reconciliation) throw new PlanReconciliationError("unknown-plan-reconciliation", `Plan reconciliation ${id} does not exist.`, 404);
-  return { schemaVersion: "flowpeek-plan-reconciliation-get/v1", status: "available", reconciliation, diagnostics: [], limitation: listed.limitation };
+  return { schemaVersion: "flopeek-plan-reconciliation-get/v1", status: "available", reconciliation, diagnostics: [], limitation: listed.limitation };
 }
 
 module.exports = {

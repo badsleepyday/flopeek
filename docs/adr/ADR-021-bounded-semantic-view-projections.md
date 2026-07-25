@@ -12,7 +12,7 @@ reporting what was omitted. That makes a partial technical map look complete.
 ## Decision
 
 - Every Viewer, HTTP, CLI, and MCP map response uses
-  `flowpeek-view-projection/v2`.
+  `flopeek-view-projection/v2`.
 - A projection is bound to one project identity, graph version, and source
   fingerprint. It is static evidence, not runtime order or business intent.
 - The default display ceiling is 40 nodes and 80 edges. Callers can request a

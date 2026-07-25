@@ -1,6 +1,6 @@
 {
-  "name": "flowpeek",
-  "version": "0.2.1-beta.0",
+  "name": "flopeek",
+  "version": "0.2.1-beta.1",
   "private": false,
   "license": "Apache-2.0",
   "description": "Versioned change context for developers and coding agents.",
@@ -11,17 +11,17 @@
     "mcp",
     "static-analysis"
   ],
-  "homepage": "https://github.com/badsleepyday/flowpeek#readme",
+  "homepage": "https://github.com/badsleepyday/flopeek#readme",
   "bugs": {
-    "url": "https://github.com/badsleepyday/flowpeek/issues"
+    "url": "https://github.com/badsleepyday/flopeek/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/badsleepyday/flowpeek.git"
+    "url": "git+https://github.com/badsleepyday/flopeek.git"
   },
   "type": "commonjs",
   "bin": {
-    "flowpeek": "src/cli.js"
+    "flopeek": "src/cli.js"
   },
   "publishConfig": {
     "access": "public",
@@ -40,7 +40,7 @@
     "benchmarks/production-static-evidence.json",
     "benchmarks/orientation-baseline.json",
     "benchmarks/orientation-cases.json",
-    "benchmarks/orientation-flowpeek.json",
+    "benchmarks/orientation-flopeek.json",
     "benchmarks/private-dogfood-summary.json",
     "benchmarks/public-proof.json",
     "benchmarks/real-repository-corpus.json",
@@ -49,7 +49,7 @@
     "benchmarks/semantic-suggestion-feedback-contract.json",
     "examples/commerce-showcase/",
     "docs/",
-    "integrations/skills/flowpeek/",
+    "integrations/skills/flopeek/",
     "public/",
     "src/"
   ],

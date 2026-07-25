@@ -60,16 +60,16 @@ test("agent bootstrap preserves an explicit static package-scope boundary", () =
 });
 
 test("CLI bootstrap reuses a current persistent graph identity", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-bootstrap-cache-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-bootstrap-cache-"));
   try {
     fs.mkdirSync(path.join(root, "src"), { recursive: true });
-    fs.writeFileSync(path.join(root, ".gitignore"), ".flowpeek/\n", "utf8");
+    fs.writeFileSync(path.join(root, ".gitignore"), ".flopeek/\n", "utf8");
     fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "bootstrap-cache-fixture" }), "utf8");
     fs.writeFileSync(path.join(root, "src", "main.rs"), "fn main() { println!(\"ready\"); }\n", "utf8");
     execFileSync("git", ["init", "--quiet"], { cwd: root });
     execFileSync("git", ["config", "core.autocrlf", "false"], { cwd: root });
-    execFileSync("git", ["config", "user.email", "flowpeek@example.test"], { cwd: root });
-    execFileSync("git", ["config", "user.name", "Flowpeek Test"], { cwd: root });
+    execFileSync("git", ["config", "user.email", "flopeek@example.test"], { cwd: root });
+    execFileSync("git", ["config", "user.name", "Flopeek Test"], { cwd: root });
     execFileSync("git", ["add", "."], { cwd: root });
     execFileSync("git", ["commit", "--quiet", "-m", "fixture"], { cwd: root });
 

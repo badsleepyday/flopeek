@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { GraphSchemaError, graphContractSummary, parseGraphCache, validateGraph } = require("./graph-schema");
 
-const CACHE_RELATIVE_PATH = ".flowpeek/graph.json";
+const CACHE_RELATIVE_PATH = ".flopeek/graph.json";
 const TRANSIENT_RENAME_CODES = new Set(["EACCES", "EBUSY", "EPERM"]);
 
 class GraphCacheError extends Error {

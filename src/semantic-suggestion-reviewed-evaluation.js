@@ -4,8 +4,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { DECISIONS } = require("./semantic-suggestion-feedback");
 
-const REVIEWED_DATASET_SCHEMA = "flowpeek-semantic-suggestion-reviewed-dataset/v1";
-const REVIEWED_EVALUATION_SCHEMA = "flowpeek-semantic-suggestion-reviewed-evaluation/v1";
+const REVIEWED_DATASET_SCHEMA = "flopeek-semantic-suggestion-reviewed-dataset/v1";
+const REVIEWED_EVALUATION_SCHEMA = "flopeek-semantic-suggestion-reviewed-evaluation/v1";
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/;
 const TRACE_STATUSES = new Set(["passed", "failed", "not-run"]);
 const DEFAULT_GATE = Object.freeze({
