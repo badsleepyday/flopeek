@@ -63,7 +63,13 @@ Status: `current`
 - `package.json#files` and `packaging/package-policy.json` bound the candidate tarball to runtime modules, Viewer assets, the Flowpeek integration skill, showcase, and public benchmark data. Repository governance, tests, CI, caches, credentials, logs, and source maps are rejected by the package audit.
 - `scripts/verify-clean-room.js` packs and installs the exact source tarball into an operating-system temporary consumer with lifecycle scripts disabled, then checks the installed binary, bounded static scan, MCP bootstrap, fixture immutability, and cleanup.
 - The source repository is public. npm registry publishing remains intentionally separate from a source tag or GitHub Release; packaging evidence does not decide registry permission or release stage.
-- Public Core releases are created from immutable tags on `main`; a separate private overlay consumes those tagged Core versions and must not copy Core source or become a second Core source of truth.
+- Public Core releases are created from immutable tags on `main` only after the
+  source-owned GitHub release approval validates the exact tag/package identity,
+  recorded release evidence, and—outside alpha—the published npm dist-tag. The
+  approval record is an owner attestation with evidence references, not an
+  automated proof of human/provider independence. A separate private overlay
+  consumes those tagged Core versions and must not copy Core source or become a
+  second Core source of truth.
 
 ### Main modules
 

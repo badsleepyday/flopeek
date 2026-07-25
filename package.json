@@ -81,6 +81,7 @@
     "audit:package": "node scripts/verify-package.js",
     "verify:clean-room": "node scripts/verify-clean-room.js",
     "verify:npm-publication": "node scripts/verify-npm-publication.js",
+    "verify:github-release": "node scripts/verify-github-release.js",
     "update:clean-room-evidence": "node scripts/verify-clean-room.js --output packaging/evidence/clean-room-current.json",
     "evaluate:agent-comparison": "node src/cli.js evaluate agent-comparison . --cases benchmarks/orientation-cases.json --runs benchmarks/agent-comparison-runs.template.json",
     "showcase": "node src/cli.js showcase",

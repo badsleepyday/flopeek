@@ -1,6 +1,6 @@
 {
   "schemaVersion": "flowpeek-clean-room-package-report/v1",
-  "generatedAt": "2026-07-25T13:34:22.818Z",
+  "generatedAt": "2026-07-25T15:05:16.695Z",
   "status": "passed",
   "evidenceClass": "clean-room-package-observation",
   "environment": {
@@ -19,9 +19,9 @@
       "version": "0.2.1-beta.0",
       "private": false,
       "filename": "flowpeek-0.2.1-beta.0.tgz",
-      "packedBytes": 727626,
-      "unpackedBytes": 2305671,
-      "entries": 177
+      "packedBytes": 730183,
+      "unpackedBytes": 2315367,
+      "entries": 178
     },
     "policy": {
       "schemaVersion": "flowpeek-package-policy/v2",
@@ -48,49 +48,49 @@
   },
   "artifact": {
     "filename": "flowpeek-0.2.1-beta.0.tgz",
-    "sha256": "f94bcc6407429f50b3e505f6d78ab9df2ed58b312ba56ee81b6733d639605754",
-    "packedBytes": 727626
+    "sha256": "351997d9f3068141fba58c57d548abb00b6161f4d6c60a6ab2a8493486060665",
+    "packedBytes": 730183
   },
   "phases": [
     {
       "id": "pack-and-audit",
       "status": "passed",
-      "milliseconds": 1489.289
+      "milliseconds": 2874.775
     },
     {
       "id": "copy-fixture",
       "status": "passed",
-      "milliseconds": 33.417
+      "milliseconds": 28.622
     },
     {
       "id": "install-tarball",
       "status": "passed",
-      "milliseconds": 16769.692
+      "milliseconds": 28610.786
     },
     {
       "id": "binary-version",
       "status": "passed",
-      "milliseconds": 3116.07
+      "milliseconds": 5101.743
     },
     {
       "id": "binary-help",
       "status": "passed",
-      "milliseconds": 686.583
+      "milliseconds": 2139.211
     },
     {
       "id": "binary-doctor",
       "status": "passed",
-      "milliseconds": 920.37
+      "milliseconds": 2978.016
     },
     {
       "id": "bounded-static-scan",
       "status": "passed",
-      "milliseconds": 1263.287
+      "milliseconds": 2686.667
     },
     {
       "id": "mcp-startup",
       "status": "passed",
-      "milliseconds": 3752.096
+      "milliseconds": 6979.72
     }
   ],
   "smoke": {
@@ -157,7 +157,7 @@
   },
   "cleanup": {
     "status": "passed",
-    "milliseconds": 2616.266
+    "milliseconds": 3010.42
   },
   "publication": {
     "attempted": false,
