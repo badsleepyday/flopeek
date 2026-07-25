@@ -17,15 +17,22 @@ surface ask bounded questions of that same state.
 The public product identity and its explicit pre-release brand boundary are in
 [the product identity note](docs/product-identity.md).
 
-## What Flowpeek gives you
+## The five-minute change-context loop
 
-| When you need to... | Flowpeek gives you... |
-| --- | --- |
-| Orient inside an unfamiliar repository | A Project Home with typed inventory, parser coverage, packages, entry points, and evidence boundaries |
-| Follow one technical path | A Flow Lens: a bounded static projection with source locations, step roles, related tests, and a versioned Context Ref |
-| Understand a change | Adjacent graph deltas, affected contexts, and before/current Flow Lens comparison without presenting static edges as runtime history |
-| Hand work to another developer or agent | Resolvable `fp://local/...@version` Context Refs and relevance-ranked Context Packets instead of unbounded source dumps |
-| Inspect or automate from another surface | The same graph version through the local Viewer, HTTP API, CLI, and Model Context Protocol (MCP) tools |
+Flowpeek is most useful when a change forces you to reconstruct a technical
+path before you edit it. The first experience is deliberately one loop, not a
+feature tour:
+
+1. **See one bounded static flow** in the local Flow Lens.
+2. **Copy its versioned Context Ref** before the source changes.
+3. **Apply one declared source change** in a disposable checkout.
+4. **Compare before/current evidence** after the graph refreshes.
+5. **Inspect related tests and the old Context Ref** instead of assuming either
+   remains current.
+
+The included checkout showcase runs that loop without executing its target
+application. It is the fastest way to decide whether Flowpeek is useful for a
+repository you need to change.
 
 ## How it works
 
@@ -69,7 +76,8 @@ alongside the exact scope and limitations of each result.
 
 ![Flowpeek product proof panel with bounded evidence](docs/assets/screenshots/product-proof.png)
 
-## Historical beta-candidate snapshot
+<details>
+<summary>Historical beta-candidate verification snapshot (not a public npm release)</summary>
 
 This snapshot describes the candidate validated on July 25, 2026 before public
 Core became authoritative in tagged commits on public `main`. These are
@@ -105,10 +113,14 @@ coverage, or universal accuracy claims.
 The historical beta candidate does not mean the npm package was published as a
 public beta release.
 
-## Try the full experience
+</details>
 
-Flowpeek is not published to npm yet. The default `main` branch is the current
-public Flowpeek Core. Run it from a source checkout:
+## Run the change-context loop
+
+Flowpeek is **not available from npm yet**. Its package metadata is prepared
+for a future beta, but the standard publication path remains owner-gated. The
+default `main` branch is the current public Flowpeek Core, so start from a
+source checkout:
 
 ```powershell
 git clone https://github.com/badsleepyday/flowpeek.git
@@ -117,40 +129,27 @@ npm install
 npm run showcase
 ```
 
-The showcase opens a safe temporary checkout flow. It does not execute the target application or change the committed example.
+The showcase opens a safe temporary checkout flow. It does not execute the
+target application or change the committed example.
 
 Public preview and stable versions are immutable Git tags on `main`, not long-
 lived `alpha` or `beta` branches. See [RELEASING.md](RELEASING.md) for the
 release contract.
 Follow one live change:
 
-1. Copy the **apply** command shown by the Viewer.
-2. Run it in another terminal.
-3. Open the new **before/current** comparison.
-4. Resolve the earlier Context Ref and see it marked stale.
+1. Inspect the opening **Flow Lens** and copy its **Flow Context Card**.
+2. Copy the **apply** command shown by the Viewer and run it in another
+   terminal.
+3. Open **Compare before/current** to inspect added static steps and changed
+   relationships.
+4. Inspect the directly related test candidate and resolve the earlier Context
+   Ref; it should be explicitly marked stale.
 
-[Open the five-minute walkthrough](docs/showcase-walkthrough.md)
+[Open the five-minute walkthrough](docs/showcase-walkthrough.md). It records
+the exact expected evidence, safe workspace boundary, reset path, and the
+limits of this demonstration.
 
-## What you get
-
-| You need to… | Flowpeek gives you… |
-| --- | --- |
-| Enter an unfamiliar repository | Entry points, focused technical flows, boundaries, and source links |
-| Review a change | Affected contexts, before/current static flow, impact, and related tests |
-| Hand work to another developer | A compact Context Ref or Context Packet tied to a graph version |
-| Ground a coding agent | Bounded MCP context with parser coverage, evidence limits, and stale detection |
-| Track local delivery context | Evidence-linked Work records, planned windows, workflow state, and append-only actual events |
-| Keep a large repository readable | Domain → Feature → Component → Symbol navigation, focus mode, scoped layers, search, and server-side projection |
-
-### Human view
-
-The local Viewer stays intentionally small. It provides a Project Home, bounded
-semantic zoom, Flow Lens, direct dependencies, live change tray, Context Cards,
-proof reports, a read-only local Work ledger, and a focused source inspector—not
-another IDE or project tracker. Semantic summary nodes are derived from static
-source facts; they are not files, runtime services, or execution steps.
-
-### Agent view
+### Bring the same context to an agent
 
 An agent starts with `get_agent_bootstrap`, resolves a flow or node, reads only the source it needs with its normal workspace tools, refreshes Flowpeek after edits, and checks changed or stale context.
 
@@ -168,6 +167,11 @@ get_agent_bootstrap
 Flowpeek MCP exposes no arbitrary shell, deployment, credential, or repository-source write operation.
 
 ## Use it on a repository
+
+Start with a TypeScript/Node repository if you want the closest fit to the
+checkout showcase and the shortest local setup. Flowpeek also has explicitly
+bounded parser support beyond that starting point; check the
+[support matrix](SUPPORT.md) before treating a missing relationship as absent.
 
 From the Flowpeek checkout:
 
