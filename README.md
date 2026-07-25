@@ -1,7 +1,6 @@
 # Flowpeek
 
-> Turn an unfamiliar repository into a bounded, versioned technical map before
-> you edit the code.
+> Versioned change context for developers and coding agents.
 
 **Flowpeek is local-first code intelligence for developers and coding agents.**
 It parses supported repository structure into a deterministic local graph, then
@@ -14,6 +13,9 @@ Large repositories make both people and coding agents repeatedly search,
 reconstruct call paths, and carry oversized source excerpts between tasks.
 Flowpeek keeps one versioned graph on the machine and lets every supported
 surface ask bounded questions of that same state.
+
+The public product identity and its explicit pre-release brand boundary are in
+[the product identity note](docs/product-identity.md).
 
 ## What Flowpeek gives you
 
