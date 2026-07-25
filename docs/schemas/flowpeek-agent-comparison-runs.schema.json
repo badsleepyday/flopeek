@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowpeek.dev/schemas/flowpeek-agent-comparison-runs.schema.json",
+  "title": "Flowpeek Agent Comparison Runs",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "studyId", "status", "consent", "executions"],
+  "properties": {
+    "schemaVersion": { "const": "flowpeek-agent-comparison-runs/v1" },
+    "studyId": { "$ref": "#/$defs/text" },
+    "status": { "enum": ["template", "completed"] },
+    "consent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["explicit", "privacyReviewed", "source"],
+      "properties": {
+        "explicit": { "type": "boolean" },
+        "privacyReviewed": { "type": "boolean" },
+        "source": { "const": "operator-supplied" }
+      }
+    },
+    "executions": { "type": "array", "maxItems": 400, "items": { "$ref": "#/$defs/execution" } }
+  },
+  "$defs": {
+    "text": { "type": "string", "minLength": 1, "maxLength": 240, "pattern": "^[^\\r\\n\\u0000]+$" },
+    "stringList": { "type": "array", "maxItems": 500, "uniqueItems": true, "items": { "$ref": "#/$defs/text" } },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "pairId", "caseId", "condition", "provider", "durationMilliseconds", "context", "answer", "verification"],
+      "properties": {
+        "id": { "$ref": "#/$defs/text" },
+        "pairId": { "$ref": "#/$defs/text" },
+        "caseId": { "$ref": "#/$defs/text" },
+        "condition": { "enum": ["direct-repository", "flowpeek"] },
+        "provider": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "model", "sessionId"],
+          "properties": { "name": { "$ref": "#/$defs/text" }, "model": { "$ref": "#/$defs/text" }, "sessionId": { "$ref": "#/$defs/text" } }
+        },
+        "durationMilliseconds": { "type": "number", "minimum": 0 },
+        "context": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["inspectedPaths", "estimatedCharacters", "flowpeek"],
+          "properties": {
+            "inspectedPaths": { "$ref": "#/$defs/stringList" },
+            "estimatedCharacters": { "type": "number", "minimum": 0 },
+            "flowpeek": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/flowpeekContext" }] }
+          }
+        },
+        "answer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["targetPaths", "flowStepIds", "relatedTestPaths", "staleContextStatuses", "claimReviews"],
+          "properties": {
+            "targetPaths": { "$ref": "#/$defs/stringList" },
+            "flowStepIds": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/stringList" }] },
+            "relatedTestPaths": { "$ref": "#/$defs/stringList" },
+            "staleContextStatuses": { "type": "array", "maxItems": 20, "uniqueItems": true, "items": { "enum": ["current", "stale", "historical", "successor-candidate", "unavailable", "unresolved", "expired"] } },
+            "claimReviews": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/claimReview" } }
+          }
+        },
+        "verification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "evidenceRefs"],
+          "properties": { "status": { "enum": ["passed", "failed", "not-run", "unknown"] }, "evidenceRefs": { "$ref": "#/$defs/stringList" } }
+        },
+        "cost": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["currency", "amount"],
+          "properties": { "currency": { "type": "string", "minLength": 1, "maxLength": 12 }, "amount": { "type": "number", "minimum": 0 } }
+        }
+      }
+    },
+    "flowpeekContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projectId", "graphVersion", "contextRefs", "toolsUsed"],
+      "properties": {
+        "projectId": { "$ref": "#/$defs/text" },
+        "graphVersion": { "type": "integer", "minimum": 0 },
+        "contextRefs": { "$ref": "#/$defs/stringList" },
+        "toolsUsed": { "$ref": "#/$defs/stringList" }
+      }
+    },
+    "claimReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "category", "outcome", "evidenceRefs"],
+      "properties": {
+        "id": { "$ref": "#/$defs/text" },
+        "category": { "$ref": "#/$defs/text" },
+        "outcome": { "enum": ["supported", "unsupported", "unknown"] },
+        "evidenceRefs": { "$ref": "#/$defs/stringList" }
+      }
+    }
+  }
+}

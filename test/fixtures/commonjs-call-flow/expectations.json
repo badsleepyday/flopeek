@@ -1,0 +1,9 @@
+{
+  "minimumPrecision": 0.9,
+  "minimumRecall": 0.9,
+  "relationships": [
+    { "type": "imports", "source": "file:src/checkout.cjs", "target": "file:src/validation.js" },
+    { "type": "calls", "source": "symbol:src/checkout.cjs:function:submitOrder", "target": "symbol:src/validation.js:function:validate" },
+    { "type": "calls", "source": "symbol:src/validation.js:function:validate", "target": "symbol:src/validation.js:function:normalize" }
+  ]
+}

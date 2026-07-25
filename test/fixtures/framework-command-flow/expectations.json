@@ -1,0 +1,11 @@
+{
+  "minimumPrecision": 1.0,
+  "minimumRecall": 1.0,
+  "relationships": [
+    { "type": "imports", "source": "file:src/commands.py", "target": "file:src/services.py" },
+    { "type": "calls", "source": "symbol:src/commands.py:function:cleanup", "target": "symbol:src/services.py:function:run_cleanup" },
+    { "type": "declares-command-target", "source": "command:src/commands.py:click:cleanup", "target": "symbol:src/commands.py:function:cleanup" },
+    { "type": "declares-command-target", "source": "command:src/typer_commands.py:typer:purge", "target": "symbol:src/typer_commands.py:function:purge_cache" },
+    { "type": "declares-command-target", "source": "command:src/flask_commands.py:flask:sync", "target": "symbol:src/flask_commands.py:function:sync" }
+  ]
+}

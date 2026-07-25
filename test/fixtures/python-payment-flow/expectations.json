@@ -1,0 +1,13 @@
+{
+  "minimumPrecision": 0.9,
+  "minimumRecall": 0.9,
+  "endpoints": [
+    { "label": "GET /payments/{payment_id}", "confidence": "likely" }
+  ],
+  "relationships": [
+    { "type": "imports", "source": "file:src/payments/routes.py", "target": "file:src/payments/service.py" },
+    { "type": "imports", "source": "file:src/payments/service.py", "target": "file:src/payments/repository.py" },
+    { "type": "imports", "source": "file:src/payments/service_test.py", "target": "file:src/payments/service.py" },
+    { "type": "handles", "source": "endpoint:GET /payments/{payment_id}", "target": "file:src/payments/routes.py" }
+  ]
+}

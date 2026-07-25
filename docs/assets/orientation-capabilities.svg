@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="470" viewBox="0 0 1200 470" role="img" aria-labelledby="title description">
+  <title id="title">What the graph adds</title>
+  <desc id="description">Literal retrieval finds files; Flowpeek adds ordered static flow and versioned context.</desc>
+  <defs>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#101a33"/><stop offset="1" stop-color="#172a55"/></linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#081126" flood-opacity=".18"/></filter>
+  </defs>
+  <rect width="1200" height="470" rx="28" fill="#f6f8fc"/>
+  <rect x="28" y="28" width="1144" height="414" rx="22" fill="url(#panel)" filter="url(#shadow)"/>
+  <text x="72" y="82" fill="#9fb4ff" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" letter-spacing="2">FLOWPEEK · EVIDENCE SNAPSHOT</text>
+  <text x="72" y="122" fill="#ffffff" font-family="Inter,Segoe UI,sans-serif" font-size="28" font-weight="750">What the graph adds</text>
+  <text x="72" y="151" fill="#b9c4dc" font-family="Inter,Segoe UI,sans-serif" font-size="15">Literal retrieval finds files; Flowpeek adds ordered static flow and versioned context.</text>
+  <g transform="translate(72 190)">
+      <rect width="239" height="196" rx="16" fill="#ffffff" fill-opacity=".07" stroke="#ffffff" stroke-opacity=".12"/>
+      <text x="18" y="35" fill="#c8d2e7" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="650">Target paths</text>
+      <text x="18" y="76" fill="#8592aa" font-family="Inter,Segoe UI,sans-serif" font-size="12">Literal retrieval</text>
+      <text x="18" y="104" fill="#ffffff" font-family="Inter,Segoe UI,sans-serif" font-size="21" font-weight="750">10/10</text>
+      <line x1="18" x2="221" y1="124" y2="124" stroke="#ffffff" stroke-opacity=".12"/>
+      <text x="18" y="151" fill="#9fb4ff" font-family="Inter,Segoe UI,sans-serif" font-size="12">Flowpeek graph</text>
+      <text x="18" y="181" fill="#8ef0cf" font-family="Inter,Segoe UI,sans-serif" font-size="24" font-weight="800">10/10</text>
+    </g><g transform="translate(339 190)">
+      <rect width="239" height="196" rx="16" fill="#ffffff" fill-opacity=".07" stroke="#ffffff" stroke-opacity=".12"/>
+      <text x="18" y="35" fill="#c8d2e7" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="650">Ordered flow steps</text>
+      <text x="18" y="76" fill="#8592aa" font-family="Inter,Segoe UI,sans-serif" font-size="12">Literal retrieval</text>
+      <text x="18" y="104" fill="#e3a7ad" font-family="Inter,Segoe UI,sans-serif" font-size="21" font-weight="750">Not available</text>
+      <line x1="18" x2="221" y1="124" y2="124" stroke="#ffffff" stroke-opacity=".12"/>
+      <text x="18" y="151" fill="#9fb4ff" font-family="Inter,Segoe UI,sans-serif" font-size="12">Flowpeek graph</text>
+      <text x="18" y="181" fill="#8ef0cf" font-family="Inter,Segoe UI,sans-serif" font-size="24" font-weight="800">14/14</text>
+    </g><g transform="translate(606 190)">
+      <rect width="239" height="196" rx="16" fill="#ffffff" fill-opacity=".07" stroke="#ffffff" stroke-opacity=".12"/>
+      <text x="18" y="35" fill="#c8d2e7" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="650">Related tests</text>
+      <text x="18" y="76" fill="#8592aa" font-family="Inter,Segoe UI,sans-serif" font-size="12">Literal retrieval</text>
+      <text x="18" y="104" fill="#ffffff" font-family="Inter,Segoe UI,sans-serif" font-size="21" font-weight="750">3/3</text>
+      <line x1="18" x2="221" y1="124" y2="124" stroke="#ffffff" stroke-opacity=".12"/>
+      <text x="18" y="151" fill="#9fb4ff" font-family="Inter,Segoe UI,sans-serif" font-size="12">Flowpeek graph</text>
+      <text x="18" y="181" fill="#8ef0cf" font-family="Inter,Segoe UI,sans-serif" font-size="24" font-weight="800">3/3</text>
+    </g><g transform="translate(873 190)">
+      <rect width="239" height="196" rx="16" fill="#ffffff" fill-opacity=".07" stroke="#ffffff" stroke-opacity=".12"/>
+      <text x="18" y="35" fill="#c8d2e7" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="650">Versioned stale refs</text>
+      <text x="18" y="76" fill="#8592aa" font-family="Inter,Segoe UI,sans-serif" font-size="12">Literal retrieval</text>
+      <text x="18" y="104" fill="#e3a7ad" font-family="Inter,Segoe UI,sans-serif" font-size="21" font-weight="750">Not available</text>
+      <line x1="18" x2="221" y1="124" y2="124" stroke="#ffffff" stroke-opacity=".12"/>
+      <text x="18" y="151" fill="#9fb4ff" font-family="Inter,Segoe UI,sans-serif" font-size="12">Flowpeek graph</text>
+      <text x="18" y="181" fill="#8ef0cf" font-family="Inter,Segoe UI,sans-serif" font-size="24" font-weight="800">3/3</text>
+    </g>
+    <text x="72" y="425" fill="#b9c4dc" font-family="Inter,Segoe UI,sans-serif" font-size="13">Three source-pinned fixtures · deterministic retrieval · no human or AI outcome claim</text>
+</svg>

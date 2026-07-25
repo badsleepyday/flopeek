@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "flowpeek-monorepo-package-selection-benchmark/v1",
+  "suiteId": "flowpeek-monorepo-package-selection-suite",
+  "fixture": {
+    "id": "monorepo-package-selection",
+    "path": "test/fixtures/monorepo-package-selection",
+    "sourcePin": {
+      "kind": "tree-sha256",
+      "value": "6ccdd16559a3c89f84befc8d6f37591463b1d1850f7e3931adfbaff70428ecb0"
+    }
+  },
+  "packageSelection": {
+    "packages": [
+      {
+        "name": "@monorepo/api",
+        "path": "apps/api",
+        "expectedScannedFiles": 1,
+        "expectedNodes": 4,
+        "expectedEdges": 3,
+        "expectedSubtreeOnly": true
+      },
+      {
+        "name": "@monorepo/web",
+        "path": "apps/web",
+        "expectedScannedFiles": 1,
+        "expectedNodes": 2,
+        "expectedEdges": 2,
+        "expectedSubtreeOnly": true
+      },
+      {
+        "name": "@monorepo/shared",
+        "path": "packages/shared",
+        "expectedScannedFiles": 1,
+        "expectedNodes": 2,
+        "expectedEdges": 2,
+        "expectedSubtreeOnly": true
+      }
+    ]
+  },
+  "limitations": [
+    "Package-scoped analysis is a static selected subtree and does not prove workspace topology, build activation, or runtime behavior.",
+    "Package selection retains configured repository exclusions and source roots."
+  ]
+}

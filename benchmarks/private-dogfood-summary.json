@@ -1,0 +1,120 @@
+{
+  "schemaVersion": "flowpeek-private-dogfood-summary/v1",
+  "capturedAt": "2026-07-16",
+  "execution": {
+    "mode": "read-only static scan",
+    "targetExecution": false,
+    "identityPersistence": false,
+    "cachePersistence": false,
+    "pathDisclosure": "repository aliases only"
+  },
+  "results": [
+    {
+      "alias": "private-go-service",
+      "status": "completed",
+      "durationMs": 515.42,
+      "scannedFiles": 95,
+      "parsedFiles": 94,
+      "inventoryOnlyFiles": 1,
+      "parseFailedFiles": 0,
+      "nodes": 521,
+      "edges": 1238,
+      "directCalls": 220,
+      "endpoints": 0,
+      "flowLenses": 0,
+      "languages": ["go", "shell"]
+    },
+    {
+      "alias": "private-node-api",
+      "status": "completed",
+      "durationMs": 585.03,
+      "scannedFiles": 96,
+      "parsedFiles": 95,
+      "inventoryOnlyFiles": 1,
+      "parseFailedFiles": 0,
+      "nodes": 184,
+      "edges": 463,
+      "directCalls": 17,
+      "endpoints": 0,
+      "flowLenses": 0,
+      "languages": ["javascript", "shell"]
+    },
+    {
+      "alias": "private-next-web",
+      "status": "completed",
+      "durationMs": 5013.46,
+      "scannedFiles": 541,
+      "parsedFiles": 540,
+      "inventoryOnlyFiles": 1,
+      "parseFailedFiles": 0,
+      "nodes": 1470,
+      "edges": 5897,
+      "directCalls": 1343,
+      "endpoints": 0,
+      "flowLenses": 0,
+      "languages": ["javascript", "shell"]
+    },
+    {
+      "alias": "private-dashboard-workspace",
+      "status": "completed",
+      "durationMs": 6270.67,
+      "scannedFiles": 732,
+      "parsedFiles": 729,
+      "inventoryOnlyFiles": 3,
+      "parseFailedFiles": 0,
+      "nodes": 2173,
+      "edges": 7598,
+      "directCalls": 1580,
+      "endpoints": 0,
+      "flowLenses": 0,
+      "languages": ["go", "javascript", "shell"]
+    },
+    {
+      "alias": "private-large-workspace",
+      "status": "time-budget-exceeded",
+      "timeBudgetMs": 60000,
+      "targetExecution": false,
+      "identityPersistence": false,
+      "cachePersistence": false
+    },
+    {
+      "alias": "private-multi-repository-workspace",
+      "status": "completed",
+      "durationMs": 52950.56,
+      "scannedFiles": 3805,
+      "parsedFiles": 3793,
+      "inventoryOnlyFiles": 12,
+      "parseFailedFiles": 0,
+      "nodes": 7743,
+      "edges": 22459,
+      "directCalls": 2780,
+      "endpoints": 229,
+      "flowLenses": 229,
+      "languages": ["javascript", "php", "python", "shell", "typescript", "tsx"]
+    }
+  ],
+  "findings": [
+    {
+      "id": "endpoint-only-flow-lens",
+      "status": "resolved",
+      "observation": "Endpoint-free repositories retain technical nodes and static relationships but expose no HTTP/request Flow Lens."
+    },
+    {
+      "id": "no-cache-no-metadata",
+      "status": "resolved",
+      "observation": "The checked CLI regression test verifies that scan --no-cache creates neither graph cache nor project-identity metadata."
+    },
+    {
+      "id": "large-root-scan-budget",
+      "status": "open",
+      "observation": "One broad workspace exceeded the explicit 60-second read-only evaluation budget; this is a scale observation, not a failed parser-accuracy result."
+    }
+  ],
+  "limitations": [
+    "This is parser coverage and scale evidence, not an independent precision/recall audit.",
+    "No target application, test suite, configuration, credential, source body, or runtime integration was executed or retained.",
+    "Durations are one host observation and are not performance promises or release thresholds.",
+    "Zero endpoints means no extracted supported HTTP/request entry point; it does not mean the repository has no behavior.",
+    "Reviews used one provider family and are advisory only; no multi-provider quorum is claimed."
+  ]
+}

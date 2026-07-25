@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="348" viewBox="0 0 820 348" role="img" aria-labelledby="title description">
+  <title id="title">Incremental scan speedup across four external monorepos</title>
+  <desc id="description">Logarithmic horizontal bars compare the median speedup of Flowpeek incremental scans over full reparses: pnpm 1.67 times, NestJS 1.69 times, SvelteKit 4.21 times, and Symfony 54.53 times.</desc>
+  <style>
+    .background { fill: #ffffff; }
+    .title { fill: #1f2328; font: 600 18px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; }
+    .subtitle, .axis, .caption { fill: #57606a; font: 12px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; }
+    .label { fill: #1f2328; font: 600 14px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; }
+    .value { fill: #1f2328; font: 600 13px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; }
+    .grid { stroke: #d0d7de; stroke-width: 1; }
+    .bar { fill: #0969da; }
+    @media (prefers-color-scheme: dark) {
+      .background { fill: #0d1117; }
+      .title, .label, .value { fill: #f0f6fc; }
+      .subtitle, .axis, .caption { fill: #8b949e; }
+      .grid { stroke: #30363d; }
+      .bar { fill: #58a6ff; }
+    }
+  </style>
+  <rect class="background" width="820" height="348" rx="10"/>
+  <text class="title" x="32" y="38">Incremental scan speedup on external monorepos</text>
+  <text class="subtitle" x="32" y="61">Median full reparse / median incremental rescan - logarithmic scale</text>
+  <line class="grid" x1="190" y1="92" x2="190" y2="285"/>
+  <line class="grid" x1="280" y1="92" x2="280" y2="285"/>
+  <line class="grid" x1="370" y1="92" x2="370" y2="285"/>
+  <line class="grid" x1="460" y1="92" x2="460" y2="285"/>
+  <line class="grid" x1="550" y1="92" x2="550" y2="285"/>
+  <line class="grid" x1="640" y1="92" x2="640" y2="285"/>
+  <line class="grid" x1="730" y1="92" x2="730" y2="285"/>
+  <text class="axis" x="190" y="306" text-anchor="middle">1x</text>
+  <text class="axis" x="280" y="306" text-anchor="middle">2x</text>
+  <text class="axis" x="370" y="306" text-anchor="middle">4x</text>
+  <text class="axis" x="460" y="306" text-anchor="middle">8x</text>
+  <text class="axis" x="550" y="306" text-anchor="middle">16x</text>
+  <text class="axis" x="640" y="306" text-anchor="middle">32x</text>
+  <text class="axis" x="730" y="306" text-anchor="middle">64x</text>
+  <text class="label" x="32" y="122">pnpm</text>
+  <rect class="bar" x="190" y="103" width="66" height="26" rx="4"/>
+  <text class="value" x="266" y="122">1.67x</text>
+  <text class="label" x="32" y="166">NestJS</text>
+  <rect class="bar" x="190" y="147" width="68" height="26" rx="4"/>
+  <text class="value" x="268" y="166">1.69x</text>
+  <text class="label" x="32" y="210">SvelteKit</text>
+  <rect class="bar" x="190" y="191" width="187" height="26" rx="4"/>
+  <text class="value" x="387" y="210">4.21x</text>
+  <text class="label" x="32" y="254">Symfony</text>
+  <rect class="bar" x="190" y="235" width="520" height="26" rx="4"/>
+  <text class="value" x="720" y="254">54.53x</text>
+  <text class="caption" x="32" y="332">Local CPU-time evidence from 2026-07-13/14; see BENCHMARKS.md for file counts, raw timing context, and limits.</text>
+</svg>

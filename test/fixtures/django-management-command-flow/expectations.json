@@ -1,0 +1,16 @@
+{
+  "minimumPrecision": 0.9,
+  "minimumRecall": 0.9,
+  "relationships": [
+    {
+      "type": "declares-command-target",
+      "source": "command:polls/management/commands/rebuild_index.py:rebuild_index",
+      "target": "symbol:polls/management/commands/rebuild_index.py:class:Command"
+    },
+    {
+      "type": "calls",
+      "source": "symbol:polls/management/commands/rebuild_index.py:class:Command",
+      "target": "symbol:polls/services.py:function:rebuild_search_index"
+    }
+  ]
+}

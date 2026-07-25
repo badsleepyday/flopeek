@@ -1,0 +1,461 @@
+{
+  "schemaVersion": "flowpeek-orientation-benchmark/v2",
+  "generatedAt": "2026-07-15T09:33:25.511Z",
+  "runEnvironment": {
+    "flowpeekVersion": "0.2.0",
+    "nodeVersion": "24.18.0",
+    "platform": "win32",
+    "architecture": "x64",
+    "logicalCpuCount": 12,
+    "cpuModel": "12th Gen Intel(R) Core(TM) i5-1235U",
+    "timingClock": "process.hrtime.bigint",
+    "timingPolicy": "host-specific-non-gating"
+  },
+  "suite": {
+    "id": "flowpeek-initial-orientation-suite",
+    "casesSchemaVersion": "flowpeek-orientation-cases/v1",
+    "repositoryCount": 3,
+    "caseCount": 3
+  },
+  "condition": "direct-repository",
+  "evidenceClass": "deterministic-retrieval",
+  "repositories": [
+    {
+      "id": "legacy-handoff-typescript",
+      "declaredPath": "test/fixtures/legacy-handoff",
+      "sourcePin": {
+        "kind": "tree-sha256",
+        "value": "759094042f43d6e7e72c639ceb270c396264cbbe7925cd8f0788fc9590723f4a",
+        "verified": true
+      },
+      "retrievalExclusions": [
+        "expectations.json"
+      ],
+      "timing": {
+        "preparationMilliseconds": 28.835,
+        "preparationPhases": [
+          {
+            "phase": "text-inventory",
+            "milliseconds": 28.835
+          }
+        ]
+      },
+      "cases": [
+        {
+          "id": "locate-legacy-account-listing",
+          "repositoryId": "legacy-handoff-typescript",
+          "task": "Find the account-listing entry point, explain its bounded static path to data loading, and identify directly related tests.",
+          "expected": {
+            "targetPaths": [
+              "src/app/api/accounts/route.ts",
+              "src/legacy/manager.ts",
+              "src/legacy/helper.ts"
+            ],
+            "flowStepIds": [
+              "endpoint:src/app/api/accounts/route.ts:GET:/api/accounts",
+              "symbol:src/app/api/accounts/route.ts:function:GET",
+              "symbol:src/legacy/manager.ts:function:listAccounts",
+              "symbol:src/legacy/helper.ts:function:loadAccounts"
+            ],
+            "relatedTestPaths": [
+              "test/accounts.test.ts"
+            ]
+          },
+          "observed": {
+            "targetPaths": [
+              "src/legacy/manager.ts",
+              "src/app/api/accounts/route.ts",
+              "test/accounts.test.ts",
+              "src/legacy/helper.ts"
+            ],
+            "flowStepIds": null,
+            "relatedTestPaths": [
+              "test/accounts.test.ts"
+            ],
+            "repositoryFilesProcessed": 7
+          },
+          "metrics": {
+            "correctTargetRetrieval": {
+              "matched": 3,
+              "expected": 3,
+              "recall": 1,
+              "missing": []
+            },
+            "flowSteps": {
+              "status": "unavailable",
+              "matchedInExpectedOrder": null,
+              "expected": 4,
+              "returned": null,
+              "recall": null,
+              "precision": null,
+              "exactOrderMatch": null,
+              "reason": "Direct lexical retrieval does not produce relationship order; scoring it as a flow would invent evidence."
+            },
+            "relatedTests": {
+              "matched": 1,
+              "expected": 1,
+              "recall": 1,
+              "missing": []
+            },
+            "staleContextDetection": {
+              "status": "unsupported",
+              "requested": 1,
+              "detected": null,
+              "rate": null,
+              "reason": "The direct lexical condition has no versioned Context Ref contract."
+            },
+            "context": {
+              "filesInspected": 4,
+              "paths": [
+                "src/legacy/manager.ts",
+                "src/app/api/accounts/route.ts",
+                "test/accounts.test.ts",
+                "src/legacy/helper.ts"
+              ],
+              "estimatedCharacters": 896,
+              "estimatedTokens": 224,
+              "tokenizerId": "flowpeek-char4-estimator/v1"
+            },
+            "timing": {
+              "preparationMilliseconds": 28.835,
+              "sharedRepositoryPreparationMilliseconds": 28.835,
+              "retrievalMilliseconds": 0.343,
+              "coldTimeToUsefulContextMilliseconds": 29.178,
+              "warmTimeToUsefulContextMilliseconds": 0.343,
+              "gating": false,
+              "separateValidationMilliseconds": 0
+            },
+            "unsupportedClaims": {
+              "status": "no-claims-emitted",
+              "evaluated": 0,
+              "unsupported": 0,
+              "rate": null,
+              "reason": "The deterministic harness emits retrieval evidence rather than natural-language runtime or business claims."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "orders-typescript",
+      "declaredPath": "test/fixtures/typescript-order-flow",
+      "sourcePin": {
+        "kind": "tree-sha256",
+        "value": "f914ae7f469e25182efa9adc38443b33ed340a74738408e86e4e91cb804035bd",
+        "verified": true
+      },
+      "retrievalExclusions": [
+        "expectations.json"
+      ],
+      "timing": {
+        "preparationMilliseconds": 25.939,
+        "preparationPhases": [
+          {
+            "phase": "text-inventory",
+            "milliseconds": 25.939
+          }
+        ]
+      },
+      "cases": [
+        {
+          "id": "trace-order-creation",
+          "repositoryId": "orders-typescript",
+          "task": "Find the order-creation endpoint, trace its bounded static service and persistence dependencies, and identify directly related tests.",
+          "expected": {
+            "targetPaths": [
+              "src/orders/orders.routes.ts",
+              "src/orders/orders.service.ts",
+              "src/orders/orders.repository.ts",
+              "src/orders/validation.ts"
+            ],
+            "flowStepIds": [
+              "endpoint:src/orders/orders.routes.ts:POST:/orders",
+              "file:src/orders/orders.routes.ts",
+              "file:src/orders/orders.service.ts",
+              "file:src/orders/orders.repository.ts",
+              "file:src/orders/validation.ts"
+            ],
+            "relatedTestPaths": [
+              "src/orders/orders.service.spec.ts"
+            ]
+          },
+          "observed": {
+            "targetPaths": [
+              "src/orders/orders.service.ts",
+              "src/orders/orders.routes.ts",
+              "src/orders/orders.service.spec.ts",
+              "src/orders/orders.repository.ts",
+              "src/orders/validation.ts"
+            ],
+            "flowStepIds": null,
+            "relatedTestPaths": [
+              "src/orders/orders.service.spec.ts"
+            ],
+            "repositoryFilesProcessed": 6
+          },
+          "metrics": {
+            "correctTargetRetrieval": {
+              "matched": 4,
+              "expected": 4,
+              "recall": 1,
+              "missing": []
+            },
+            "flowSteps": {
+              "status": "unavailable",
+              "matchedInExpectedOrder": null,
+              "expected": 5,
+              "returned": null,
+              "recall": null,
+              "precision": null,
+              "exactOrderMatch": null,
+              "reason": "Direct lexical retrieval does not produce relationship order; scoring it as a flow would invent evidence."
+            },
+            "relatedTests": {
+              "matched": 1,
+              "expected": 1,
+              "recall": 1,
+              "missing": []
+            },
+            "staleContextDetection": {
+              "status": "unsupported",
+              "requested": 1,
+              "detected": null,
+              "rate": null,
+              "reason": "The direct lexical condition has no versioned Context Ref contract."
+            },
+            "context": {
+              "filesInspected": 5,
+              "paths": [
+                "src/orders/orders.service.ts",
+                "src/orders/orders.routes.ts",
+                "src/orders/orders.service.spec.ts",
+                "src/orders/orders.repository.ts",
+                "src/orders/validation.ts"
+              ],
+              "estimatedCharacters": 646,
+              "estimatedTokens": 162,
+              "tokenizerId": "flowpeek-char4-estimator/v1"
+            },
+            "timing": {
+              "preparationMilliseconds": 25.939,
+              "sharedRepositoryPreparationMilliseconds": 25.939,
+              "retrievalMilliseconds": 0.336,
+              "coldTimeToUsefulContextMilliseconds": 26.275,
+              "warmTimeToUsefulContextMilliseconds": 0.336,
+              "gating": false,
+              "separateValidationMilliseconds": 0
+            },
+            "unsupportedClaims": {
+              "status": "no-claims-emitted",
+              "evaluated": 0,
+              "unsupported": 0,
+              "rate": null,
+              "reason": "The deterministic harness emits retrieval evidence rather than natural-language runtime or business claims."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "payments-python",
+      "declaredPath": "test/fixtures/python-payment-flow",
+      "sourcePin": {
+        "kind": "tree-sha256",
+        "value": "cd63b308cc617df897bc5dc9e447760d2f7d22a9ee44b63587caef86f3706ae5",
+        "verified": true
+      },
+      "retrievalExclusions": [
+        "expectations.json"
+      ],
+      "timing": {
+        "preparationMilliseconds": 16.661,
+        "preparationPhases": [
+          {
+            "phase": "text-inventory",
+            "milliseconds": 16.661
+          }
+        ]
+      },
+      "cases": [
+        {
+          "id": "trace-payment-lookup",
+          "repositoryId": "payments-python",
+          "task": "Find the payment lookup endpoint, trace its bounded static route, service, and repository context, and identify directly related tests.",
+          "expected": {
+            "targetPaths": [
+              "src/payments/routes.py",
+              "src/payments/service.py",
+              "src/payments/repository.py"
+            ],
+            "flowStepIds": [
+              "endpoint:src/payments/routes.py:GET:/payments/{payment_id}",
+              "file:src/payments/routes.py",
+              "file:src/payments/service.py",
+              "external:fastapi",
+              "file:src/payments/repository.py"
+            ],
+            "relatedTestPaths": [
+              "src/payments/service_test.py"
+            ]
+          },
+          "observed": {
+            "targetPaths": [
+              "src/payments/repository.py",
+              "src/payments/routes.py",
+              "src/payments/service_test.py",
+              "src/payments/service.py"
+            ],
+            "flowStepIds": null,
+            "relatedTestPaths": [
+              "src/payments/service_test.py"
+            ],
+            "repositoryFilesProcessed": 5
+          },
+          "metrics": {
+            "correctTargetRetrieval": {
+              "matched": 3,
+              "expected": 3,
+              "recall": 1,
+              "missing": []
+            },
+            "flowSteps": {
+              "status": "unavailable",
+              "matchedInExpectedOrder": null,
+              "expected": 5,
+              "returned": null,
+              "recall": null,
+              "precision": null,
+              "exactOrderMatch": null,
+              "reason": "Direct lexical retrieval does not produce relationship order; scoring it as a flow would invent evidence."
+            },
+            "relatedTests": {
+              "matched": 1,
+              "expected": 1,
+              "recall": 1,
+              "missing": []
+            },
+            "staleContextDetection": {
+              "status": "unsupported",
+              "requested": 1,
+              "detected": null,
+              "rate": null,
+              "reason": "The direct lexical condition has no versioned Context Ref contract."
+            },
+            "context": {
+              "filesInspected": 4,
+              "paths": [
+                "src/payments/repository.py",
+                "src/payments/routes.py",
+                "src/payments/service_test.py",
+                "src/payments/service.py"
+              ],
+              "estimatedCharacters": 487,
+              "estimatedTokens": 122,
+              "tokenizerId": "flowpeek-char4-estimator/v1"
+            },
+            "timing": {
+              "preparationMilliseconds": 16.661,
+              "sharedRepositoryPreparationMilliseconds": 16.661,
+              "retrievalMilliseconds": 0.098,
+              "coldTimeToUsefulContextMilliseconds": 16.759,
+              "warmTimeToUsefulContextMilliseconds": 0.098,
+              "gating": false,
+              "separateValidationMilliseconds": 0
+            },
+            "unsupportedClaims": {
+              "status": "no-claims-emitted",
+              "evaluated": 0,
+              "unsupported": 0,
+              "rate": null,
+              "reason": "The deterministic harness emits retrieval evidence rather than natural-language runtime or business claims."
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "caseCount": 3,
+    "correctTargetRetrieval": {
+      "matched": 10,
+      "expected": 10,
+      "recall": 1
+    },
+    "flowSteps": {
+      "status": "unavailable",
+      "casesMeasured": 0,
+      "recall": null,
+      "reason": "This condition does not generate relationship order."
+    },
+    "relatedTests": {
+      "matched": 3,
+      "expected": 3,
+      "recall": 1
+    },
+    "context": {
+      "filesInspected": 13,
+      "estimatedCharacters": 2029,
+      "estimatedTokens": 508,
+      "tokenizerId": "flowpeek-char4-estimator/v1"
+    },
+    "staleContextDetection": {
+      "status": "unavailable",
+      "requested": 3,
+      "detected": null,
+      "rate": null
+    },
+    "timing": {
+      "processStartupAndModuleLoad": {
+        "status": "unavailable",
+        "milliseconds": null,
+        "reason": "The in-process evaluator starts timing after its modules are loaded; CLI process startup is not folded into scan or retrieval timing."
+      },
+      "repositoryPreparationMilliseconds": 71.435,
+      "preparationPhases": [
+        {
+          "phase": "text-inventory",
+          "milliseconds": 71.435
+        }
+      ],
+      "caseRetrievalMilliseconds": 0.777,
+      "totalTimeToUsefulContextMilliseconds": 72.212,
+      "separateValidationMilliseconds": 0,
+      "coldTimeToUsefulContextMilliseconds": 72.212,
+      "warmTimeToUsefulContextMilliseconds": 0.777,
+      "gating": false,
+      "accounting": "Repository preparation is counted once per repository; case retrieval is counted once per case; stale-ref validation is reported separately and excluded from time to useful context."
+    },
+    "unsupportedClaims": {
+      "evaluated": 0,
+      "unsupported": 0,
+      "rate": null,
+      "status": "no-claims-emitted"
+    }
+  },
+  "studyEvidence": {
+    "deterministicRetrieval": {
+      "status": "measured",
+      "evidenceClass": "deterministic-retrieval"
+    },
+    "humanStudy": {
+      "status": "not-run",
+      "evidenceClass": "human-observation",
+      "reason": "No consented human observation artifact was supplied or inferred."
+    },
+    "agentStudy": {
+      "status": "not-run",
+      "evidenceClass": "agent-declared-or-independently-reviewed",
+      "reason": "No provider execution was invoked, supplied, or inferred."
+    }
+  },
+  "limitations": [
+    "This is a deterministic retrieval benchmark, not a human productivity study or an AI-agent task-outcome study.",
+    "Direct-repository uses plain case-insensitive substring retrieval and does not produce or score relationship order.",
+    "Repository-declared benchmark oracle files are excluded from direct retrieval and disclosed per repository.",
+    "Flowpeek results are static parser and graph projections; they do not prove runtime order, business intent, successful behavior, or complete coverage.",
+    "Timing is host-specific and non-gating. Repository preparation, bounded case retrieval, separate stale-ref validation, and unavailable process startup/module load are disclosed independently.",
+    "Repository preparation is counted once per repository even when that repository contains multiple cases.",
+    "Files inspected means unique paths exposed in the bounded result. Repository files processed is reported separately per case.",
+    "Estimated tokens use the disclosed four-characters-per-token fallback and are not provider tokenizer measurements."
+  ]
+}
