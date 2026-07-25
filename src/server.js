@@ -732,6 +732,14 @@ async function startServer(options) {
     }
   });
 
+  server.on("close", () => {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    closeWatcher();
+    for (const response of eventStreams) response.end();
+    eventStreams.clear();
+    if (serveWorkspaceRegistration) unregisterServeWorkspace(serveWorkspaceRegistration.record.instanceId, { registryRoot: options.registryRoot });
+  });
+
   portBinding = await listenOnAvailablePort(server, options.port, options);
   try {
     await refresh();
@@ -743,18 +751,12 @@ async function startServer(options) {
         registryRoot: options.registryRoot,
       });
     }
+    startWatching();
+    await new Promise((resolve) => setImmediate(resolve));
   } catch (error) {
     await new Promise((resolve) => server.close(resolve));
     throw error;
   }
-  startWatching();
-  server.on("close", () => {
-    if (refreshTimer) clearTimeout(refreshTimer);
-    closeWatcher();
-    for (const response of eventStreams) response.end();
-    eventStreams.clear();
-    if (serveWorkspaceRegistration) unregisterServeWorkspace(serveWorkspaceRegistration.record.instanceId, { registryRoot: options.registryRoot });
-  });
   return {
     server,
     root,
