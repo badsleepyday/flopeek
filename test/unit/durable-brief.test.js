@@ -21,7 +21,7 @@ function fixtureGraph(root) {
 }
 
 test("layered Project, Feature, Flow, and Node Briefs preserve evidence classes and portable provenance", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-durable-brief-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-durable-brief-"));
   try {
     const graph = fixtureGraph(root);
     const flow = graph.flows.find((item) => item.title === "GET /api/payments");
@@ -34,7 +34,7 @@ test("layered Project, Feature, Flow, and Node Briefs preserve evidence classes 
       createDurableBrief(graph, "node", node.id),
     ];
     for (const brief of briefs) {
-      assert.equal(brief.schemaVersion, "flowpeek-brief/v1");
+      assert.equal(brief.schemaVersion, "flopeek-brief/v1");
       assert.equal(brief.projectIdentity.projectId, graph.project.projectId);
       assert.equal(brief.graphVersion, graph.state.graphVersion);
       assert.equal(brief.evidenceClass, "deterministic-inference");
@@ -59,7 +59,7 @@ test("layered Project, Feature, Flow, and Node Briefs preserve evidence classes 
 });
 
 test("immutable Brief manifests survive artifact eviction and report current, stale, and expired states", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-brief-manifest-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-brief-manifest-"));
   try {
     const graph = fixtureGraph(root);
     const materialized = materializeDurableBrief(root, graph, "project");

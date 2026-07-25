@@ -1,6 +1,6 @@
 {
-  "schemaVersion": "flowpeek-agent-comparison-runs/v1",
-  "studyId": "flowpeek-agent-comparison-template",
+  "schemaVersion": "flopeek-agent-comparison-runs/v1",
+  "studyId": "flopeek-agent-comparison-template",
   "status": "template",
   "consent": {
     "explicit": false,

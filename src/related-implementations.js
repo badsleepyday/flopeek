@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { createContextRef, parseContextRef } = require("./context-card");
 
-const RELATED_IMPLEMENTATIONS_SCHEMA = "flowpeek-related-implementations/v1";
+const RELATED_IMPLEMENTATIONS_SCHEMA = "flopeek-related-implementations/v1";
 const MAX_CANDIDATE_FILES = 250;
 const MAX_FILE_BYTES = 256 * 1024;
 const MAX_TOKENS_PER_FILE = 80;
@@ -67,7 +67,7 @@ function sharedDirectoryDepth(leftPath, rightPath) {
 
 function getRelatedImplementations(graph, contextRef, options = {}) {
   const parsed = parseContextRef(contextRef);
-  if (parsed.projectId !== graph.project.projectId) throw new Error("Context Ref belongs to a different Flowpeek project.");
+  if (parsed.projectId !== graph.project.projectId) throw new Error("Context Ref belongs to a different Flopeek project.");
   if (parsed.kind !== "node") throw new Error("Related implementations require a node Context Ref.");
   const node = graph.nodes.find((candidate) => candidate.id === parsed.contextId);
   if (!node) throw new Error("Context Ref node is not available in the current graph.");

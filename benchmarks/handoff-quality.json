@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "flowpeek-handoff-quality-cases/v1",
+  "schemaVersion": "flopeek-handoff-quality-cases/v1",
   "fixture": "test/fixtures/legacy-handoff",
   "cases": [
     {

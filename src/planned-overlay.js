@@ -8,10 +8,10 @@ const { parseContextRef } = require("./context-card");
 const { listContinuationCheckpoints, readContinuationCheckpointStore } = require("./continuation-checkpoint");
 const { portableText } = require("./handoff-workspace");
 
-const PLANNED_OVERLAY_SCHEMA = "flowpeek-planned-overlay/v1";
-const PLANNED_OVERLAY_STORE_SCHEMA = "flowpeek-planned-overlays/v1";
-const PLANNED_OVERLAY_STORE_RELATIVE_PATH = ".flowpeek/delivery/planned-overlays.json";
-const PLAN_REF_SCHEMA = "flowpeek-plan-ref/v1";
+const PLANNED_OVERLAY_SCHEMA = "flopeek-planned-overlay/v1";
+const PLANNED_OVERLAY_STORE_SCHEMA = "flopeek-planned-overlays/v1";
+const PLANNED_OVERLAY_STORE_RELATIVE_PATH = ".flopeek/delivery/planned-overlays.json";
+const PLAN_REF_SCHEMA = "flopeek-plan-ref/v1";
 const MAX_OVERLAYS = 10_000;
 const MAX_NODES = 200;
 const MAX_EDGES = 500;
@@ -119,7 +119,7 @@ function emptyStore(projectId) {
 function normalizeContextRef(graph, value, allowedContextRefs, name) {
   let parsed;
   try { parsed = parseContextRef(value); } catch (error) { throw new PlannedOverlayError("invalid-context-ref", `${name} must be a technical Context Ref: ${error.message}`); }
-  if (parsed.projectId !== graph.project.projectId) throw new PlannedOverlayError("wrong-project-id", `${name} must belong to the current Flowpeek project.`);
+  if (parsed.projectId !== graph.project.projectId) throw new PlannedOverlayError("wrong-project-id", `${name} must belong to the current Flopeek project.`);
   if (!allowedContextRefs.has(parsed.contextRef)) throw new PlannedOverlayError("unselected-checkpoint-context", `${name} must be one of the checkpoint-selected Context Refs.`, 409);
   return parsed.contextRef;
 }
@@ -284,7 +284,7 @@ function readPlannedOverlayStore(root, projectId) {
       && new Set(ids).size === ids.length
       && new Set(operationIds).size === operationIds.length
       && new Set(versions).size === versions.length;
-    if (!valid) return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-planned-overlay-store", message: "Planned overlay storage does not match flowpeek-planned-overlays/v1." }] };
+    if (!valid) return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-planned-overlay-store", message: "Planned overlay storage does not match flopeek-planned-overlays/v1." }] };
     return { status: "valid", path: target, store, diagnostics: [] };
   } catch (error) {
     return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-planned-overlay-json", message: `Planned overlay storage is not valid JSON (${error.message}).` }] };
@@ -299,7 +299,7 @@ function createPlannedOverlay(root, graph, input, options = {}) {
   const existingOperation = read.store.records.find((record) => record.operationId === normalized.operationId);
   if (existingOperation) {
     if (existingOperation.inputFingerprint !== inputFingerprint) throw new PlannedOverlayError("operation-id-conflict", "operationId already belongs to another planned overlay.", 409);
-    return { schemaVersion: "flowpeek-planned-overlay-create-result/v1", created: false, overlay: existingOperation };
+    return { schemaVersion: "flopeek-planned-overlay-create-result/v1", created: false, overlay: existingOperation };
   }
   if (read.store.records.some((record) => record.id === normalized.id)) throw new PlannedOverlayError("planned-overlay-exists", `Planned overlay ${normalized.id} already exists.`, 409);
   if (read.store.records.length >= MAX_OVERLAYS) throw new PlannedOverlayError("planned-overlay-store-full", `Planned overlay storage reached its explicit ${MAX_OVERLAYS}-record limit.`, 507);
@@ -314,7 +314,7 @@ function createPlannedOverlay(root, graph, input, options = {}) {
     policy: { sourceBodies: "excluded", rawLogs: "excluded", credentials: "excluded", machinePaths: "excluded", privateReasoning: "excluded" },
   };
   atomicWriteJson(read.path, { ...read.store, records: [...read.store.records, overlay] });
-  return { schemaVersion: "flowpeek-planned-overlay-create-result/v1", created: true, overlay };
+  return { schemaVersion: "flopeek-planned-overlay-create-result/v1", created: true, overlay };
 }
 
 function overlayCheckpointStatus(root, graph, checkpointId) {
@@ -337,9 +337,9 @@ function projectOverlay(root, graph, record) {
 
 function listPlannedOverlays(root, graph) {
   const read = readPlannedOverlayStore(root, graph.project.projectId);
-  if (read.status === "invalid") return { schemaVersion: "flowpeek-planned-overlay-list/v1", status: "unavailable", project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion }, records: [], diagnostics: read.diagnostics };
+  if (read.status === "invalid") return { schemaVersion: "flopeek-planned-overlay-list/v1", status: "unavailable", project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion }, records: [], diagnostics: read.diagnostics };
   return {
-    schemaVersion: "flowpeek-planned-overlay-list/v1",
+    schemaVersion: "flopeek-planned-overlay-list/v1",
     status: "available",
     project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion },
     storage: { relativePath: PLANNED_OVERLAY_STORE_RELATIVE_PATH, status: read.status },
@@ -353,7 +353,7 @@ function resolvePlanRef(root, graph, value) {
   let parsed;
   try { parsed = parsePlanRef(value); } catch (error) {
     return {
-      schemaVersion: "flowpeek-plan-ref-resolution/v1",
+      schemaVersion: "flopeek-plan-ref-resolution/v1",
       status: "unresolved",
       requestedRef: value,
       resolvedRef: null,
@@ -364,19 +364,19 @@ function resolvePlanRef(root, graph, value) {
   }
   if (parsed.projectId !== graph.project.projectId) {
     return {
-      schemaVersion: "flowpeek-plan-ref-resolution/v1",
+      schemaVersion: "flopeek-plan-ref-resolution/v1",
       status: "unresolved",
       requestedRef: value,
       resolvedRef: null,
       plan: null,
-      reason: "Plan Ref belongs to a different Flowpeek project.",
+      reason: "Plan Ref belongs to a different Flopeek project.",
       code: "wrong-project-id",
     };
   }
   const listed = listPlannedOverlays(root, graph);
   if (listed.status !== "available") {
     return {
-      schemaVersion: "flowpeek-plan-ref-resolution/v1",
+      schemaVersion: "flopeek-plan-ref-resolution/v1",
       status: "unavailable",
       requestedRef: value,
       resolvedRef: null,
@@ -388,24 +388,24 @@ function resolvePlanRef(root, graph, value) {
   const overlay = listed.records.find((record) => record.checkpointId === parsed.checkpointId && record.overlayVersion === parsed.overlayVersion);
   if (!overlay) {
     return {
-      schemaVersion: "flowpeek-plan-ref-resolution/v1",
+      schemaVersion: "flopeek-plan-ref-resolution/v1",
       status: "unresolved",
       requestedRef: value,
       resolvedRef: null,
       plan: null,
-      reason: "The exact planned-overlay version is not retained locally. Flowpeek does not redirect Plan Refs to another overlay.",
+      reason: "The exact planned-overlay version is not retained locally. Flopeek does not redirect Plan Refs to another overlay.",
       code: "planned-overlay-not-found",
     };
   }
   const node = overlay.nodes.find((candidate) => candidate.id === parsed.plannedNodeId);
   if (!node) {
     return {
-      schemaVersion: "flowpeek-plan-ref-resolution/v1",
+      schemaVersion: "flopeek-plan-ref-resolution/v1",
       status: "unresolved",
       requestedRef: value,
       resolvedRef: null,
       plan: null,
-      reason: "The exact planned node is not present in the retained overlay. Flowpeek does not redirect Plan Refs to another node.",
+      reason: "The exact planned node is not present in the retained overlay. Flopeek does not redirect Plan Refs to another node.",
       code: "planned-node-not-found",
     };
   }
@@ -415,7 +415,7 @@ function resolvePlanRef(root, graph, value) {
       ? "future"
       : "stale";
   return {
-    schemaVersion: "flowpeek-plan-ref-resolution/v1",
+    schemaVersion: "flopeek-plan-ref-resolution/v1",
     status,
     requestedRef: value,
     resolvedRef: node.planRef,
@@ -440,11 +440,11 @@ function resolvePlanRef(root, graph, value) {
 
 function getPlannedOverlay(root, graph, overlayId) {
   const listed = listPlannedOverlays(root, graph);
-  if (listed.status !== "available") return { schemaVersion: "flowpeek-planned-overlay-get/v1", status: "unavailable", overlay: null, diagnostics: listed.diagnostics };
+  if (listed.status !== "available") return { schemaVersion: "flopeek-planned-overlay-get/v1", status: "unavailable", overlay: null, diagnostics: listed.diagnostics };
   const id = safeId(overlayId, "overlayId");
   const overlay = listed.records.find((record) => record.id === id);
   if (!overlay) throw new PlannedOverlayError("unknown-planned-overlay", `Planned overlay ${id} does not exist.`, 404);
-  return { schemaVersion: "flowpeek-planned-overlay-get/v1", status: "available", overlay, diagnostics: [], limitation: listed.limitation };
+  return { schemaVersion: "flopeek-planned-overlay-get/v1", status: "available", overlay, diagnostics: [], limitation: listed.limitation };
 }
 
 module.exports = {

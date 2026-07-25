@@ -11,7 +11,7 @@ const POLICY = loadPackagePolicy(path.join(ROOT, "packaging", "package-policy.js
 const PACKAGE = require("../../package.json");
 
 function result(paths) {
-  return { name: "flowpeek", version: PACKAGE.version, filename: `flowpeek-${PACKAGE.version}.tgz`, size: 100, unpackedSize: 1000, files: paths.map((item) => ({ path: item, size: 1, mode: 420 })) };
+  return { name: "flopeek", version: PACKAGE.version, filename: `flopeek-${PACKAGE.version}.tgz`, size: 100, unpackedSize: 1000, files: paths.map((item) => ({ path: item, size: 1, mode: 420 })) };
 }
 
 test("package policy accepts only the bounded runtime artifact", () => {
@@ -25,7 +25,7 @@ test("package policy accepts only the bounded runtime artifact", () => {
 });
 
 test("package policy rejects repository governance, cache, secrets, maps, omissions, and release drift", () => {
-  const unsafe = result([...POLICY.requiredPaths.filter((item) => item !== "src/mcp.js"), ".github/workflows/ci.yml", ".flowpeek/graph.json", "benchmarks/private-provider-cohort.json", "src/.env.production", "src/secrets.local.json", "src/private.pem", "public/app.js.map"]);
+  const unsafe = result([...POLICY.requiredPaths.filter((item) => item !== "src/mcp.js"), ".github/workflows/ci.yml", ".flopeek/graph.json", "benchmarks/private-provider-cohort.json", "src/.env.production", "src/secrets.local.json", "src/private.pem", "public/app.js.map"]);
   const publishable = { ...PACKAGE, private: true };
   const report = auditPackageFiles(unsafe, POLICY, publishable);
   assert.equal(report.status, "failed");

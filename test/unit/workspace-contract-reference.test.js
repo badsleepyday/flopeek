@@ -20,7 +20,7 @@ function snapshot(projectId, flowId, version) {
 }
 
 test("workspace contract references are idempotent and reject injected store fields", () => {
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-workspace-contract-store-"));
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-workspace-contract-store-"));
   const workspaceId = "commerce";
   try {
     const input = {
@@ -50,7 +50,7 @@ test("workspace contract references are idempotent and reject injected store fie
 });
 
 test("workspace contract references reject source-like, credential-like, and machine-local human text before normalization", () => {
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-workspace-contract-text-"));
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-workspace-contract-text-"));
   const workspaceId = "commerce";
   const base = {
     operationId: "orders-to-payments-v1",

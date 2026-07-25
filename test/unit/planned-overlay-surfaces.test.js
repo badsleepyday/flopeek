@@ -89,7 +89,7 @@ async function connectMcp(root) {
 }
 
 test("HTTP planned-overlay surfaces expose exact Plan Refs and keep stale anchors explicit", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-planned-http-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-planned-http-"));
   let app;
   try {
     fixture(root, "planned-http");
@@ -139,7 +139,7 @@ test("HTTP planned-overlay surfaces expose exact Plan Refs and keep stale anchor
 });
 
 test("MCP planned-overlay tools expose strict metadata-only contracts", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-planned-mcp-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-planned-mcp-"));
   let instance;
   let client;
   try {
@@ -176,7 +176,7 @@ test("MCP planned-overlay tools expose strict metadata-only contracts", async ()
 });
 
 test("CLI planned-overlay list, show, create, and resolve preserve one overlay identity", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-planned-cli-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-planned-cli-"));
   try {
     fixture(root, "planned-cli");
     const graph = scanRepository(root, { persistIdentity: true });
@@ -200,7 +200,7 @@ test("CLI planned-overlay list, show, create, and resolve preserve one overlay i
 });
 
 test("HTTP, MCP, and CLI return the same planned-overlay projection for one repository", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-planned-parity-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-planned-parity-"));
   let app;
   let instance;
   let client;

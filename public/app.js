@@ -297,7 +297,7 @@ function connectLiveUpdates() {
       state.scanOutcome = update;
       renderScanOutcome(update, update.phase);
       if (["partial-by-budget", "cancelled", "failed"].includes(update.status) && update.activeGraph?.available) {
-        toast("Scan did not complete. Flowpeek kept the last complete graph and marks it source-unverified.");
+        toast("Scan did not complete. Flopeek kept the last complete graph and marks it source-unverified.");
       }
     } catch {}
   });
@@ -355,7 +355,7 @@ function renderSidebar() {
     : `${catalog.returned} Flow Lenses for ${entryCount} detected static entries.`;
   flowList.innerHTML = flowItems.length
     ? flowItems.map((flow) => `<button class="flow-button${state.flowLens?.flow?.id === flow.id ? " selected-flow" : ""}" data-flow="${escapeHtml(flow.id)}" title="${escapeHtml(flow.title)}">${escapeHtml(flow.title)}</button>`).join("")
-    : `<section class="empty-flow-state"><strong>No supported static entry point detected.</strong><p>This does not mean the application has no behavior. Flowpeek still has its bounded technical map.</p><div class="button-row"><button data-empty-flow-action="overview">Explore features</button><button data-empty-flow-action="search">Find code</button></div></section>`;
+    : `<section class="empty-flow-state"><strong>No supported static entry point detected.</strong><p>This does not mean the application has no behavior. Flopeek still has its bounded technical map.</p><div class="button-row"><button data-empty-flow-action="overview">Explore features</button><button data-empty-flow-action="search">Find code</button></div></section>`;
   flowList.querySelectorAll("[data-flow]").forEach((button) => button.addEventListener("click", () => openFlowLens(button.dataset.flow)));
   flowList.querySelectorAll("[data-empty-flow-action]").forEach((button) => button.addEventListener("click", async () => {
     if (button.dataset.emptyFlowAction === "search") {
@@ -509,8 +509,8 @@ async function applyInitialViewerRoute() {
     document.body.classList.add("showcase-active");
     const guide = $("#showcase-guide");
     const escapedRoot = String(state.graph.project.root).replaceAll('"', '\\"');
-    const applyCommand = `flowpeek showcase apply "${escapedRoot}"`;
-    const resetCommand = `flowpeek showcase reset "${escapedRoot}"`;
+    const applyCommand = `flopeek showcase apply "${escapedRoot}"`;
+    const resetCommand = `flopeek showcase reset "${escapedRoot}"`;
     guide.hidden = false;
     $("#copy-showcase-apply").addEventListener("click", () => copyText(applyCommand, "Showcase apply command copied.").catch((error) => toast(error.message)));
     $("#copy-showcase-reset").addEventListener("click", () => copyText(resetCommand, "Showcase reset command copied.").catch((error) => toast(error.message)));
@@ -537,7 +537,7 @@ function renderProductProof(report) {
   const orientation = metrics.orientationRetrieval;
   const orientationEvidence = report.orientationRetrievalEvidence;
   const orientationBaseline = orientationEvidence.baseline.summary;
-  const orientationFlowpeek = orientationEvidence.flowpeek.summary;
+  const orientationFlopeek = orientationEvidence.flopeek.summary;
   const performanceRows = report.incrementalPerformanceEvidence.rows.map((row) => `<tr><td>${escapeHtml(row.repository)}</td><td>${escapeHtml(row.sourceFiles.toLocaleString())}</td><td>${escapeHtml(formatMilliseconds(row.fullMedianMs))}</td><td>${escapeHtml(formatMilliseconds(row.incrementalMedianMs))}</td><td><strong>${escapeHtml(row.speedup.toFixed(2))}&times;</strong></td></tr>`).join("");
   const features = report.capabilityShowcase.map((feature) => `<details class="proof-feature"><summary><strong>${escapeHtml(feature.title)}</strong><span>${escapeHtml(feature.status)}</span></summary><p>${escapeHtml(feature.outcome)}</p><p class="muted">Proof: ${escapeHtml(feature.proof.join(" · "))}</p><p class="muted">Boundary: ${escapeHtml(feature.boundary)}</p></details>`).join("");
   const local = report.localBenchmark.status === "available"
@@ -545,12 +545,12 @@ function renderProductProof(report) {
     : `<p>${escapeHtml(report.localBenchmark.reason)}</p>`;
   $("#inspector").innerHTML = `<div class="node-kicker">public proof &middot; bounded evidence</div><h2 class="node-title">${escapeHtml(report.title)}</h2><p>${escapeHtml(report.summary)}</p><div class="proof-metric-grid"><section class="proof-metric"><span>Audited relationships</span><strong>${escapeHtml(metrics.auditedTruePositives)}/${escapeHtml(metrics.auditedRelationships)}</strong><small>${escapeHtml(metrics.auditedRepositories)} pinned repositories</small></section><section class="proof-metric"><span>Bounded precision / recall</span><strong>${escapeHtml(proofPercent(metrics.boundedPrecision))} / ${escapeHtml(proofPercent(metrics.boundedRecall))}</strong><small>${escapeHtml(metrics.auditedScopes)} exact audited scopes</small></section><section class="proof-metric"><span>Measured incremental range</span><strong>${escapeHtml(metrics.measuredIncrementalSpeedup.minimum.toFixed(2))}&times;–${escapeHtml(metrics.measuredIncrementalSpeedup.maximum.toFixed(2))}&times;</strong><small>${escapeHtml(metrics.measuredIncrementalSpeedup.repositories)} pinned monorepos</small></section><section class="proof-metric"><span>This repository</span><strong>${escapeHtml(current.nodes.toLocaleString())} nodes</strong><small>${escapeHtml(current.sourceFiles)} files · ${escapeHtml(proofPercent(current.structuralParseRatio))} structurally parsed</small></section></div><section class="proof-boundary"><strong>Proof, with boundaries</strong><p>${escapeHtml(report.claimBoundary.statement)} ${escapeHtml(relationship.limitation)}</p></section><section class="home-card"><h3>Published incremental benchmark</h3><div class="proof-table-wrap"><table class="proof-table"><thead><tr><th>Repository</th><th>Files</th><th>Full</th><th>Incremental</th><th>Speedup</th></tr></thead><tbody>${performanceRows}</tbody></table></div><p class="muted">${escapeHtml(report.incrementalPerformanceEvidence.limitation)}</p></section><section class="home-card"><h3>Why it is useful</h3>${features}</section><section class="home-card"><h3>Run proof on this repository</h3>${local}<button id="run-proof-benchmark">${report.localBenchmark.status === "available" ? "Run local proof again" : "Run local proof benchmark"}</button><p class="muted">Reproduce from CLI: ${escapeHtml(report.reproducibility.local[0])}</p></section>`;
   $("#inspector .proof-metric-grid").insertAdjacentHTML("beforeend", `<section class="proof-metric"><span>Orientation fixture</span><strong>${escapeHtml(orientation.matchedFlowSteps)}/${escapeHtml(orientation.expectedFlowSteps)} static steps</strong><small>${escapeHtml(orientation.cases)} pinned deterministic cases</small></section>`);
-  $("#inspector .proof-boundary").insertAdjacentHTML("afterend", `<section class="home-card"><h3>Repository orientation retrieval</h3><div class="proof-table-wrap"><table class="proof-table"><thead><tr><th>Metric</th><th>Direct repository</th><th>Flowpeek</th></tr></thead><tbody><tr><td>Correct targets</td><td>${escapeHtml(orientationBaseline.correctTargetRetrieval.matched)}/${escapeHtml(orientationBaseline.correctTargetRetrieval.expected)}</td><td>${escapeHtml(orientationFlowpeek.correctTargetRetrieval.matched)}/${escapeHtml(orientationFlowpeek.correctTargetRetrieval.expected)}</td></tr><tr><td>Ordered static steps</td><td>Unavailable</td><td>${escapeHtml(orientationFlowpeek.flowSteps.matchedInExpectedOrder)}/${escapeHtml(orientationFlowpeek.flowSteps.expected)}</td></tr><tr><td>Related tests</td><td>${escapeHtml(orientationBaseline.relatedTests.matched)}/${escapeHtml(orientationBaseline.relatedTests.expected)}</td><td>${escapeHtml(orientationFlowpeek.relatedTests.matched)}/${escapeHtml(orientationFlowpeek.relatedTests.expected)}</td></tr><tr><td>Stale Context Refs</td><td>Unavailable</td><td>${escapeHtml(orientationFlowpeek.staleContextDetection.detected)}/${escapeHtml(orientationFlowpeek.staleContextDetection.requested)}</td></tr><tr><td>Bounded context</td><td>${escapeHtml(orientationBaseline.context.filesInspected)} files / ${escapeHtml(orientationBaseline.context.estimatedTokens)} estimated tokens</td><td>${escapeHtml(orientationFlowpeek.context.filesInspected)} files / ${escapeHtml(orientationFlowpeek.context.estimatedTokens)} estimated tokens</td></tr><tr><td>Captured cold time</td><td>${escapeHtml(formatMilliseconds(orientationBaseline.timing.coldTimeToUsefulContextMilliseconds))}</td><td>${escapeHtml(formatMilliseconds(orientationFlowpeek.timing.coldTimeToUsefulContextMilliseconds))}</td></tr></tbody></table></div><p class="muted">${escapeHtml(orientationEvidence.limitation)}</p></section>`);
+  $("#inspector .proof-boundary").insertAdjacentHTML("afterend", `<section class="home-card"><h3>Repository orientation retrieval</h3><div class="proof-table-wrap"><table class="proof-table"><thead><tr><th>Metric</th><th>Direct repository</th><th>Flopeek</th></tr></thead><tbody><tr><td>Correct targets</td><td>${escapeHtml(orientationBaseline.correctTargetRetrieval.matched)}/${escapeHtml(orientationBaseline.correctTargetRetrieval.expected)}</td><td>${escapeHtml(orientationFlopeek.correctTargetRetrieval.matched)}/${escapeHtml(orientationFlopeek.correctTargetRetrieval.expected)}</td></tr><tr><td>Ordered static steps</td><td>Unavailable</td><td>${escapeHtml(orientationFlopeek.flowSteps.matchedInExpectedOrder)}/${escapeHtml(orientationFlopeek.flowSteps.expected)}</td></tr><tr><td>Related tests</td><td>${escapeHtml(orientationBaseline.relatedTests.matched)}/${escapeHtml(orientationBaseline.relatedTests.expected)}</td><td>${escapeHtml(orientationFlopeek.relatedTests.matched)}/${escapeHtml(orientationFlopeek.relatedTests.expected)}</td></tr><tr><td>Stale Context Refs</td><td>Unavailable</td><td>${escapeHtml(orientationFlopeek.staleContextDetection.detected)}/${escapeHtml(orientationFlopeek.staleContextDetection.requested)}</td></tr><tr><td>Bounded context</td><td>${escapeHtml(orientationBaseline.context.filesInspected)} files / ${escapeHtml(orientationBaseline.context.estimatedTokens)} estimated tokens</td><td>${escapeHtml(orientationFlopeek.context.filesInspected)} files / ${escapeHtml(orientationFlopeek.context.estimatedTokens)} estimated tokens</td></tr><tr><td>Captured cold time</td><td>${escapeHtml(formatMilliseconds(orientationBaseline.timing.coldTimeToUsefulContextMilliseconds))}</td><td>${escapeHtml(formatMilliseconds(orientationFlopeek.timing.coldTimeToUsefulContextMilliseconds))}</td></tr></tbody></table></div><p class="muted">${escapeHtml(orientationEvidence.limitation)}</p></section>`);
   const orientationRows = [...$("#inspector").querySelectorAll(".proof-table tbody tr")];
   const coldRow = orientationRows.find((row) => row.firstElementChild?.textContent === "Captured cold time");
   if (coldRow) {
     coldRow.firstElementChild.textContent = "Preparation + retrieval";
-    coldRow.insertAdjacentHTML("afterend", `<tr><td>Warm bounded retrieval</td><td>${escapeHtml(formatMilliseconds(orientationBaseline.timing.caseRetrievalMilliseconds))}</td><td>${escapeHtml(formatMilliseconds(orientationFlowpeek.timing.caseRetrievalMilliseconds))}</td></tr><tr><td>Separate stale-ref validation</td><td>${escapeHtml(formatMilliseconds(orientationBaseline.timing.separateValidationMilliseconds))}</td><td>${escapeHtml(formatMilliseconds(orientationFlowpeek.timing.separateValidationMilliseconds))}</td></tr><tr><td>Process startup/module load</td><td>Unavailable</td><td>Unavailable</td></tr>`);
+    coldRow.insertAdjacentHTML("afterend", `<tr><td>Warm bounded retrieval</td><td>${escapeHtml(formatMilliseconds(orientationBaseline.timing.caseRetrievalMilliseconds))}</td><td>${escapeHtml(formatMilliseconds(orientationFlopeek.timing.caseRetrievalMilliseconds))}</td></tr><tr><td>Separate stale-ref validation</td><td>${escapeHtml(formatMilliseconds(orientationBaseline.timing.separateValidationMilliseconds))}</td><td>${escapeHtml(formatMilliseconds(orientationFlopeek.timing.separateValidationMilliseconds))}</td></tr><tr><td>Process startup/module load</td><td>Unavailable</td><td>Unavailable</td></tr>`);
   }
   $("#run-proof-benchmark").addEventListener("click", () => runProductProofBenchmark());
 }
@@ -773,7 +773,7 @@ function renderGraph() {
   }
   state.renderViewKey = nextRenderViewKey;
   state.rendererMetrics = {
-    schemaVersion: "flowpeek-renderer-observation/v1",
+    schemaVersion: "flopeek-renderer-observation/v1",
     renderer: state.renderer,
     nodes: nodes.length,
     edges: edges.length,
@@ -852,7 +852,7 @@ async function measureRendererPair() {
     const observations = [];
     for (const renderer of ["canvas", "webgl"]) observations.push(await measureRenderer(renderer));
     const summary = {
-      schemaVersion: "flowpeek-renderer-observation/v1",
+      schemaVersion: "flopeek-renderer-observation/v1",
       evidenceClass: "local-observation",
       projection: { nodes: observations[0]?.nodes ?? 0, edges: observations[0]?.edges ?? 0 },
       observations,
@@ -870,11 +870,11 @@ async function measureRendererPair() {
   }
 }
 
-window.flowpeekRendererBenchmark = { measure: measureRenderer, measurePair: measureRendererPair, current: () => state.rendererMetrics };
+window.flopeekRendererBenchmark = { measure: measureRenderer, measurePair: measureRendererPair, current: () => state.rendererMetrics };
 
 function plannedNodeContext(overlay, node) {
   return {
-    schemaVersion: "flowpeek-viewer-planned-node-context/v1",
+    schemaVersion: "flopeek-viewer-planned-node-context/v1",
     evidenceClass: "delivery-plan",
     planRef: node.planRef,
     overlay: { id: overlay.id, checkpointId: overlay.checkpointId, overlayVersion: overlay.overlayVersion, checkpointFreshnessStatus: overlay.checkpointFreshnessStatus },
@@ -1205,7 +1205,7 @@ async function openDeliveryLedger() {
     const freshness = record.staleContextCount ? ` · ${record.staleContextCount} stale Context Ref${record.staleContextCount === 1 ? "" : "s"}` : " · Context Refs current";
     return `<li><strong>${escapeHtml(record.title)}</strong><span>${escapeHtml(record.kind)} · plan r${record.planRevision} · ${escapeHtml(window)}</span><span>${record.contextRefs.length} Context Ref${record.contextRefs.length === 1 ? "" : "s"} · ${record.dependencies.length} dependencies${escapeHtml(freshness)}</span></li>`;
   }).join("");
-  $("#inspector").innerHTML = `<div class="node-kicker">LOCAL DELIVERY METADATA</div><h2 class="node-title">Work ledger</h2><div class="detail-section first-section"><h3>${ledger.totalMatched} planned records · ${ledger.events.length} recent actual events</h3><p>${escapeHtml(ledger.limitation)}</p></div><div class="detail-section"><h3>Available methods</h3><p>${workflows.workflows.map((workflow) => escapeHtml(workflow.title)).join(" · ") || "No workflow definitions available."}</p></div><div class="detail-section"><h3>Planned work</h3>${rows ? `<ul class="work-ledger-list">${rows}</ul>` : "<p>No local work records yet. Agents and trusted local tools may create evidence-linked records; Flowpeek does not infer them from code.</p>"}</div><div class="detail-section"><h3>Actual evidence boundary</h3><p>Actual events are append-only local observations. A workflow state or reference does not prove source execution, CI success, approval authority, or runtime behavior.</p></div>`;
+  $("#inspector").innerHTML = `<div class="node-kicker">LOCAL DELIVERY METADATA</div><h2 class="node-title">Work ledger</h2><div class="detail-section first-section"><h3>${ledger.totalMatched} planned records · ${ledger.events.length} recent actual events</h3><p>${escapeHtml(ledger.limitation)}</p></div><div class="detail-section"><h3>Available methods</h3><p>${workflows.workflows.map((workflow) => escapeHtml(workflow.title)).join(" · ") || "No workflow definitions available."}</p></div><div class="detail-section"><h3>Planned work</h3>${rows ? `<ul class="work-ledger-list">${rows}</ul>` : "<p>No local work records yet. Agents and trusted local tools may create evidence-linked records; Flopeek does not infer them from code.</p>"}</div><div class="detail-section"><h3>Actual evidence boundary</h3><p>Actual events are append-only local observations. A workflow state or reference does not prove source execution, CI success, approval authority, or runtime behavior.</p></div>`;
 }
 
 function workspaceContractSection(lens) {
@@ -1308,7 +1308,7 @@ function focusedSuggestionSection(lens) {
   const section = document.createElement("section");
   section.className = `flow-understanding semantic-suggestion ${suggestion.status}`;
   if (suggestion.status === "abstained") {
-    section.innerHTML = `<div class="section-kicker">Suggested understanding</div><h3>Flowpeek abstained</h3><p>${escapeHtml(suggestion.abstention.reason)}</p><p class="muted">Missing evidence: ${escapeHtml(suggestion.abstention.missingEvidence.join(", ") || "unspecified")}. This is an honest limit, not a failed verification.</p><button id="open-semantic-review">Review this abstention</button>`;
+    section.innerHTML = `<div class="section-kicker">Suggested understanding</div><h3>Flopeek abstained</h3><p>${escapeHtml(suggestion.abstention.reason)}</p><p class="muted">Missing evidence: ${escapeHtml(suggestion.abstention.missingEvidence.join(", ") || "unspecified")}. This is an honest limit, not a failed verification.</p><button id="open-semantic-review">Review this abstention</button>`;
     return section;
   }
   const candidate = suggestion.candidate;
@@ -1575,7 +1575,7 @@ async function renderRawInspector(id) {
   $("#save-description").addEventListener("click", async () => {
     const description = $("#description-input").value;
     await request("/api/descriptions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, description }) });
-    toast("Description saved to .flowpeek.");
+    toast("Description saved to .flopeek.");
   });
 }
 
@@ -1600,7 +1600,7 @@ function evidenceLocation(evidence) {
 }
 
 function queueCandidate(candidate) {
-  if (!candidate) return "No candidate (Flowpeek abstained).";
+  if (!candidate) return "No candidate (Flopeek abstained).";
   return `<strong>${escapeHtml(candidate.title)}</strong><span>${escapeHtml(candidate.role)} · ${escapeHtml(candidate.grouping?.label || "ungrouped")}</span>`;
 }
 
@@ -1751,7 +1751,7 @@ async function searchNodes() {
 async function resolveContextFromInput() {
   const contextRef = $("#context-ref-input").value.trim();
   if (!contextRef) {
-    $("#context-ref-status").textContent = "Paste a Flowpeek Context Ref to resolve it.";
+    $("#context-ref-status").textContent = "Paste a Flopeek Context Ref to resolve it.";
     return;
   }
   const resolution = await request(`/api/context/resolve?ref=${encodeURIComponent(contextRef)}`);

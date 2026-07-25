@@ -6,10 +6,10 @@ const path = require("node:path");
 const { atomicWriteJson } = require("./graph-cache");
 const { parseContextRef } = require("./context-card");
 
-const DELIVERY_STORE_SCHEMA = "flowpeek-delivery-work-records/v1";
-const WORK_RECORD_SCHEMA = "flowpeek-work-record/v1";
-const WORK_EVENT_SCHEMA = "flowpeek-work-event/v1";
-const DELIVERY_STORE_RELATIVE_PATH = ".flowpeek/delivery/work-records.json";
+const DELIVERY_STORE_SCHEMA = "flopeek-delivery-work-records/v1";
+const WORK_RECORD_SCHEMA = "flopeek-work-record/v1";
+const WORK_EVENT_SCHEMA = "flopeek-work-event/v1";
+const DELIVERY_STORE_RELATIVE_PATH = ".flopeek/delivery/work-records.json";
 const WORK_KINDS = new Set(["objective", "requirement", "decision", "task", "checkpoint", "approval", "test-result", "review", "release", "observation", "incident"]);
 const EVENT_TYPES = new Set(["record-created", "plan-updated", "evidence-recorded", "workflow-assigned", "workflow-transition", "approval-recorded", "release-recorded", "observation-recorded", "note-recorded"]);
 const MAX_RECORDS = 10_000;
@@ -72,7 +72,7 @@ function normalizeContextRefs(projectId, value) {
   const refs = value.map((contextRef) => {
     let parsed;
     try { parsed = parseContextRef(contextRef); } catch (error) { throw new DeliveryGraphError("invalid-context-ref", error.message); }
-    if (parsed.projectId !== projectId) throw new DeliveryGraphError("wrong-project-id", "A work record may reference only Context Refs from its current Flowpeek project.");
+    if (parsed.projectId !== projectId) throw new DeliveryGraphError("wrong-project-id", "A work record may reference only Context Refs from its current Flopeek project.");
     return { contextRef: parsed.contextRef, kind: parsed.kind, contextId: parsed.contextId, graphVersion: parsed.graphVersion };
   });
   const distinct = new Map(refs.map((item) => [item.contextRef, item]));
@@ -207,7 +207,7 @@ function readDeliveryStore(root, projectId) {
       && recordIds.size === store.records.length
       && Array.isArray(store.events) && store.events.length <= MAX_EVENTS && store.events.every((event) => validEvent(event, projectId, recordIds))
       && new Set(operationIds).size === operationIds.length;
-    if (!valid) return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-delivery-store", message: "Delivery work-record storage does not match flowpeek-delivery-work-records/v1." }] };
+    if (!valid) return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-delivery-store", message: "Delivery work-record storage does not match flopeek-delivery-work-records/v1." }] };
     return { status: "valid", path: target, store, diagnostics: [] };
   } catch (error) {
     return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-delivery-json", message: `Delivery work-record storage is not valid JSON (${error.message}).` }] };
@@ -279,14 +279,14 @@ function createWorkRecord(root, graph, input) {
   if (existing) {
     const replay = appendEvent(read.store, eventInput);
     if (fingerprint(existing) !== fingerprint(record)) throw new DeliveryGraphError("work-record-exists", `Work record ${id} already exists with different content.`, 409);
-    return { schemaVersion: "flowpeek-work-record-create-result/v1", created: false, record: existing, event: replay.event };
+    return { schemaVersion: "flopeek-work-record-create-result/v1", created: false, record: existing, event: replay.event };
   }
   if (read.store.records.length >= MAX_RECORDS) throw new DeliveryGraphError("delivery-record-store-full", `Delivery work-record storage reached its explicit ${MAX_RECORDS}-record limit.`, 507);
   assertAcyclicDependencies([...read.store.records, record]);
   const store = { ...read.store, records: [...read.store.records, record] };
   const result = appendEvent(store, eventInput);
   atomicWriteJson(read.path, result.store);
-  return { schemaVersion: "flowpeek-work-record-create-result/v1", created: true, record, event: result.event };
+  return { schemaVersion: "flopeek-work-record-create-result/v1", created: true, record, event: result.event };
 }
 
 function updateWorkPlan(root, graph, input) {
@@ -301,7 +301,7 @@ function updateWorkPlan(root, graph, input) {
   const replay = read.store.events.find((event) => event.operationId === operationId);
   if (replay) {
     if (replay.recordId !== recordId || replay.eventType !== "plan-updated") throw new DeliveryGraphError("operation-id-conflict", "operationId already belongs to another delivery event.", 409);
-    return { schemaVersion: "flowpeek-work-plan-update-result/v1", updated: false, record: prior, event: replay };
+    return { schemaVersion: "flopeek-work-plan-update-result/v1", updated: false, record: prior, event: replay };
   }
   const observedAt = isoTime(input.observedAt, "observedAt");
   const next = {
@@ -327,7 +327,7 @@ function updateWorkPlan(root, graph, input) {
     evidence: next.contextRefs.map((item) => ({ kind: "context-ref", reference: item.contextRef, evidenceClass: "static-context" })),
   });
   atomicWriteJson(read.path, result.store);
-  return { schemaVersion: "flowpeek-work-plan-update-result/v1", updated: true, record: next, event: result.event };
+  return { schemaVersion: "flopeek-work-plan-update-result/v1", updated: true, record: next, event: result.event };
 }
 
 function recordWorkEvent(root, graph, input) {
@@ -336,7 +336,7 @@ function recordWorkEvent(root, graph, input) {
   if (read.status === "invalid") throw new DeliveryGraphError("invalid-delivery-store", read.diagnostics[0].message);
   const result = appendEvent(read.store, input);
   if (result.created) atomicWriteJson(read.path, result.store);
-  return { schemaVersion: "flowpeek-work-event-result/v1", created: result.created, event: result.event };
+  return { schemaVersion: "flopeek-work-event-result/v1", created: result.created, event: result.event };
 }
 
 function workRecordView(graph, record) {
@@ -346,11 +346,11 @@ function workRecordView(graph, record) {
 
 function listWorkRecords(root, graph, options = {}) {
   const read = readDeliveryStore(root, graph.project.projectId);
-  if (read.status === "invalid") return { schemaVersion: "flowpeek-work-record-list/v1", status: "unavailable", records: [], events: [], diagnostics: read.diagnostics };
+  if (read.status === "invalid") return { schemaVersion: "flopeek-work-record-list/v1", status: "unavailable", records: [], events: [], diagnostics: read.diagnostics };
   const limit = Number.isSafeInteger(Number(options.limit)) ? Math.max(1, Math.min(Number(options.limit), 200)) : 50;
   const records = [...read.store.records].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id));
   return {
-    schemaVersion: "flowpeek-work-record-list/v1",
+    schemaVersion: "flopeek-work-record-list/v1",
     status: "available",
     project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion },
     storage: { relativePath: DELIVERY_STORE_RELATIVE_PATH, status: read.status },
@@ -366,7 +366,7 @@ function listWorkRecords(root, graph, options = {}) {
 
 function getWorkTimeline(root, graph, recordId = null) {
   const listed = listWorkRecords(root, graph, { limit: 200 });
-  if (listed.status !== "available") return { schemaVersion: "flowpeek-work-timeline/v1", status: "unavailable", records: [], actualEvents: [], diagnostics: listed.diagnostics };
+  if (listed.status !== "available") return { schemaVersion: "flopeek-work-timeline/v1", status: "unavailable", records: [], actualEvents: [], diagnostics: listed.diagnostics };
   const id = recordId === null ? null : safeId(recordId, "recordId");
   const records = id ? listed.records.filter((record) => record.id === id) : listed.records;
   if (id && !records.length) throw new DeliveryGraphError("unknown-work-record", "recordId does not exist.", 404);
@@ -374,7 +374,7 @@ function getWorkTimeline(root, graph, recordId = null) {
   const read = readDeliveryStore(root, graph.project.projectId);
   const actualEvents = read.store.events.filter((event) => ids.has(event.recordId)).sort((left, right) => left.observedAt.localeCompare(right.observedAt) || left.id.localeCompare(right.id));
   return {
-    schemaVersion: "flowpeek-work-timeline/v1",
+    schemaVersion: "flopeek-work-timeline/v1",
     status: "available",
     project: listed.project,
     records: records.map((record) => {

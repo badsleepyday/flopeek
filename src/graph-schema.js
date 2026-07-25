@@ -2,9 +2,9 @@ const GRAPH_SCHEMA_VERSION = 5;
 
 class GraphSchemaError extends Error {
   constructor(diagnostics) {
-    super(`Invalid Flowpeek graph: ${diagnostics.map((diagnostic) => diagnostic.message).join(" ")}`);
+    super(`Invalid Flopeek graph: ${diagnostics.map((diagnostic) => diagnostic.message).join(" ")}`);
     this.name = "GraphSchemaError";
-    this.code = "FLOWPEEK_INVALID_GRAPH";
+    this.code = "FLOPEEK_INVALID_GRAPH";
     this.diagnostics = diagnostics;
   }
 }
@@ -57,7 +57,7 @@ function validateGraph(graph, options = {}) {
     if (typeof graph.project.name !== "string" || !graph.project.name) diagnostics.push(diagnostic("invalid-project-name", "Graph project.name must be a non-empty string.", "project.name"));
     if (typeof graph.project.projectId !== "string" || !graph.project.projectId) diagnostics.push(diagnostic("invalid-project-id", "Graph project.projectId must be a non-empty string.", "project.projectId"));
     if (options.expectedRoot && graph.project.root !== options.expectedRoot) diagnostics.push(diagnostic("wrong-project-root", "Graph cache belongs to a different repository root.", "project.root"));
-    if (options.expectedProjectId && graph.project.projectId !== options.expectedProjectId) diagnostics.push(diagnostic("wrong-project-id", "Graph cache belongs to a different Flowpeek project identity.", "project.projectId"));
+    if (options.expectedProjectId && graph.project.projectId !== options.expectedProjectId) diagnostics.push(diagnostic("wrong-project-id", "Graph cache belongs to a different Flopeek project identity.", "project.projectId"));
   }
   if (!isObject(graph.state)) diagnostics.push(diagnostic("invalid-graph-state", "Graph state must be an object.", "state"));
   else {

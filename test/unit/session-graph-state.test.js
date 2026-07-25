@@ -12,7 +12,7 @@ const { createRepositoryScanner, scanRepository } = require("../../src/scanner")
 const SOURCE = path.join(__dirname, "..", "fixtures", "typescript-order-flow");
 
 function fixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-session-state-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-session-state-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.cpSync(SOURCE, root, { recursive: true });
   return root;
@@ -38,7 +38,7 @@ test("cache-disabled scanner uses monotonic session versions and in-memory adjac
   assert.equal(first.project.identity.status, "session-only");
   assert.equal(first.state.graphVersion, 1);
   assert.equal(first.state.status, "session-advanced");
-  assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false);
+  assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
 
   const changedPath = changeService(root);
   const second = scanner.scan([changedPath]);
@@ -53,7 +53,7 @@ test("cache-disabled scanner uses monotonic session versions and in-memory adjac
   const changed = getChangedContexts(second, { fromVersion: 1, toVersion: 2 });
   assert.equal(changed.available, true);
   assert.equal(changed.delta.sourceChanged, true);
-  assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false);
+  assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
 });
 
 test("independent cache-disabled scanners cannot treat another session Context Ref as current", (t) => {

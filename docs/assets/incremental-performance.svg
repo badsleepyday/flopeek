@@ -7,7 +7,7 @@
   </defs>
   <rect width="1200" height="500" rx="28" fill="#f6f8fc"/>
   <rect x="28" y="28" width="1144" height="444" rx="22" fill="url(#panel)" filter="url(#shadow)"/>
-  <text x="72" y="82" fill="#9fb4ff" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" letter-spacing="2">FLOWPEEK · EVIDENCE SNAPSHOT</text>
+  <text x="72" y="82" fill="#9fb4ff" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="700" letter-spacing="2">FLOPEEK · EVIDENCE SNAPSHOT</text>
   <text x="72" y="122" fill="#ffffff" font-family="Inter,Segoe UI,sans-serif" font-size="28" font-weight="750">Reuse the graph instead of rebuilding it</text>
   <text x="72" y="151" fill="#b9c4dc" font-family="Inter,Segoe UI,sans-serif" font-size="15">Incremental scan speedups across four pinned real repositories.</text>
   <g>

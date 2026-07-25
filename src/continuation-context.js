@@ -8,8 +8,8 @@ const { listPlanReconciliations } = require("./plan-reconciliation");
 const { listWorkRecords } = require("./delivery-graph");
 const { getWorkDependencyStatus } = require("./workflow-engine");
 
-const CONTINUATION_CONTEXT_SCHEMA = "flowpeek-continuation-context/v1";
-const TOKENIZER_ID = "flowpeek-char4-estimator/v1";
+const CONTINUATION_CONTEXT_SCHEMA = "flopeek-continuation-context/v1";
+const TOKENIZER_ID = "flopeek-char4-estimator/v1";
 const MIN_TOKEN_BUDGET = 1024;
 const MAX_TOKEN_BUDGET = 16384;
 const MAX_CONTEXTS = 24;
@@ -82,7 +82,7 @@ function unavailable(graph, diagnostics) {
     project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion },
     packet: null,
     diagnostics,
-    limitation: "Required retained continuation evidence is unavailable. Flowpeek does not reconstruct missing history, source bodies, or implementation evidence.",
+    limitation: "Required retained continuation evidence is unavailable. Flopeek does not reconstruct missing history, source bodies, or implementation evidence.",
   };
 }
 
@@ -140,7 +140,7 @@ function createContinuationContext(root, graph, input = {}, options = {}) {
       "Stop and inspect current source with authorized host tools when any selected Context Ref is not current.",
       "Treat Plan Refs as delivery intent, not source facts or implementation proof.",
       "Before entering implementation, stop for declared dependencies that are blocking, unresolved, or unknown; ready is local workflow metadata only.",
-      "Edit only through authorized host workspace tools; Flowpeek has no source-write or execution surface.",
+      "Edit only through authorized host workspace tools; Flopeek has no source-write or execution surface.",
       "After edits, refresh_graph, inspect get_changed_contexts, then compare baseline, plan, and current context.",
       "An agent may record only a reconciliation proposal; human confirmation remains unresolved.",
     ],

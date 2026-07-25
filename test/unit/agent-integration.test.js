@@ -8,17 +8,17 @@ const { atomicWrite, doctorAgentIntegration, installAgentIntegration, uninstallA
 const { platformRegistry } = require("../../src/agent-integration-registry");
 
 function repository(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-agent-integration-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-agent-integration-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return root;
 }
 
 test("platform registry distinguishes supported local hosts from ChatGPT web", () => {
   const registry = platformRegistry();
-  assert.equal(registry.schemaVersion, "flowpeek-agent-platform-registry/v1");
+  assert.equal(registry.schemaVersion, "flopeek-agent-platform-registry/v1");
   assert.deepEqual(registry.platforms.map((item) => item.id), ["claude", "codex", "cursor", "gemini", "chatgpt-web"]);
   assert.equal(registry.platforms.find((item) => item.id === "chatgpt-web").status, "remote-only");
-  assert.equal(registry.platforms.find((item) => item.id === "codex").skillDirectory, ".agents/skills/flowpeek");
+  assert.equal(registry.platforms.find((item) => item.id === "codex").skillDirectory, ".agents/skills/flopeek");
 });
 
 test("Codex install is project-local, idempotent, and preserves unrelated TOML", (t) => {
@@ -32,17 +32,17 @@ test("Codex install is project-local, idempotent, and preserves unrelated TOML",
   assert.equal(first.ok, true);
   assert.equal(second.ok, true);
   assert.ok(second.plan.every((item) => item.status === "unchanged"));
-  assert.ok(fs.existsSync(path.join(root, ".agents", "skills", "flowpeek", "SKILL.md")));
+  assert.ok(fs.existsSync(path.join(root, ".agents", "skills", "flopeek", "SKILL.md")));
   const config = fs.readFileSync(path.join(root, ".codex", "config.toml"), "utf8");
   assert.match(config, /model = "example"/);
-  assert.match(config, /\[mcp_servers\.flowpeek\]/);
-  assert.ok(fs.existsSync(path.join(root, ".flowpeek", "agent-integrations.json")));
+  assert.match(config, /\[mcp_servers\.flopeek\]/);
+  assert.ok(fs.existsSync(path.join(root, ".flopeek", "agent-integrations.json")));
 
   const removed = uninstallAgentIntegration(root, { platforms: ["codex"] });
   assert.equal(removed.ok, true);
-  assert.equal(fs.existsSync(path.join(root, ".agents", "skills", "flowpeek")), false);
+  assert.equal(fs.existsSync(path.join(root, ".agents", "skills", "flopeek")), false);
   assert.equal(fs.readFileSync(path.join(root, ".codex", "config.toml"), "utf8").includes("model = \"example\""), true);
-  assert.equal(fs.readFileSync(path.join(root, ".codex", "config.toml"), "utf8").includes("mcp_servers.flowpeek"), false);
+  assert.equal(fs.readFileSync(path.join(root, ".codex", "config.toml"), "utf8").includes("mcp_servers.flopeek"), false);
 });
 
 test("JSON host install and uninstall preserve unrelated MCP servers and settings", (t) => {
@@ -52,13 +52,13 @@ test("JSON host install and uninstall preserve unrelated MCP servers and setting
 
   assert.equal(installAgentIntegration(root, { platforms: ["gemini"] }).ok, true);
   let config = JSON.parse(fs.readFileSync(path.join(root, ".gemini", "settings.json"), "utf8"));
-  assert.deepEqual(config.mcpServers.flowpeek, { command: "flowpeek", args: ["mcp", "."] });
+  assert.deepEqual(config.mcpServers.flopeek, { command: "flopeek", args: ["mcp", "."] });
   assert.equal(config.mcpServers.existing.command, "other");
   assert.equal(config.theme, "dark");
 
   assert.equal(uninstallAgentIntegration(root, { platforms: ["gemini"] }).ok, true);
   config = JSON.parse(fs.readFileSync(path.join(root, ".gemini", "settings.json"), "utf8"));
-  assert.equal(config.mcpServers.flowpeek, undefined);
+  assert.equal(config.mcpServers.flopeek, undefined);
   assert.equal(config.mcpServers.existing.command, "other");
   assert.equal(config.theme, "dark");
 });
@@ -103,13 +103,13 @@ test("separate installs merge ownership and auto-uninstall removes every managed
   const root = repository(t);
   assert.equal(installAgentIntegration(root, { platforms: ["codex"] }).ok, true);
   assert.equal(installAgentIntegration(root, { platforms: ["gemini"] }).ok, true);
-  const manifest = JSON.parse(fs.readFileSync(path.join(root, ".flowpeek", "agent-integrations.json"), "utf8"));
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, ".flopeek", "agent-integrations.json"), "utf8"));
   assert.deepEqual(manifest.platforms, ["codex", "gemini"]);
   const removed = uninstallAgentIntegration(root, { platforms: "auto", env: { PATH: "" } });
   assert.equal(removed.ok, true);
   assert.deepEqual(removed.platforms, ["codex", "gemini"]);
-  assert.equal(fs.existsSync(path.join(root, ".agents", "skills", "flowpeek")), false);
-  assert.equal(fs.existsSync(path.join(root, ".gemini", "skills", "flowpeek")), false);
+  assert.equal(fs.existsSync(path.join(root, ".agents", "skills", "flopeek")), false);
+  assert.equal(fs.existsSync(path.join(root, ".gemini", "skills", "flopeek")), false);
 });
 
 test("install dry-run writes nothing", (t) => {
@@ -119,27 +119,27 @@ test("install dry-run writes nothing", (t) => {
   assert.equal(result.dryRun, true);
   assert.equal(fs.existsSync(path.join(root, ".claude")), false);
   assert.equal(fs.existsSync(path.join(root, ".mcp.json")), false);
-  assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false);
+  assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
 });
 
 test("install preflight refuses unmanaged entries and does not partially copy the skill", (t) => {
   const root = repository(t);
-  fs.writeFileSync(path.join(root, ".mcp.json"), JSON.stringify({ mcpServers: { flowpeek: { command: "custom" } } }));
+  fs.writeFileSync(path.join(root, ".mcp.json"), JSON.stringify({ mcpServers: { flopeek: { command: "custom" } } }));
   const result = installAgentIntegration(root, { platforms: ["claude"] });
   assert.equal(result.ok, false);
   assert.equal(result.conflicts.length, 1);
-  assert.equal(fs.existsSync(path.join(root, ".claude", "skills", "flowpeek")), false);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(root, ".mcp.json"), "utf8")).mcpServers.flowpeek.command, "custom");
+  assert.equal(fs.existsSync(path.join(root, ".claude", "skills", "flopeek")), false);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, ".mcp.json"), "utf8")).mcpServers.flopeek.command, "custom");
 });
 
 test("install refuses a non-directory skill target", (t) => {
   const root = repository(t);
   fs.mkdirSync(path.join(root, ".agents", "skills"), { recursive: true });
-  fs.writeFileSync(path.join(root, ".agents", "skills", "flowpeek"), "owned by user");
+  fs.writeFileSync(path.join(root, ".agents", "skills", "flopeek"), "owned by user");
   const result = installAgentIntegration(root, { platforms: ["codex"] });
   assert.equal(result.ok, false);
   assert.match(result.conflicts[0].reason, /not a directory/);
-  assert.equal(fs.readFileSync(path.join(root, ".agents", "skills", "flowpeek"), "utf8"), "owned by user");
+  assert.equal(fs.readFileSync(path.join(root, ".agents", "skills", "flopeek"), "utf8"), "owned by user");
 });
 
 test("install refuses malformed JSON without replacing it", (t) => {

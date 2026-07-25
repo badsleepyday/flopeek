@@ -1,6 +1,6 @@
 {
-  "schemaVersion": "flowpeek-orientation-cases/v1",
-  "suiteId": "flowpeek-initial-orientation-suite",
+  "schemaVersion": "flopeek-orientation-cases/v1",
+  "suiteId": "flopeek-initial-orientation-suite",
   "repositories": [
     {
       "id": "legacy-handoff-typescript",

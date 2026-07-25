@@ -1,6 +1,6 @@
 "use strict";
 
-const ADAPTER_CAPABILITY_SCHEMA = "flowpeek-adapter-capabilities/v1";
+const ADAPTER_CAPABILITY_SCHEMA = "flopeek-adapter-capabilities/v1";
 const AVAILABILITY = new Set(["bundled", "toolchain-conditional", "inventory-only"]);
 const LEVELS = new Set(["exact-static", "supported-subset", "structure-only", "inventory-only", "unsupported"]);
 

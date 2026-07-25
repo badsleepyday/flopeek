@@ -16,11 +16,11 @@ function write(root, relative, content) { const target = path.join(root, relativ
 function commit(root, subject) { git(root, ["add", "."]); git(root, ["commit", "-m", subject]); }
 
 function repository() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-active-branch-evidence-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-active-branch-evidence-"));
   git(root, ["init"]);
-  git(root, ["config", "user.email", "flowpeek@example.invalid"]);
-  git(root, ["config", "user.name", "Flowpeek test"]);
-  write(root, ".gitignore", ".flowpeek/\n");
+  git(root, ["config", "user.email", "flopeek@example.invalid"]);
+  git(root, ["config", "user.name", "Flopeek test"]);
+  write(root, ".gitignore", ".flopeek/\n");
   write(root, "package.json", JSON.stringify({ name: "active-branch-evidence" }));
   write(root, "src/app/api/orders/route.ts", "export async function GET() { return { status: 'initial' }; }\n");
   commit(root, "add orders endpoint");
@@ -38,7 +38,7 @@ test("active-branch Git evidence is bounded to Context Card paths and reachable 
     const currentCard = getFlowContextCard(current, current.flows[0].id).card;
     const statusBefore = git(root, ["status", "--porcelain"]);
     const evidence = getActiveBranchGitEvidence(current, currentCard.contextRef, { limit: 1 });
-    assert.equal(evidence.schemaVersion, "flowpeek-active-branch-git-evidence/v1");
+    assert.equal(evidence.schemaVersion, "flopeek-active-branch-git-evidence/v1");
     assert.equal(evidence.status, "available");
     assert.equal(evidence.context.resolutionStatus, "current");
     assert.deepEqual(evidence.context.paths, ["src/app/api/orders/route.ts"]);
@@ -53,7 +53,7 @@ test("active-branch Git evidence is bounded to Context Card paths and reachable 
 
 test("active-branch Git evidence abstains for unavailable Context Cards, detached HEAD, and non-Git repositories", () => {
   const root = repository();
-  const nonGit = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-active-branch-evidence-non-git-"));
+  const nonGit = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-active-branch-evidence-non-git-"));
   try {
     const graph = scanRepository(root, { persistIdentity: true });
     const ref = getFlowContextCard(graph, graph.flows[0].id).card.contextRef;

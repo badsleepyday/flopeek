@@ -23,7 +23,7 @@ const ADAPTER_REGISTRY = getAdapterRegistry();
 const RESOLVE_EXTENSIONS = ["", ".js", ".cjs", ".mjs", ".jsx", ".ts", ".tsx", ".svelte", ".vue", ".json"];
 const JS_TS_EXTENSIONS = new Set([".js", ".cjs", ".mjs", ".jsx", ".ts", ".tsx"]);
 const IGNORED_DIRECTORIES = new Set([
-  ".flowpeek", ".git", ".next", ".nuxt", ".project-flow", ".turbo", "build", "coverage", "dist", "node_modules", "out", "target", "vendor",
+  ".flopeek", ".flowpeek", ".git", ".next", ".nuxt", ".project-flow", ".turbo", "build", "coverage", "dist", "node_modules", "out", "target", "vendor",
 ]);
 const NODE_BUILTINS = new Set(require("node:module").builtinModules.map((name) => name.replace("node:", "")));
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
@@ -125,7 +125,7 @@ function safelyReadJson(filePath, fallback = {}) {
 }
 
 function readDescriptions(root) {
-  const current = path.join(root, ".flowpeek", "descriptions.json");
+  const current = path.join(root, ".flopeek", "descriptions.json");
   if (fs.existsSync(current)) return safelyReadJson(current, {});
   return safelyReadJson(path.join(root, ".project-flow", "descriptions.json"), {});
 }
@@ -578,7 +578,7 @@ function nextRouteHandlerContracts(sourceFile, relativePath, routeInfo) {
     const responseVariants = [...new Map(variants.map((variant) => [`${variant.status}:${variant.fields.map((field) => `${field.name}:${field.type}:${field.required}`).join(",")}`, variant])).values()]
       .sort((left, right) => left.status - right.status || left.fields.map((field) => field.name).join(",").localeCompare(right.fields.map((field) => field.name).join(",")));
     contracts.set(handler.name, {
-      schemaVersion: "flowpeek-next-route-contract/v1",
+      schemaVersion: "flopeek-next-route-contract/v1",
       adapter: "next-route-handler",
       handlerName: handler.name,
       request: requestFields
@@ -3008,7 +3008,7 @@ function buildGraphFromRecords(root, sourceRecords, refresh = null, graphContext
         limitations: "Java instance/qualified/overloaded method dispatch, Rust macros, qualified module calls, trait dispatch, custom Cargo targets, and #[path] modules, default and namespace imports, PHP Composer/autoloaded functions, Python attribute calls, Go function values, ambiguous package functions, and unaliased package-name mismatches, dependency injection, callbacks, reflection, dynamic loading, and non-literal CommonJS requires are not resolved as call edges.",
       },
       entryPoints: {
-        schemaVersion: "flowpeek-static-entry-inventory/v1",
+        schemaVersion: "flopeek-static-entry-inventory/v1",
         supported: {
           packageScripts: commandEntries.supported,
           djangoManagementCommands: frameworkCommands.supported.filter((command) => command.id.includes(":django:")),
@@ -3333,7 +3333,7 @@ function createRepositoryScanner(inputRoot, options = {}) {
       if (persistIdentity) return graph;
       graph.analysis.cacheState = {
         status: "disabled",
-        path: path.join(root, ".flowpeek", "graph.json"),
+        path: path.join(root, ".flopeek", "graph.json"),
         diagnostics: [],
         contract: null,
         migrated: false,
@@ -3373,7 +3373,7 @@ function graphToMermaid(graph, limit = 100) {
 }
 
 function saveDescription(root, id, description) {
-  const directory = path.join(root, ".flowpeek");
+  const directory = path.join(root, ".flopeek");
   const filePath = path.join(directory, "descriptions.json");
   const descriptions = readDescriptions(root);
   fs.mkdirSync(directory, { recursive: true });

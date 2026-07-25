@@ -5,9 +5,9 @@ const path = require("node:path");
 const { atomicWriteJson } = require("./graph-cache");
 const { DeliveryGraphError, recordWorkEvent, readDeliveryStore } = require("./delivery-graph");
 
-const WORKFLOW_SCHEMA = "flowpeek-workflow/v1";
-const WORKFLOW_STORE_SCHEMA = "flowpeek-workflows/v1";
-const WORKFLOW_STORE_RELATIVE_PATH = ".flowpeek/delivery/workflows.json";
+const WORKFLOW_SCHEMA = "flopeek-workflow/v1";
+const WORKFLOW_STORE_SCHEMA = "flopeek-workflows/v1";
+const WORKFLOW_STORE_RELATIVE_PATH = ".flopeek/delivery/workflows.json";
 const MAX_WORKFLOWS = 100;
 const BUILTIN_DEPENDENCY_READY_STATES = Object.freeze({
   "agile-default": new Set(["released", "observing"]),
@@ -128,7 +128,7 @@ function readWorkflowStore(root) {
       && Array.isArray(store.workflows) && store.workflows.length <= MAX_WORKFLOWS
       && store.workflows.every(validWorkflow)
       && new Set(store.workflows.map((workflow) => workflow.id)).size === store.workflows.length;
-    if (!valid) return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-workflow-store", message: "Workflow storage does not match flowpeek-workflows/v1." }] };
+    if (!valid) return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-workflow-store", message: "Workflow storage does not match flopeek-workflows/v1." }] };
     return { status: "valid", path: target, store, diagnostics: [] };
   } catch (error) {
     return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-workflow-json", message: `Workflow storage is not valid JSON (${error.message}).` }] };
@@ -137,9 +137,9 @@ function readWorkflowStore(root) {
 
 function listWorkflows(root) {
   const read = readWorkflowStore(root);
-  if (read.status === "invalid") return { schemaVersion: "flowpeek-workflow-list/v1", status: "unavailable", workflows: [], diagnostics: read.diagnostics };
+  if (read.status === "invalid") return { schemaVersion: "flopeek-workflow-list/v1", status: "unavailable", workflows: [], diagnostics: read.diagnostics };
   return {
-    schemaVersion: "flowpeek-workflow-list/v1",
+    schemaVersion: "flopeek-workflow-list/v1",
     status: "available",
     workflows: [...BUILTIN_WORKFLOWS, ...read.store.workflows].map((workflow) => ({ ...workflow, source: BUILTIN_WORKFLOWS.some((item) => item.id === workflow.id) ? "builtin" : "local-custom" })),
     diagnostics: [],
@@ -166,7 +166,7 @@ function saveWorkflow(root, input) {
   const workflows = [...read.store.workflows];
   if (index < 0) workflows.push(workflow); else workflows[index] = workflow;
   atomicWriteJson(read.path, { ...read.store, workflows: workflows.sort((left, right) => left.id.localeCompare(right.id)) });
-  return { schemaVersion: "flowpeek-workflow-save-result/v1", workflow, created: index < 0 };
+  return { schemaVersion: "flopeek-workflow-save-result/v1", workflow, created: index < 0 };
 }
 
 function recordState(store, recordId) {
@@ -239,7 +239,7 @@ function dependencyStatusProjection(delivery, listed, graph, record) {
     readyToStart: dependencies.every((item) => item.status === "ready"),
   };
   return {
-    schemaVersion: "flowpeek-work-dependency-status/v1",
+    schemaVersion: "flopeek-work-dependency-status/v1",
     status: "available",
     project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion },
     record: { id: record.id, kind: record.kind, title: record.title, dependencies: [...record.dependencies] },
@@ -252,24 +252,24 @@ function dependencyStatusProjection(delivery, listed, graph, record) {
 
 function getWorkDependencyStatus(root, graph, recordId) {
   const delivery = readDeliveryStore(root, graph.project.projectId);
-  if (delivery.status === "invalid") return { schemaVersion: "flowpeek-work-dependency-status/v1", status: "unavailable", record: null, dependencies: [], summary: null, diagnostics: delivery.diagnostics, limitation: "Dependency readiness is unavailable because local delivery metadata is invalid." };
+  if (delivery.status === "invalid") return { schemaVersion: "flopeek-work-dependency-status/v1", status: "unavailable", record: null, dependencies: [], summary: null, diagnostics: delivery.diagnostics, limitation: "Dependency readiness is unavailable because local delivery metadata is invalid." };
   const id = safeId(recordId, "recordId");
   const record = delivery.store.records.find((item) => item.id === id);
   if (!record) throw new WorkflowEngineError("unknown-work-record", "recordId does not exist.", 404);
   const listed = listWorkflows(root);
-  if (listed.status !== "available") return { schemaVersion: "flowpeek-work-dependency-status/v1", status: "unavailable", record: { id: record.id, kind: record.kind, title: record.title }, dependencies: [], summary: null, diagnostics: listed.diagnostics, limitation: "Dependency readiness is unavailable because local workflow metadata is invalid." };
+  if (listed.status !== "available") return { schemaVersion: "flopeek-work-dependency-status/v1", status: "unavailable", record: { id: record.id, kind: record.kind, title: record.title }, dependencies: [], summary: null, diagnostics: listed.diagnostics, limitation: "Dependency readiness is unavailable because local workflow metadata is invalid." };
   return dependencyStatusProjection(delivery, listed, graph, record);
 }
 
 function listWorkDependencyStatuses(root, graph, options = {}) {
   const delivery = readDeliveryStore(root, graph.project.projectId);
-  if (delivery.status === "invalid") return { schemaVersion: "flowpeek-work-dependency-status-list/v1", status: "unavailable", project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion }, statuses: [], diagnostics: delivery.diagnostics, limitation: "Dependency readiness is unavailable because local delivery metadata is invalid." };
+  if (delivery.status === "invalid") return { schemaVersion: "flopeek-work-dependency-status-list/v1", status: "unavailable", project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion }, statuses: [], diagnostics: delivery.diagnostics, limitation: "Dependency readiness is unavailable because local delivery metadata is invalid." };
   const listed = listWorkflows(root);
-  if (listed.status !== "available") return { schemaVersion: "flowpeek-work-dependency-status-list/v1", status: "unavailable", project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion }, statuses: [], diagnostics: listed.diagnostics, limitation: "Dependency readiness is unavailable because local workflow metadata is invalid." };
+  if (listed.status !== "available") return { schemaVersion: "flopeek-work-dependency-status-list/v1", status: "unavailable", project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion }, statuses: [], diagnostics: listed.diagnostics, limitation: "Dependency readiness is unavailable because local workflow metadata is invalid." };
   const limit = Number.isSafeInteger(Number(options.limit)) ? Math.max(1, Math.min(Number(options.limit), 200)) : 50;
   const records = [...delivery.store.records].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id));
   return {
-    schemaVersion: "flowpeek-work-dependency-status-list/v1",
+    schemaVersion: "flopeek-work-dependency-status-list/v1",
     status: "available",
     project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion },
     totalMatched: records.length,
@@ -319,7 +319,7 @@ function assignWorkflow(root, graph, input) {
       evidence: [],
       workflow: { workflowId: workflow.id, fromState: null, toState: workflow.initialState },
     });
-    return { schemaVersion: "flowpeek-workflow-assignment-result/v1", assigned: result.created, workflow, state: workflow.initialState, event: result.event };
+    return { schemaVersion: "flopeek-workflow-assignment-result/v1", assigned: result.created, workflow, state: workflow.initialState, event: result.event };
   } catch (error) {
     if (error instanceof DeliveryGraphError) throw new WorkflowEngineError(error.code, error.message, error.statusCode);
     throw error;
@@ -361,7 +361,7 @@ function transitionWorkRecord(root, graph, input) {
       evidence,
       workflow: { workflowId: workflow.id, fromState: current.state, toState: targetState },
     });
-    return { schemaVersion: "flowpeek-workflow-transition-result/v1", transitioned: result.created, workflow, fromState: current.state, toState: targetState, event: result.event, limitation: "A permitted transition records supplied evidence references. It does not independently validate target execution, external CI, deployment, or approval authority." };
+    return { schemaVersion: "flopeek-workflow-transition-result/v1", transitioned: result.created, workflow, fromState: current.state, toState: targetState, event: result.event, limitation: "A permitted transition records supplied evidence references. It does not independently validate target execution, external CI, deployment, or approval authority." };
   } catch (error) {
     if (error instanceof DeliveryGraphError) throw new WorkflowEngineError(error.code, error.message, error.statusCode);
     throw error;
@@ -370,13 +370,13 @@ function transitionWorkRecord(root, graph, input) {
 
 function getWorkRecordWorkflow(root, graph, recordId) {
   const delivery = readDeliveryStore(root, graph.project.projectId);
-  if (delivery.status === "invalid") return { schemaVersion: "flowpeek-work-record-workflow/v1", status: "unavailable", record: null, workflow: null, state: null, diagnostics: delivery.diagnostics };
+  if (delivery.status === "invalid") return { schemaVersion: "flopeek-work-record-workflow/v1", status: "unavailable", record: null, workflow: null, state: null, diagnostics: delivery.diagnostics };
   const id = safeId(recordId, "recordId");
   const record = delivery.store.records.find((item) => item.id === id);
   if (!record) throw new WorkflowEngineError("unknown-work-record", "recordId does not exist.", 404);
   const state = recordState(delivery.store, id);
   const workflow = state ? getWorkflow(root, state.workflowId) : null;
-  return { schemaVersion: "flowpeek-work-record-workflow/v1", status: "available", record, workflow, state: state ? { workflowId: state.workflowId, state: state.state, eventId: state.event.id, observedAt: state.event.observedAt } : null, limitation: "Workflow state is derived from append-only local events and remains separate from repository parser facts." };
+  return { schemaVersion: "flopeek-work-record-workflow/v1", status: "available", record, workflow, state: state ? { workflowId: state.workflowId, state: state.state, eventId: state.event.id, observedAt: state.event.observedAt } : null, limitation: "Workflow state is derived from append-only local events and remains separate from repository parser facts." };
 }
 
 module.exports = {

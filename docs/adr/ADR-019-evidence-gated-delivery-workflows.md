@@ -5,7 +5,7 @@
 
 ## Context
 
-Flowpeek needs to connect a planned work item with the technical Context Cards it
+Flopeek needs to connect a planned work item with the technical Context Cards it
 affects, while preserving a hard boundary: a delivery status must never rewrite
 parser facts or claim that a change executed successfully.
 
@@ -16,10 +16,10 @@ marked complete without inspectable evidence.
 ## Decision
 
 - Store plans and actual delivery events separately from the Evidence Graph in
-  `.flowpeek/delivery/`.
+  `.flopeek/delivery/`.
 - Make actual delivery events append-only and associate each record with one
   project plus optional versioned Context Refs.
-- Define `flowpeek-workflow/v1` with an initial state, named states, allowed
+- Define `flopeek-workflow/v1` with an initial state, named states, allowed
   transitions, optional roles, and required evidence kinds.
 - Ship local **Agile** and **Waterfall** templates. Custom local templates use
   the same schema and cannot replace a built-in template.
@@ -31,7 +31,7 @@ marked complete without inspectable evidence.
 
 ## Consequences
 
-Flowpeek can provide a trustworthy local ledger for planned-versus-actual work
+Flopeek can provide a trustworthy local ledger for planned-versus-actual work
 without becoming a project tracker, CI system, or deployment control plane.
 People and agents must still resolve referenced Context Refs and inspect the
 underlying evidence. A stale Context Ref cannot satisfy the built-in

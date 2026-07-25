@@ -12,12 +12,12 @@ const { resolveFlowVerification } = require("./flow-verification");
 const { createSemanticFlowSuggestion } = require("./semantic-flow-suggestion");
 const { resolveSemanticSuggestionFeedback } = require("./semantic-suggestion-feedback");
 
-const DURABLE_BRIEF_SCHEMA = "flowpeek-brief/v1";
-const DURABLE_BRIEF_PACKET_SCHEMA = "flowpeek-brief-packet/v1";
-const DURABLE_BRIEF_MANIFEST_SCHEMA = "flowpeek-brief-manifest/v1";
-const DURABLE_BRIEF_MANIFESTS_SCHEMA = "flowpeek-brief-manifests/v1";
-const BRIEF_MANIFESTS_RELATIVE_PATH = ".flowpeek/briefs/manifests.json";
-const BRIEF_ARTIFACTS_RELATIVE_PATH = ".flowpeek/briefs/artifacts";
+const DURABLE_BRIEF_SCHEMA = "flopeek-brief/v1";
+const DURABLE_BRIEF_PACKET_SCHEMA = "flopeek-brief-packet/v1";
+const DURABLE_BRIEF_MANIFEST_SCHEMA = "flopeek-brief-manifest/v1";
+const DURABLE_BRIEF_MANIFESTS_SCHEMA = "flopeek-brief-manifests/v1";
+const BRIEF_MANIFESTS_RELATIVE_PATH = ".flopeek/briefs/manifests.json";
+const BRIEF_ARTIFACTS_RELATIVE_PATH = ".flopeek/briefs/artifacts";
 const BRIEF_KINDS = new Set(["project", "feature", "flow", "node"]);
 
 class DurableBriefError extends Error {
@@ -286,7 +286,7 @@ function readBriefManifestStore(root, projectId) {
   try {
     const store = JSON.parse(fs.readFileSync(target, "utf8"));
     if (store?.schemaVersion !== DURABLE_BRIEF_MANIFESTS_SCHEMA || store.projectId !== projectId || !Array.isArray(store.records) || !store.records.every(validManifest)) {
-      return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-brief-manifest-store", message: "Brief manifest metadata does not match flowpeek-brief-manifests/v1." }] };
+      return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-brief-manifest-store", message: "Brief manifest metadata does not match flopeek-brief-manifests/v1." }] };
     }
     return { status: "valid", path: target, store, diagnostics: [] };
   } catch (error) {
@@ -369,7 +369,7 @@ function resolveDurableBriefRef(root, graph, contextRef) {
     return { status: "unresolved", requestedRef: contextRef, code: error.code || "invalid-context-ref", reason: error.message, brief: null, manifest: null };
   }
   if (parsed.kind !== "brief") return { status: "unresolved", requestedRef: contextRef, code: "unsupported-context-kind", reason: `Context kind '${parsed.kind}' is not a Brief.`, brief: null, manifest: null };
-  if (parsed.projectId !== graph.project.projectId) return { status: "unavailable", requestedRef: contextRef, code: "wrong-project-id", reason: "Brief belongs to a different Flowpeek project identity.", brief: null, manifest: null };
+  if (parsed.projectId !== graph.project.projectId) return { status: "unavailable", requestedRef: contextRef, code: "wrong-project-id", reason: "Brief belongs to a different Flopeek project identity.", brief: null, manifest: null };
   if (parsed.graphVersion > graph.state.graphVersion) return { status: "unavailable", requestedRef: contextRef, code: "future-graph-version", reason: "Brief targets a graph version newer than the current graph.", brief: null, manifest: null };
   let identity;
   try {

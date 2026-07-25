@@ -19,7 +19,7 @@ function evaluationRecord(item) {
 }
 
 function evaluateSemanticSuggestionFeedbackCorpus(corpus) {
-  if (corpus?.schemaVersion !== "flowpeek-semantic-suggestion-feedback-evaluation/v1" || !Array.isArray(corpus.records) || !corpus.expected) {
+  if (corpus?.schemaVersion !== "flopeek-semantic-suggestion-feedback-evaluation/v1" || !Array.isArray(corpus.records) || !corpus.expected) {
     throw new Error("Invalid semantic suggestion feedback evaluation corpus.");
   }
   const metrics = feedbackMetrics(corpus.records.map(evaluationRecord));

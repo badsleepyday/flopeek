@@ -6,8 +6,8 @@ const path = require("node:path");
 const { atomicWriteJson } = require("./graph-cache");
 const { registryRoot } = require("./serve-workspace");
 
-const WORKSPACE_CONTRACT_REFERENCE_SCHEMA = "flowpeek-workspace-contract-reference/v1";
-const WORKSPACE_CONTRACT_STORE_SCHEMA = "flowpeek-workspace-contract-references/v1";
+const WORKSPACE_CONTRACT_REFERENCE_SCHEMA = "flopeek-workspace-contract-reference/v1";
+const WORKSPACE_CONTRACT_STORE_SCHEMA = "flopeek-workspace-contract-references/v1";
 const MAX_RECORDS = 1_000;
 const UNSAFE_TEXT_PATTERNS = [
   /(?:\b[A-Za-z]:[\\/]|\\\\[^\\]+\\|file:\/\/|\/(?:Users|home|mnt\/[A-Za-z])\/)/i,

@@ -1,6 +1,6 @@
 # Stability and semantic-zoom execution contract
 
-This document is the mechanical execution contract for making Flowpeek stable
+This document is the mechanical execution contract for making Flopeek stable
 enough for repeated product dogfooding before product breadth expands. It also
 makes bounded semantic zoom the first priority product feature after the core
 context and Viewer lifecycle are stable.
@@ -18,7 +18,7 @@ commit `8d4414a`.
 Known baseline facts:
 
 - the full automated suite passed 292/292 and the package lane passed 7/7;
-- the documented production `flowpeek history` entry point fails because of a
+- the documented production `flopeek history` entry point fails because of a
   circular module dependency even though the unit-oriented suite passes;
 - the current Viewer destroys and recreates Cytoscape for a graph refresh;
 - dependency projection silently slices its relationship list to 36 entries;
@@ -27,12 +27,12 @@ Known baseline facts:
 - graph persistence is validated JSON with a current full graph, monotonic
   graph version, explicit dry-run-first adjacent-delta retention, optional Git
   snapshots, and immutable derived artifacts;
-- Flowpeek-on-Flowpeek graph v629 had 190 `.flowpeek` files using 23,240,971
+- Flopeek-on-Flopeek graph v629 had 190 `.flopeek` files using 23,240,971
   bytes, including 141 derived artifacts using 7,283,478 bytes;
 - exact derived-artifact hits require the current graph version and source
   fingerprint, so dependency-unaffected artifacts are not yet promoted safely
   across versions;
-- an existing untracked fixture `.flowpeek` directory must be treated as
+- an existing untracked fixture `.flopeek` directory must be treated as
   user-owned state until the responsible test path is reproduced and contained.
 
 If implementation begins from a later revision:
@@ -65,7 +65,7 @@ canvas or source bodies.
 
 ## Stable-context definition
 
-Flowpeek context is stable only when all five layers agree:
+Flopeek context is stable only when all five layers agree:
 
 | Layer | Stability requirement |
 | --- | --- |
@@ -189,7 +189,7 @@ safe unit-test import order from hiding a broken production import order.
 
 ### Acceptance
 
-- `flowpeek history <fixture> --from <ref> --to <ref>` exits zero;
+- `flopeek history <fixture> --from <ref> --to <ref>` exits zero;
 - snapshot and Git-continuity CLI paths exit zero;
 - real stdio MCP can list and call snapshot comparison and Context continuity;
 - stdout remains protocol-safe and stderr contains no circular-dependency
@@ -213,11 +213,11 @@ test: cover production CLI and MCP module loading
 
 **Completed 2026-07-22.** Session-only scans now mark all derived artifacts as
 cache-disabled, preventing Flow Lens retrieval from writing fixture metadata.
-`flowpeek cache status` measures local metadata without source reads, while
-`flowpeek cache prune --dry-run` previews registered, old derived artifacts and
+`flopeek cache status` measures local metadata without source reads, while
+`flopeek cache prune --dry-run` previews registered, old derived artifacts and
 `cache prune` removes only that exact reviewed set. DF-028 extends the same
 projection with graph-delta/history bytes, protected latest evidence, and user
-metadata. `flowpeek cache prune --history` is a dry-run-first history preview;
+metadata. `flopeek cache prune --history` is a dry-run-first history preview;
 only `--apply` stages validated delta files behind a recovery journal. Current
 graph/state, delivery, verification, runtime, and unregistered files remain
 outside its destructive scope. HTTP and MCP expose the same read-only hygiene
@@ -230,10 +230,10 @@ storage or claiming cross-version context reuse.
 
 ### Required changes
 
-- reproduce which verification path leaves fixture `.flowpeek` state;
+- reproduce which verification path leaves fixture `.flopeek` state;
 - run cache-writing fixture tests in explicit temporary copies or remove only
   state created and owned by that exact test;
-- never delete a repository user's pre-existing `.flowpeek` directory;
+- never delete a repository user's pre-existing `.flopeek` directory;
 - add one read-only cache-status contract containing total/current/stale counts,
   bytes, delta retention, history count, and artifact categories;
 - add a dry-run-first cache-prune contract with an explicit retention policy;
@@ -276,10 +276,10 @@ feat: make local cache retention inspectable
 
 ## E48 - Bounded view-projection contract
 
-**Completed 2026-07-22.** `flowpeek-view-projection/v2` binds every map to its
+**Completed 2026-07-22.** `flopeek-view-projection/v2` binds every map to its
 project and graph basis, uses a default 40-node/80-edge display ceiling with
 100/200 hard ceilings, and reports returned, omitted, and node-bound edges.
-`flowpeek view`, `/api/view`, and MCP `get_view_projection` share the contract.
+`flopeek view`, `/api/view`, and MCP `get_view_projection` share the contract.
 
 ### Objective
 
@@ -294,11 +294,11 @@ Context Ref separation, hard bounds, and stale behavior.
 
 ### Contract
 
-Define `flowpeek-view-projection/v2` with at least:
+Define `flopeek-view-projection/v2` with at least:
 
 ```json
 {
-  "schemaVersion": "flowpeek-view-projection/v2",
+  "schemaVersion": "flopeek-view-projection/v2",
   "project": {
     "projectId": "project:example",
     "graphVersion": 17,
@@ -468,7 +468,7 @@ source evidence without rendering an unbounded graph.
 
 Use the first unambiguous source in this order:
 
-1. explicit repository-owned Flowpeek grouping configuration;
+1. explicit repository-owned Flopeek grouping configuration;
 2. exact workspace/package and parser/framework ownership;
 3. exact source containment and module boundaries;
 4. deterministic existing feature/domain classification;
@@ -723,7 +723,7 @@ docs: publish scoped Viewer stability evidence
 
 ## Stability regression matrix
 
-Every later Flowpeek change must identify affected rows and rerun their gates.
+Every later Flopeek change must identify affected rows and rerun their gates.
 
 | Contract | Must remain stable | Invalidating change |
 | --- | --- | --- |
@@ -740,7 +740,7 @@ Every later Flowpeek change must identify affected rows and rerun their gates.
 
 ## Stable-dogfooding exit gate
 
-Flowpeek is stable for routine product dogfooding only when:
+Flopeek is stable for routine product dogfooding only when:
 
 - E46 through E52 are `done`;
 - S1 through S5 are `done`;
@@ -776,7 +776,7 @@ Stop the active item and preserve the last valid baseline when:
   portable artifact.
 
 Rollback means revert only the active focused item or disable its new opt-in
-surface. Do not reset unrelated user work, delete user-owned `.flowpeek` state,
+surface. Do not reset unrelated user work, delete user-owned `.flopeek` state,
 or rewrite the shared checkpoint history.
 
 ## Checkpoint and handoff template

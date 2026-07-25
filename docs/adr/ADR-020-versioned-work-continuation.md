@@ -5,7 +5,7 @@
 
 ## Context
 
-Flowpeek already preserves version-bound technical Context Refs, immutable
+Flopeek already preserves version-bound technical Context Refs, immutable
 Handoff Workspace versions, static Git snapshots, local delivery work records,
 planned windows, append-only actual events, and evidence-gated Agile,
 Waterfall, and custom workflow definitions.
@@ -21,13 +21,13 @@ test result, approval, or release exists.
 
 ## Decision
 
-- Introduce an immutable `flowpeek-continuation-checkpoint/v1` artifact that
+- Introduce an immutable `flopeek-continuation-checkpoint/v1` artifact that
   composes one project identity, exact Git or working-tree source basis, graph
   version, selected Context Refs, optional Handoff Workspace, and Delivery Graph
   work records.
 - Derive checkpoint baselines from the current validated graph. Callers provide
   an expected graph version but cannot manufacture a different source basis.
-- Introduce `flowpeek-planned-overlay/v1` as Delivery/Context metadata. Planned
+- Introduce `flopeek-planned-overlay/v1` as Delivery/Context metadata. Planned
   nodes and planned edges never enter `graph.nodes`, `graph.edges`, Flow Lens,
   static impact, or parser coverage.
 - Give planned entities a distinct Plan Ref contract. A Plan Ref is never
@@ -45,7 +45,7 @@ test result, approval, or release exists.
   current resolvers, planned overlays, and reconciliation records. Missing
   historical evidence produces `partial`, `unavailable`, or `unknown`, never a
   fabricated reconstruction.
-- Detect Git divergence read-only. Flowpeek does not fetch, check out, merge,
+- Detect Git divergence read-only. Flopeek does not fetch, check out, merge,
   rebase, or change branches as part of continuation analysis.
 - Keep the ordinary Viewer factual by default. Planned overlays require an
   explicit Continue mode and remain distinguishable through text, shape, border,
@@ -55,7 +55,7 @@ test result, approval, or release exists.
 
 ## Consequences
 
-Flowpeek can evolve from a technical-flow context layer into a versioned work-
+Flopeek can evolve from a technical-flow context layer into a versioned work-
 continuation layer without turning a plan into source truth or becoming a
 project tracker, Git client, CI runner, deployment system, or autonomous coding
 agent.

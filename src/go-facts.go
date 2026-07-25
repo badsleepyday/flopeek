@@ -73,13 +73,13 @@ type Output struct {
 }
 
 func testLifecycleHook() {
-	if os.Getenv("FLOWPEEK_TEST_MODE") != "1" {
+	if os.Getenv("FLOPEEK_TEST_MODE") != "1" {
 		return
 	}
-	if target := os.Getenv("FLOWPEEK_TEST_HELPER_PID_FILE"); target != "" {
+	if target := os.Getenv("FLOPEEK_TEST_HELPER_PID_FILE"); target != "" {
 		_ = os.WriteFile(target, []byte(strconv.Itoa(os.Getpid())), 0600)
 	}
-	if milliseconds, err := strconv.Atoi(os.Getenv("FLOWPEEK_TEST_HELPER_DELAY_MS")); err == nil && milliseconds > 0 {
+	if milliseconds, err := strconv.Atoi(os.Getenv("FLOPEEK_TEST_HELPER_DELAY_MS")); err == nil && milliseconds > 0 {
 		time.Sleep(time.Duration(milliseconds) * time.Millisecond)
 	}
 }

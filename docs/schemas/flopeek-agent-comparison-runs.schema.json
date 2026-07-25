@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://flowpeek.dev/schemas/flowpeek-agent-comparison-runs.schema.json",
-  "title": "Flowpeek Agent Comparison Runs",
+  "$id": "https://flopeek.dev/schemas/flopeek-agent-comparison-runs.schema.json",
+  "title": "Flopeek Agent Comparison Runs",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "studyId", "status", "consent", "executions"],
   "properties": {
-    "schemaVersion": { "const": "flowpeek-agent-comparison-runs/v1" },
+    "schemaVersion": { "const": "flopeek-agent-comparison-runs/v1" },
     "studyId": { "$ref": "#/$defs/text" },
     "status": { "enum": ["template", "completed"] },
     "consent": {
@@ -32,7 +32,7 @@
         "id": { "$ref": "#/$defs/text" },
         "pairId": { "$ref": "#/$defs/text" },
         "caseId": { "$ref": "#/$defs/text" },
-        "condition": { "enum": ["direct-repository", "flowpeek"] },
+        "condition": { "enum": ["direct-repository", "flopeek"] },
         "provider": {
           "type": "object",
           "additionalProperties": false,
@@ -43,11 +43,11 @@
         "context": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["inspectedPaths", "estimatedCharacters", "flowpeek"],
+          "required": ["inspectedPaths", "estimatedCharacters", "flopeek"],
           "properties": {
             "inspectedPaths": { "$ref": "#/$defs/stringList" },
             "estimatedCharacters": { "type": "number", "minimum": 0 },
-            "flowpeek": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/flowpeekContext" }] }
+            "flopeek": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/flopeekContext" }] }
           }
         },
         "answer": {
@@ -76,7 +76,7 @@
         }
       }
     },
-    "flowpeekContext": {
+    "flopeekContext": {
       "type": "object",
       "additionalProperties": false,
       "required": ["projectId", "graphVersion", "contextRefs", "toolsUsed"],

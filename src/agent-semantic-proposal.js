@@ -5,9 +5,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { atomicWriteJson } = require("./graph-cache");
 
-const AGENT_SEMANTIC_PROPOSAL_SCHEMA = "flowpeek-agent-semantic-proposal/v1";
-const AGENT_SEMANTIC_PROPOSAL_STORE_SCHEMA = "flowpeek-agent-semantic-proposals/v1";
-const AGENT_SEMANTIC_PROPOSALS_RELATIVE_PATH = ".flowpeek/agent-semantic-proposals.json";
+const AGENT_SEMANTIC_PROPOSAL_SCHEMA = "flopeek-agent-semantic-proposal/v1";
+const AGENT_SEMANTIC_PROPOSAL_STORE_SCHEMA = "flopeek-agent-semantic-proposals/v1";
+const AGENT_SEMANTIC_PROPOSALS_RELATIVE_PATH = ".flopeek/agent-semantic-proposals.json";
 const RISK_LEVELS = new Set(["low", "medium", "high", "critical", "unknown"]);
 
 class AgentSemanticProposalError extends Error {
@@ -112,7 +112,7 @@ function readAgentSemanticProposalStore(root, projectId) {
     const store = JSON.parse(fs.readFileSync(target, "utf8"));
     const operations = Array.isArray(store?.records) ? store.records.map((record) => record.operationId) : [];
     if (!onlyKnownKeys(store, ["schemaVersion", "projectId", "records"]) || store.schemaVersion !== AGENT_SEMANTIC_PROPOSAL_STORE_SCHEMA || store.projectId !== projectId || !Array.isArray(store.records) || !store.records.every(isRecord) || new Set(operations).size !== operations.length) {
-      return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-agent-semantic-proposal-store", message: "Agent semantic proposal metadata does not match flowpeek-agent-semantic-proposals/v1." }] };
+      return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-agent-semantic-proposal-store", message: "Agent semantic proposal metadata does not match flopeek-agent-semantic-proposals/v1." }] };
     }
     return { status: "valid", path: target, store, diagnostics: [] };
   } catch (error) {
@@ -148,7 +148,7 @@ function saveAgentSemanticProposal(root, graph, lens, suggestion, input = {}, op
   const existing = read.store.records.find((record) => record.operationId === normalized.operationId);
   if (existing) {
     if (existing.inputFingerprint !== inputFingerprint) throw new AgentSemanticProposalError("operation-id-conflict", "operationId already belongs to a different immutable proposal.");
-    return { schemaVersion: "flowpeek-agent-semantic-proposal-result/v1", created: false, record: existing };
+    return { schemaVersion: "flopeek-agent-semantic-proposal-result/v1", created: false, record: existing };
   }
   const createdAt = options.now || new Date().toISOString();
   if (typeof createdAt !== "string" || Number.isNaN(Date.parse(createdAt))) throw new AgentSemanticProposalError("invalid-created-at", "createdAt must be an ISO-compatible timestamp.");
@@ -174,12 +174,12 @@ function saveAgentSemanticProposal(root, graph, lens, suggestion, input = {}, op
   };
   const record = { ...base, id: `agent-semantic-proposal:${fingerprint(base).slice(7, 39)}` };
   atomicWriteJson(read.path, { ...read.store, records: [...read.store.records, record] });
-  return { schemaVersion: "flowpeek-agent-semantic-proposal-result/v1", created: true, record };
+  return { schemaVersion: "flopeek-agent-semantic-proposal-result/v1", created: true, record };
 }
 
 function resolveAgentSemanticProposal(root, graph, lens) {
   const read = readAgentSemanticProposalStore(root, graph.project.projectId);
-  const base = { schemaVersion: "flowpeek-agent-semantic-proposal-resolution/v1", flowId: lens.flow.id, currentFlowContextRef: lens.flow.contextRef, diagnostics: read.diagnostics };
+  const base = { schemaVersion: "flopeek-agent-semantic-proposal-resolution/v1", flowId: lens.flow.id, currentFlowContextRef: lens.flow.contextRef, diagnostics: read.diagnostics };
   if (read.status === "invalid") return { ...base, status: "unavailable", record: null, history: [], reason: read.diagnostics[0].message };
   const record = latest(read.store, lens.flow.id);
   const records = history(read.store, lens.flow.id);

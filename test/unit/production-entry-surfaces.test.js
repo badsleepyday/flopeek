@@ -23,11 +23,11 @@ function commit(root, subject) {
 }
 
 function repository() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-production-entry-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-production-entry-"));
   git(root, ["init"]);
-  git(root, ["config", "user.email", "flowpeek@example.invalid"]);
-  git(root, ["config", "user.name", "Flowpeek test"]);
-  write(root, ".gitignore", ".flowpeek/\n");
+  git(root, ["config", "user.email", "flopeek@example.invalid"]);
+  git(root, ["config", "user.name", "Flopeek test"]);
+  write(root, ".gitignore", ".flopeek/\n");
   write(root, "package.json", JSON.stringify({ name: "production-entry" }));
   write(root, "src/app/api/orders/route.ts", "export async function GET() { return { status: 'initial' }; }\n");
   commit(root, "add endpoint");
@@ -55,7 +55,7 @@ test("production CLI history and stdio MCP load Git continuity without circular 
       stdio: ["ignore", "pipe", "pipe"],
     });
     const history = JSON.parse(output);
-    assert.equal(history.schemaVersion, "flowpeek-git-history-comparison/v1");
+    assert.equal(history.schemaVersion, "flopeek-git-history-comparison/v1");
     assert.equal(history.topology.available, true);
 
     const [{ Client }, { StdioClientTransport }] = await Promise.all([
@@ -72,7 +72,7 @@ test("production CLI history and stdio MCP load Git continuity without circular 
     client = new Client({ name: "production-entry-test", version: "1.0.0" });
     await client.connect(transport);
     const result = text(await client.callTool({ name: "compare_git_snapshots", arguments: { from: fixture.before, to: fixture.after } }));
-    assert.equal(result.schemaVersion, "flowpeek-git-history-comparison/v1");
+    assert.equal(result.schemaVersion, "flopeek-git-history-comparison/v1");
     assert.equal(result.topology.available, true);
     assert.doesNotMatch(stderr.join(""), /circular dependency|getGraphDelta is not a function/i);
   } finally {

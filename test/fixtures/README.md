@@ -1,6 +1,6 @@
-# Flowpeek fixture corpus
+# Flopeek fixture corpus
 
-Each directory is a small repository scanned by Flowpeek. `expectations.json` describes parser facts that are important enough to score:
+Each directory is a small repository scanned by Flopeek. `expectations.json` describes parser facts that are important enough to score:
 
 - `endpoints`: detected endpoint label and confidence;
 - `relationships`: direct `imports`, `handles`, `requests`, `declares-command-target`, `schedules`, or exact `calls` edges using `file:<relative path>`, `endpoint:<METHOD route>`, `command:<manifest>:<script>`, `schedule:<path>:<task>`, or `symbol:<relative path>:<type>:<label>` references;

@@ -15,7 +15,7 @@ function write(root, relativePath, content) {
 }
 
 test("unsupported Makefile and NASM paths remain typed inventory anchors without inferred relationships", (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-low-level-inventory-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-low-level-inventory-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   write(root, "Makefile", "all:\n\t@echo static-only\n");
   write(root, "kernel/longmode_boot.asm", "BITS 64\nstart:\n  hlt\n");

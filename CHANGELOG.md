@@ -1,6 +1,6 @@
 # Changelog
 
-All notable Flowpeek changes are documented here. This file describes source
+All notable Flopeek changes are documented here. This file describes source
 history; it does not imply an npm publication or a stable release.
 
 ## Unreleased

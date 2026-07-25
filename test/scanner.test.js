@@ -140,7 +140,7 @@ async function waitFor(check, timeoutMs = 12_000) {
     if (last) return last;
     await wait(35);
   }
-  throw new Error("Timed out waiting for the expected Flowpeek state.");
+  throw new Error("Timed out waiting for the expected Flopeek state.");
 }
 
 async function assertNoSseEvent(reader, predicate, timeoutMs = 600) {
@@ -182,7 +182,7 @@ test("scanner builds an endpoint-to-service flow and finds related tests", () =>
     assert.ok(graph.edges.some((edge) => edge.source === testNode.id && edge.target === service.id));
     assert.ok(graph.flows.some((flow) => flow.entryId === endpoint.id && flow.steps.some((step) => step.id === service.id)));
     const lens = getFlowProjection(graph, `flow:${endpoint.id}`);
-    assert.equal(lens.schemaVersion, "flowpeek-flow-lens/v1");
+    assert.equal(lens.schemaVersion, "flopeek-flow-lens/v1");
     assert.equal(lens.flow.entryId, endpoint.id);
     assert.match(lens.flow.contextRef, /^fp:\/\/local\/.+\/flow\//);
     assert.equal(lens.steps[0].role, "entry");
@@ -204,7 +204,7 @@ test("scanner builds an endpoint-to-service flow and finds related tests", () =>
 });
 
 test("literal package scripts create bounded command Flow Lenses and inventory unsupported shell forms", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-command-entry-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-command-entry-"));
   try {
     write(root, "package.json", JSON.stringify({
       name: "command-entry-example",
@@ -249,7 +249,7 @@ test("literal package scripts create bounded command Flow Lenses and inventory u
 
     const flow = graph.flows.find((candidate) => candidate.entryId === command.id);
     assert.ok(flow);
-    assert.equal(flow.entry.schemaVersion, "flowpeek-static-flow-entry/v1");
+    assert.equal(flow.entry.schemaVersion, "flopeek-static-flow-entry/v1");
     assert.equal(flow.entry.kind, "package-script");
     assert.equal(flow.entry.declaration.targetPath, "src/main.ts");
     const lens = getFlowProjection(graph, flow.id);
@@ -314,7 +314,7 @@ test("Django management commands create bounded command Flow Lenses without clai
 });
 
 test("literal node-cron schedules create bounded scheduler Flow Lenses and inventory unsupported registrations", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-scheduled-entry-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-scheduled-entry-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "scheduled-entry-example" }));
     write(root, "src/jobs.ts", [
@@ -360,7 +360,7 @@ test("literal node-cron schedules create bounded scheduler Flow Lenses and inven
 
     const flow = graph.flows.find((candidate) => candidate.entryId === schedule.id);
     assert.ok(flow);
-    assert.equal(flow.entry.schemaVersion, "flowpeek-static-flow-entry/v1");
+    assert.equal(flow.entry.schemaVersion, "flopeek-static-flow-entry/v1");
     assert.equal(flow.entry.kind, "scheduled-task");
     assert.equal(flow.entry.declaration.expression, "0 * * * *");
     const lens = getFlowProjection(graph, flow.id);
@@ -394,7 +394,7 @@ test("CLI summary separates supported static entry families", () => {
 });
 
 test("literal package script flows retain HTTP Context Ref and Viewer-entry parity", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-command-entry-server-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-command-entry-server-"));
   let app;
   try {
     write(root, "package.json", JSON.stringify({ name: "command-entry-server-example", scripts: { serve: "node src/main.ts" } }));
@@ -425,7 +425,7 @@ test("literal package script flows retain HTTP Context Ref and Viewer-entry pari
 });
 
 test("node-cron schedule entries retain Viewer, HTTP, and MCP flow parity", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-scheduled-entry-surfaces-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-scheduled-entry-surfaces-"));
   let app;
   let client;
   let instance;
@@ -456,7 +456,7 @@ test("node-cron schedule entries retain Viewer, HTTP, and MCP flow parity", asyn
       import("@modelcontextprotocol/sdk/inMemory.js"),
     ]);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    client = new Client({ name: "flowpeek-scheduler-entry-client", version: "1.0.0" });
+    client = new Client({ name: "flopeek-scheduler-entry-client", version: "1.0.0" });
     await instance.server.connect(serverTransport);
     await client.connect(clientTransport);
     const mcpResult = await client.callTool({ name: "get_entry_flows", arguments: { query: "refresh" } });
@@ -526,7 +526,7 @@ test("scanner profiling reports bounded phases without changing graph evidence",
 });
 
 test("graph reports machine-readable parser coverage for mixed-language repositories", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-coverage-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-coverage-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "coverage-example" }));
     write(root, "src/handler.ts", "export const handler = () => 'ok';");
@@ -550,7 +550,7 @@ test("graph reports machine-readable parser coverage for mixed-language reposito
 });
 
 test("C# Roslyn analysis extracts usings, class declarations, and methods", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-csharp-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-csharp-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "csharp-example" }));
     write(root, "src/OrdersService.cs", "using System;\nusing Acme.Data;\nnamespace Acme; public class OrdersService { public void Submit() {} private int Count() => 1; }");
@@ -572,7 +572,7 @@ test("C# Roslyn analysis extracts usings, class declarations, and methods", () =
 });
 
 test("PHP AST analysis extracts use imports, declarations, methods, and direct local calls", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-php-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-php-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "php-example" }));
     write(root, "src/OrdersService.php", `<?php
@@ -612,7 +612,7 @@ function record(string $id): string { return $id; }
 });
 
 test("Tree-sitter Java analysis extracts imports, types, and methods without a JDK", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-java-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-java-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "java-example" }));
     write(root, "src/OrdersService.java", `package com.acme.orders;
@@ -635,7 +635,7 @@ interface Store { void save(); }
 });
 
 test("Tree-sitter Java resolves only unqualified unique local static method calls", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-java-static-calls-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-java-static-calls-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "java-static-call-example" }));
     write(root, "src/Orders.java", `public class Orders {
@@ -663,7 +663,7 @@ test("Tree-sitter Java resolves only unqualified unique local static method call
 });
 
 test("Tree-sitter Rust analysis extracts types, methods, and direct local calls without Rust tooling", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-rust-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "rust-example" }));
     write(root, "src/orders.rs", `use std::collections::HashMap;
@@ -691,7 +691,7 @@ fn validate(id: &str) { let _ = id; }
 });
 
 test("Tree-sitter Rust analysis does not require iterator helper methods", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-rust-node20-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-node20-"));
   const iteratorPrototype = Object.getPrototypeOf(new Map().values());
   const originalMap = Object.getOwnPropertyDescriptor(iteratorPrototype, "map");
   try {
@@ -709,7 +709,7 @@ test("Tree-sitter Rust analysis does not require iterator helper methods", () =>
 });
 
 test("Rust crate, self, and super imports resolve to local modules and direct named calls", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-rust-modules-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-modules-"));
   try {
     write(root, "Cargo.toml", `[package]
 name = "rust-module-example"
@@ -758,7 +758,7 @@ pub fn execute_self() { normalize_local(); }
 });
 
 test("Tree-sitter Java and Rust parsers scan sources larger than their default bridge buffer", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-large-tree-sitter-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-large-tree-sitter-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "large-tree-sitter-example" }));
     const padding = "// padding that exceeds the default parser bridge buffer\n".repeat(800);
@@ -773,7 +773,7 @@ test("Tree-sitter Java and Rust parsers scan sources larger than their default b
 });
 
 test("Go parser extracts structural facts without interpreting comments or executing source", { skip: !GO_TOOLCHAIN_AVAILABLE }, () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-go-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-go-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "go-example" }));
     write(root, "cmd/server.go", `package main
@@ -816,7 +816,7 @@ func main() { _ = clock.Now }
 });
 
 test("incremental Go scans reparse only the changed source file", { skip: !GO_TOOLCHAIN_AVAILABLE }, () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-go-incremental-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-go-incremental-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "go-incremental" }));
     write(root, "cmd/api.go", "package main\ntype API struct{}\nfunc (api *API) Serve() {}\n");
@@ -837,7 +837,7 @@ test("incremental Go scans reparse only the changed source file", { skip: !GO_TO
 });
 
 test("static Go modules resolve only unique internal package files and refresh after Go changes", { skip: !GO_TOOLCHAIN_AVAILABLE }, () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-go-modules-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-go-modules-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "go-modules" }));
     write(root, "go.mod", "module example.com/acme/inventory\n\ngo 1.25\n");
@@ -875,7 +875,7 @@ func main() { catalog.Load() }
 });
 
 test("Go direct calls connect only unshadowed local functions and resolved package selectors", { skip: !GO_TOOLCHAIN_AVAILABLE }, () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-go-calls-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-go-calls-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "go-calls" }));
     write(root, "go.mod", "module example.com/acme/calls\n\ngo 1.25\n");
@@ -914,7 +914,7 @@ func (server *Server) Run() { server.Handle(); validate() }
 });
 
 test("direct local and named-import function calls create symbol edges for impact analysis", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-calls-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-calls-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "call-example" }));
     write(root, "src/validation.ts", "export function normalizeOrder() { return 'ok'; }\nexport function validateOrder() { return normalizeOrder(); }");
@@ -942,7 +942,7 @@ test("direct local and named-import function calls create symbol edges for impac
 });
 
 test("static Prisma and BullMQ instances become runtime integration nodes with exact usage edges", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-runtime-integrations-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-runtime-integrations-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "runtime-integrations" }));
     write(root, "src/orders.ts", "import { PrismaClient } from '@prisma/client';\nimport { Queue } from 'bullmq';\nconst prisma = new PrismaClient();\nconst orders = new Queue('orders');\nexport function submit() { prisma.order.create({ data: {} }); orders.add('created', {}); }");
@@ -962,7 +962,7 @@ test("static Prisma and BullMQ instances become runtime integration nodes with e
 });
 
 test("direct-call analysis tolerates for statements without an initializer", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-for-loop-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-for-loop-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "for-loop-example" }));
     write(root, "src/loop.ts", "export function tick() {}\nexport function run() { for (;;) { tick(); break; } }");
@@ -974,7 +974,7 @@ test("direct-call analysis tolerates for statements without an initializer", () 
 });
 
 test("change impact recovers deleted-file dependents from a matching prior graph", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-deleted-impact-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-deleted-impact-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "deleted-impact-example" }));
     write(root, "src/orders/orders.routes.ts", "import { OrdersService } from './orders.service';\nrouter.post('/orders', () => OrdersService.create());");
@@ -998,12 +998,12 @@ test("change impact recovers deleted-file dependents from a matching prior graph
 });
 
 test("Git graph snapshots persist commit graphs and compare static before-after flows", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-history-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-history-"));
   let app;
   try {
     git(root, ["init"]);
-    git(root, ["config", "user.email", "flowpeek@example.test"]);
-    git(root, ["config", "user.name", "Flowpeek Test"]);
+    git(root, ["config", "user.email", "flopeek@example.test"]);
+    git(root, ["config", "user.name", "Flopeek Test"]);
     write(root, "package.json", JSON.stringify({ name: "history-example" }));
     write(root, "src/orders.routes.ts", "router.get('/orders', () => ({ ok: true }));");
     git(root, ["add", "."]);
@@ -1028,7 +1028,7 @@ test("Git graph snapshots persist commit graphs and compare static before-after 
     assert.match(comparison.limitation, /uncommitted working-tree changes/);
     app = await startServer({ root, port: 0 });
     const apiComparison = await (await fetch(`http://127.0.0.1:${app.port}/api/history?from=${beforeRevision}&to=${afterRevision}`)).json();
-    assert.equal(apiComparison.schemaVersion, "flowpeek-git-history-comparison/v1");
+    assert.equal(apiComparison.schemaVersion, "flopeek-git-history-comparison/v1");
     assert.equal(apiComparison.flows.summary.addedFlows, 1);
     const snapshotResponse = await fetch(`http://127.0.0.1:${app.port}/api/snapshots`, {
       method: "POST",
@@ -1046,7 +1046,7 @@ test("Git graph snapshots persist commit graphs and compare static before-after 
 });
 
 test("incremental scanner reparses only changed source files while rebuilding global relationships", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-incremental-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-incremental-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "incremental-example" }));
     write(root, "src/orders/orders.routes.ts", "import { quote } from '@orders/service';\nrouter.get('/orders', () => quote());");
@@ -1109,7 +1109,7 @@ test("incremental scanner reparses only changed source files while rebuilding gl
 });
 
 test("incremental import resolution cache is invalidated when source topology changes", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-incremental-resolution-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-incremental-resolution-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "incremental-resolution" }));
     write(root, "src/entry.ts", "import { run } from './service';\nrun();");
@@ -1133,7 +1133,7 @@ test("incremental import resolution cache is invalidated when source topology ch
 });
 
 test("incremental Rust scans refresh crate-module resolution when a module is created", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-incremental-rust-resolution-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-incremental-rust-resolution-"));
   try {
     write(root, "Cargo.toml", `[package]
 name = "incremental-rust-resolution"
@@ -1158,12 +1158,12 @@ pub fn execute() { run(); }
 });
 
 test("incremental benchmark is read-only and records reproducible scan metadata", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-benchmark-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-benchmark-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "benchmark-example" }));
     write(root, "src/payment.ts", "export function pay() { return true; }");
     const result = benchmarkRepository(root, { iterations: 1 });
-    assert.equal(result.benchmark, "flowpeek-incremental-scan/v1");
+    assert.equal(result.benchmark, "flopeek-incremental-scan/v1");
     assert.equal(result.project.name, "benchmark-example");
     assert.equal(result.selectedPath, "src/payment.ts");
     assert.equal(result.sourceFiles, 1);
@@ -1173,12 +1173,12 @@ test("incremental benchmark is read-only and records reproducible scan metadata"
     assert.equal(result.incrementalRescanMs.samples.length, 1);
     assert.equal(result.refresh.analyzedFiles, 1);
     assert.equal(result.refresh.reusedFiles, 0);
-    assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false);
+    assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test("local viewer serves a benchmark comparison payload with Rust coverage", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-benchmark-viewer-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-benchmark-viewer-"));
   let app;
   try {
     write(root, "package.json", JSON.stringify({ name: "benchmark-viewer-example" }));
@@ -1191,7 +1191,7 @@ test("local viewer serves a benchmark comparison payload with Rust coverage", as
     });
     assert.equal(response.status, 200);
     const result = await response.json();
-    assert.equal(result.benchmark, "flowpeek-incremental-scan/v1");
+    assert.equal(result.benchmark, "flopeek-incremental-scan/v1");
     assert.equal(result.iterations, 1);
     assert.equal(result.fullRescanMs.samples.length, 1);
     assert.equal(result.incrementalRescanMs.samples.length, 1);
@@ -1205,7 +1205,7 @@ test("local viewer serves a benchmark comparison payload with Rust coverage", as
     });
     assert.equal(proofResponse.status, 200);
     const proof = await proofResponse.json();
-    assert.equal(proof.schemaVersion, "flowpeek-product-proof/v1");
+    assert.equal(proof.schemaVersion, "flopeek-product-proof/v1");
     assert.equal(proof.localBenchmark.status, "available");
     assert.equal(proof.localBenchmark.result.iterations, 1);
     assert.equal(proof.headlineMetrics.auditedRelationships, 92);
@@ -1240,7 +1240,7 @@ test("real-repository corpus scoring reports false positives and false negatives
 });
 
 test("real-repository corpus can prepare missing repositories through an explicit clone directory", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-real-corpus-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-real-corpus-"));
   try {
     const manifest = { repositories: [
       { id: "first", url: "https://example.test/first.git", revision: "abc1234" },
@@ -1284,7 +1284,7 @@ test("real-repository corpus retries transient Windows checkout rename locks", (
 });
 
 test("real-repository corpus reports progress and preserves a partial result on repository failure", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-corpus-progress-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-corpus-progress-"));
   try {
     git(root, ["init"]);
     git(root, ["config", "user.email", "test@example.com"]);
@@ -1323,7 +1323,7 @@ test("real-repository corpus CLI accepts a bounded per-repository timeout", () =
 });
 
 test("real-repository corpus worker enforces its process timeout", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-corpus-timeout-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-corpus-timeout-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "timeout-fixture" }));
     write(root, "src/main.ts", "export const main = true;");
@@ -1382,7 +1382,7 @@ test("local server serves the UI and persists a human description", async () => 
     const endpoint = graph.nodes.find((node) => node.kind === "endpoint");
     assert.equal(endpoint.label, "GET /ping");
     const projectBriefPacket = await (await fetch(`${baseUrl}/api/brief?kind=project`)).json();
-    assert.equal(projectBriefPacket.schemaVersion, "flowpeek-brief-packet/v1");
+    assert.equal(projectBriefPacket.schemaVersion, "flopeek-brief-packet/v1");
     assert.equal(projectBriefPacket.brief.kind, "project");
     assert.equal(projectBriefPacket.brief.projectIdentity.projectId, graph.project.projectId);
     assert.equal(projectBriefPacket.brief.freshnessStatus, "current");
@@ -1394,7 +1394,7 @@ test("local server serves the UI and persists a human description", async () => 
     });
     assert.equal(handoffContextResponse.status, 200);
     const handoffContext = await handoffContextResponse.json();
-    assert.equal(handoffContext.schemaVersion, "flowpeek-handoff-context/v1");
+    assert.equal(handoffContext.schemaVersion, "flopeek-handoff-context/v1");
     assert.equal(handoffContext.budget.status, "within-budget");
     assert.ok(handoffContext.budget.estimatedCharacterCount <= handoffContext.budget.characterBudget);
     const qualityResponse = await fetch(`${baseUrl}/api/handoff-quality`, {
@@ -1404,7 +1404,7 @@ test("local server serves the UI and persists a human description", async () => 
     });
     assert.equal(qualityResponse.status, 200);
     const handoffQuality = await qualityResponse.json();
-    assert.equal(handoffQuality.schemaVersion, "flowpeek-handoff-quality/v1");
+    assert.equal(handoffQuality.schemaVersion, "flopeek-handoff-quality/v1");
     assert.equal(handoffQuality.qualityGate.status, "passed");
     assert.equal(handoffQuality.summary.agentTaskOutcomes.unavailable, 1);
     const runtimeGraph = await (await fetch(`${baseUrl}/api/graph`)).json();
@@ -1443,17 +1443,17 @@ test("local server serves the UI and persists a human description", async () => 
     const workspaceView = await (await fetch(`${baseUrl}/api/handoff-workspace`)).json();
     assert.equal(workspaceView.workspace.id, workspaceResult.workspace.id);
     const projectHome = await (await fetch(`${baseUrl}/api/project-home?concept=authentication`)).json();
-    assert.equal(projectHome.schemaVersion, "flowpeek-project-home/v1");
+    assert.equal(projectHome.schemaVersion, "flopeek-project-home/v1");
     assert.equal(projectHome.purpose.status, "available");
-    assert.equal(projectHome.conceptIndex.schemaVersion, "flowpeek-concept-index/v1");
+    assert.equal(projectHome.conceptIndex.schemaVersion, "flopeek-concept-index/v1");
     const trustAnalytics = await (await fetch(`${baseUrl}/api/trust-analytics`)).json();
-    assert.equal(trustAnalytics.schemaVersion, "flowpeek-trust-analytics/v1");
+    assert.equal(trustAnalytics.schemaVersion, "flopeek-trust-analytics/v1");
     assert.equal(trustAnalytics.project.projectId, graph.project.projectId);
     assert.equal(trustAnalytics.overallScore, null);
     assert.equal(trustAnalytics.claimBoundary.runtimeCorrectness, false);
     assert.equal(trustAnalytics.qualityEvidence.liveRepositoryAccuracy.status, "unavailable");
     const productProof = await (await fetch(`${baseUrl}/api/product-proof`)).json();
-    assert.equal(productProof.schemaVersion, "flowpeek-product-proof/v1");
+    assert.equal(productProof.schemaVersion, "flopeek-product-proof/v1");
     assert.equal(productProof.currentRepository.projectId, graph.project.projectId);
     assert.equal(productProof.headlineMetrics.auditedRelationships, 92);
     assert.equal(productProof.localBenchmark.status, "not-run");
@@ -1465,10 +1465,10 @@ test("local server serves the UI and persists a human description", async () => 
     });
     assert.equal(noteResponse.status, 201);
     const portableHandoff = await (await fetch(`${baseUrl}/api/handoff-export?format=json`)).json();
-    assert.equal(portableHandoff.schemaVersion, "flowpeek-handoff-export/v1");
+    assert.equal(portableHandoff.schemaVersion, "flopeek-handoff-export/v1");
     assert.equal(portableHandoff.notes.length, 1);
     const markdownHandoff = await (await fetch(`${baseUrl}/api/handoff-export?format=markdown`)).json();
-    assert.match(markdownHandoff.markdown, /flowpeek-handoff-json-base64:/);
+    assert.match(markdownHandoff.markdown, /flopeek-handoff-json-base64:/);
     const importResponse = await fetch(`${baseUrl}/api/handoff-imports`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1538,18 +1538,18 @@ test("local server serves the UI and persists a human description", async () => 
         assert.match((await invalidResponse.json()).error, /integer from 1 through 24/);
       }
     }
-    assert.equal(lens.schemaVersion, "flowpeek-flow-lens/v1");
+    assert.equal(lens.schemaVersion, "flopeek-flow-lens/v1");
     assert.equal(lens.flow.entryId, endpoint.id);
     assert.match(lens.flow.contextRef, /^fp:\/\/local\/.+\/flow\//);
     assert.equal(lens.steps[0].transition, null);
     assert.equal(lens.steps[1].transition.type, "handles");
     assert.equal(lens.verification.status, "unverified");
-    assert.equal(lens.semanticSuggestion.schemaVersion, "flowpeek-semantic-flow-suggestion/v1");
+    assert.equal(lens.semanticSuggestion.schemaVersion, "flopeek-semantic-flow-suggestion/v1");
     assert.equal(lens.semanticSuggestion.status, "suggested");
     assert.equal(lens.semanticSuggestion.candidate.title, "Check Ping");
     assert.equal(lens.semanticSuggestion.knowledgeClass, "derived-suggestion");
     const reviewQueue = await (await fetch(`${baseUrl}/api/semantic-review-queue?status=suggested`)).json();
-    assert.equal(reviewQueue.schemaVersion, "flowpeek-semantic-review-queue/v1");
+    assert.equal(reviewQueue.schemaVersion, "flopeek-semantic-review-queue/v1");
     assert.equal(reviewQueue.endpointCount, 1);
     assert.equal(reviewQueue.flowCatalog.total, 1);
     assert.equal(reviewQueue.flowCatalog.truncated, false);
@@ -1609,7 +1609,7 @@ test("local server serves the UI and persists a human description", async () => 
         changedPaths: [],
         verificationStatus: "not-run",
         verificationSummary: "No command was needed.",
-        actor: "flowpeek-test",
+        actor: "flopeek-test",
       }),
     });
     assert.equal(nodeTraceResponse.status, 201);
@@ -1627,7 +1627,7 @@ test("local server serves the UI and persists a human description", async () => 
         changedPaths: [],
         verificationStatus: "passed",
         verificationSummary: "The local viewer contract assertions passed.",
-        actor: "flowpeek-test",
+        actor: "flopeek-test",
       }),
     });
     assert.equal(traceResponse.status, 201);
@@ -1645,7 +1645,7 @@ test("local server serves the UI and persists a human description", async () => 
         changedPaths: [],
         verificationStatus: "passed",
         verificationSummary: "The local viewer contract assertions passed.",
-        actor: "flowpeek-test",
+        actor: "flopeek-test",
       }),
     });
     assert.equal(traceRetryResponse.status, 200);
@@ -1697,7 +1697,7 @@ test("local server serves the UI and persists a human description", async () => 
     const compactView = await (await fetch(`${baseUrl}/api/view?mode=overview`)).json();
     assert.equal(compactView.view.mode, "overview");
     assert.ok(compactView.nodes.every((node) => node.kind === "summary"));
-    assert.equal(compactView.aiContext.schemaVersion, "flowpeek-agent-context/v1");
+    assert.equal(compactView.aiContext.schemaVersion, "flopeek-agent-context/v1");
     assert.equal(compactView.aiContext.repositoryScope.source, "defaults");
     assert.equal(compactView.aiContext.repositoryScope.counts.application, 1);
     assert.ok(compactView.aiContext.resolution.internal.includes("relative imports"));
@@ -1705,7 +1705,7 @@ test("local server serves the UI and persists a human description", async () => 
     assert.equal(compactView.aiContext.coverage.summary.parsedFiles, 1);
     assert.ok(compactView.aiContext.calls.supported.includes("direct identifier calls to top-level local functions"));
     assert.ok(compactView.aiContext.interpretationRules.some((rule) => rule.includes("get_flow_projection")));
-    assert.equal(compactView.aiContext.semanticSuggestions.schemaVersion, "flowpeek-semantic-flow-suggestions/v1");
+    assert.equal(compactView.aiContext.semanticSuggestions.schemaVersion, "flopeek-semantic-flow-suggestions/v1");
     assert.equal(compactView.aiContext.semanticSuggestions.suggested, 1);
     assert.equal(compactView.aiContext.semanticSuggestions.items[0].candidate.title, "Check Ping");
     assert.equal(compactView.aiContext.agentEvidenceTrace.totalRecords, 2);
@@ -1741,7 +1741,7 @@ test("local server serves the UI and persists a human description", async () => 
       body: JSON.stringify({ id: endpoint.id, description: "Health-check endpoint." }),
     });
     assert.equal(descriptionResponse.status, 200);
-    assert.equal(safelyRead(path.join(root, ".flowpeek", "descriptions.json"))[endpoint.id], "Health-check endpoint.");
+    assert.equal(safelyRead(path.join(root, ".flopeek", "descriptions.json"))[endpoint.id], "Health-check endpoint.");
   } finally {
     if (app) await new Promise((resolve) => app.server.close(resolve));
     fs.rmSync(root, { recursive: true, force: true });
@@ -1749,7 +1749,7 @@ test("local server serves the UI and persists a human description", async () => 
 });
 
 test("serve watches a new source file and publishes a graph update without manual scan", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-live-watch-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-live-watch-"));
   let app;
   let reader;
   try {
@@ -1797,7 +1797,7 @@ test("serve watches a new source file and publishes a graph update without manua
 });
 
 test("serve exposes the same affected Flow Lens context through SSE and HTTP", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-live-context-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-live-context-"));
   let app;
   let reader;
   try {
@@ -1848,7 +1848,7 @@ test("serve exposes the same affected Flow Lens context through SSE and HTTP", a
 });
 
 test("serve reports a labeled batch of new source nodes for the live viewer", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-live-batch-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-live-batch-"));
   let app;
   let reader;
   try {
@@ -1879,7 +1879,7 @@ test("serve reports a labeled batch of new source nodes for the live viewer", as
 });
 
 test("AST analysis keeps SvelteKit aliases internal and layers dependencies", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-svelte-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-svelte-"));
   let app;
   try {
     write(root, "package.json", JSON.stringify({
@@ -1920,7 +1920,7 @@ test("AST analysis keeps SvelteKit aliases internal and layers dependencies", as
 });
 
 test("TypeScript paths and baseUrl aliases resolve to internal files", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-tsconfig-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-tsconfig-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "tsconfig-example" }));
     write(root, "tsconfig.json", JSON.stringify({
@@ -1946,7 +1946,7 @@ test("TypeScript paths and baseUrl aliases resolve to internal files", () => {
 });
 
 test("TypeScript paths inherited through tsconfig extends resolve to internal files", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-tsconfig-extends-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-tsconfig-extends-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "tsconfig-extends-example" }));
     write(root, "tsconfig.base.json", JSON.stringify({ compilerOptions: { baseUrl: "./src", paths: { "@shared/*": ["shared/*"] } } }));
@@ -1962,7 +1962,7 @@ test("TypeScript paths inherited through tsconfig extends resolve to internal fi
 });
 
 test("static Vite and Webpack aliases resolve to internal files without executing config", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-bundler-alias-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-bundler-alias-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "bundler-alias-example" }));
     write(root, "vite.config.ts", "throw new Error('config must not execute');\nimport path from 'node:path';\nconst ui = path.resolve(__dirname, 'src/ui');\nconst shared = fileURLToPath(new URL('./shared', import.meta.url));\nconst esmDir = path.dirname(fileURLToPath(import.meta.url));\nconst esm = path.resolve(esmDir, 'src/esm');\nconst cwd = path.resolve(process.cwd(), 'src/cwd');\nexport default { resolve: { alias: { '@ui': ui, '@shared': shared, '@esm': esm, '@cwd': cwd } } };");
@@ -1987,7 +1987,7 @@ test("static Vite and Webpack aliases resolve to internal files without executin
 });
 
 test("static bundler aliases use only exported configuration objects", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-exported-bundler-alias-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-exported-bundler-alias-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "exported-bundler-alias-example" }));
     write(root, "vite.config.ts", "import path from 'node:path';\nconst testFixture = { resolve: { alias: { '@fixture': path.resolve(__dirname, 'fixtures') } } };\nconst config = { resolve: { alias: [{ find: '@app', replacement: path.resolve(__dirname, 'src/app') }] } };\nexport default defineConfig(config);");
@@ -2004,7 +2004,7 @@ test("static bundler aliases use only exported configuration objects", () => {
 });
 
 test("nearest package.json imports aliases resolve literal and wildcard targets internally", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-package-imports-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-package-imports-"));
   try {
     write(root, "package.json", JSON.stringify({
       name: "package-imports-example",
@@ -2027,7 +2027,7 @@ test("nearest package.json imports aliases resolve literal and wildcard targets 
 });
 
 test("declared npm workspaces resolve package entries and literal exports internally", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-workspace-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-workspace-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "workspace-example", workspaces: ["packages/*"] }));
     write(root, "packages/core/package.json", JSON.stringify({ name: "@example/core", exports: { ".": "./src/index.ts", "./billing": "./src/billing.ts", "./features/*": "./src/features/*.ts" } }));
@@ -2049,7 +2049,7 @@ test("declared npm workspaces resolve package entries and literal exports intern
 });
 
 test("workspace package export condition trees resolve static root and nested targets", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-export-conditions-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-export-conditions-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "export-condition-example", workspaces: ["packages/*"] }));
     write(root, "packages/root/package.json", JSON.stringify({
@@ -2085,7 +2085,7 @@ test("workspace package export condition trees resolve static root and nested ta
 });
 
 test("literal pnpm workspace package entries resolve internal package imports", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-pnpm-workspace-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-pnpm-workspace-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "pnpm-workspace-example" }));
     write(root, "pnpm-workspace.yaml", "# Keep workspace declarations static.\npackages:\n  - 'packages/*'\n  - \"apps/*\"\ncatalog:\n  typescript: 5.0.0\n");
@@ -2103,7 +2103,7 @@ test("literal pnpm workspace package entries resolve internal package imports", 
 });
 
 test("inline pnpm workspace patterns honor static exclusions", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-pnpm-inline-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-pnpm-inline-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "pnpm-inline-example" }));
     write(root, "pnpm-workspace.yaml", "packages: [ 'packages/*', '!packages/ignored' ] # static paths only\n");
@@ -2123,7 +2123,7 @@ test("inline pnpm workspace patterns honor static exclusions", () => {
 });
 
 test("Yarn PnP data resolves an in-repository package without executing .pnp.cjs", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-yarn-pnp-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-yarn-pnp-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "pnp-example" }));
     write(root, ".pnp.cjs", "throw new Error('must not execute');");
@@ -2141,7 +2141,7 @@ test("Yarn PnP data resolves an in-repository package without executing .pnp.cjs
 });
 
 test("NestJS literal decorators and Fastify factory routes produce exact endpoint facts", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-frameworks-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-frameworks-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "framework-example" }));
     write(root, "src/orders/orders.controller.ts", "import { Controller as NestController, Get, Post } from '@nestjs/common';\n@NestController('orders')\nexport class OrdersController {\n  @Get(':id')\n  findOne() {}\n  @Post()\n  create() {}\n}");
@@ -2155,7 +2155,7 @@ test("NestJS literal decorators and Fastify factory routes produce exact endpoin
 });
 
 test("Python syntax analysis resolves package imports and marks decorator endpoints as likely", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-python-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-python-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "python-example" }));
     write(root, "src/payments/routes.py", "from .service import PaymentService\nfrom fastapi import APIRouter\nrouter = APIRouter()\n@router.get('/payments/{payment_id}')\ndef get_payment():\n    return PaymentService.find()\n");
@@ -2181,7 +2181,7 @@ test("Python syntax analysis resolves package imports and marks decorator endpoi
 });
 
 test("Python Flask and Blueprint route decorators use only literal HTTP method lists", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-python-flask-routes-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-python-flask-routes-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "python-flask-route-example" }));
     write(root, "src/routes.py", "from flask import Flask, Blueprint as Group\napp = Flask(__name__)\norders = Group('orders', __name__)\n\n@app.route('/health')\ndef health():\n    return {}\n\n@orders.route('/orders', methods=['POST', 'PUT'])\ndef update_orders():\n    return {}\n\n@app.route('/dynamic', methods=METHODS)\ndef dynamic():\n    return {}\n");
@@ -2194,7 +2194,7 @@ test("Python Flask and Blueprint route decorators use only literal HTTP method l
 });
 
 test("Python direct local and named-import function calls create exact symbol edges", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-python-calls-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-python-calls-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "python-call-example" }));
     write(root, "src/payments/helpers.py", "def normalize(amount):\n    return amount\n\ndef validate(amount):\n    return normalize(amount)\n");
@@ -2214,7 +2214,7 @@ test("Python direct local and named-import function calls create exact symbol ed
 });
 
 test("Next.js route handlers use their file-system routes and static fetch calls become request facts", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-next-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-next-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "next-example" }));
     write(root, "src/app/api/me/route.ts", "export const GET = async () => Response.json({ ok: true });");
@@ -2230,7 +2230,7 @@ test("Next.js route handlers use their file-system routes and static fetch calls
 });
 
 test("Next.js Flow Lenses bind each HTTP endpoint to its exact handler symbol", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-next-handlers-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-next-handlers-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "next-handler-binding" }));
     write(root, "src/app/api/payments/[paymentId]/route.ts", [
@@ -2254,7 +2254,7 @@ test("Next.js Flow Lenses bind each HTTP endpoint to its exact handler symbol", 
 });
 
 test("Next.js Flow Lens exposes only handler-specific literal request and response contracts", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-next-contract-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-next-contract-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "next-contract-example" }));
     write(root, "src/app/api/payments/route.ts", [
@@ -2270,7 +2270,7 @@ test("Next.js Flow Lens exposes only handler-specific literal request and respon
     const graph = scanRepository(root);
     const post = graph.nodes.find((node) => node.kind === "endpoint" && node.label === "POST /api/payments");
     const patch = graph.nodes.find((node) => node.kind === "endpoint" && node.label === "PATCH /api/payments");
-    assert.equal(post.contract.schemaVersion, "flowpeek-next-route-contract/v1");
+    assert.equal(post.contract.schemaVersion, "flopeek-next-route-contract/v1");
     assert.equal(post.contract.request.status, "available");
     assert.deepEqual(post.contract.request.fields.map((field) => ({ name: field.name, type: field.type, required: field.required })), [
       { name: "amount", type: "number", required: true },
@@ -2291,7 +2291,7 @@ test("Next.js Flow Lens exposes only handler-specific literal request and respon
 });
 
 test("Flow discovery is never silently capped at fifty endpoints", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-many-endpoints-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-many-endpoints-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "many-endpoints" }));
     for (let index = 1; index <= 52; index += 1) write(root, `src/app/api/items/${index}/route.ts`, "export const GET = async () => Response.json({ ok: true });");
@@ -2308,7 +2308,7 @@ test("Flow discovery is never silently capped at fifty endpoints", () => {
 });
 
 test("Next.js action routes receive deterministic action-specific semantic titles", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-action-semantics-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-action-semantics-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "action-semantics" }));
     const cases = [
@@ -2333,8 +2333,8 @@ test("Next.js action routes receive deterministic action-specific semantic title
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test("legacy descriptions migrate into the .flowpeek cache", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-cache-"));
+test("legacy descriptions migrate into the .flopeek cache", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-cache-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "cache-example" }));
     write(root, "src/legacy.service.ts", "export class LegacyService {}");
@@ -2342,12 +2342,12 @@ test("legacy descriptions migrate into the .flowpeek cache", () => {
     const graph = scanRepository(root);
     assert.equal(graph.nodes.find((node) => node.id === "file:src/legacy.service.ts").manualDescription, "Preserve this verified description.");
     saveDescription(root, "file:src/legacy.service.ts", "Updated verified description.");
-    assert.equal(safelyRead(path.join(root, ".flowpeek", "descriptions.json"))["file:src/legacy.service.ts"], "Updated verified description.");
+    assert.equal(safelyRead(path.join(root, ".flopeek", "descriptions.json"))["file:src/legacy.service.ts"], "Updated verified description.");
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test("MCP server exposes deterministic graph tools over stdio", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-mcp-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-mcp-"));
   let client;
   let transport;
   try {
@@ -2365,7 +2365,7 @@ test("MCP server exposes deterministic graph tools over stdio", async () => {
       cwd: path.join(__dirname, ".."),
       stderr: "pipe",
     });
-    client = new Client({ name: "flowpeek-test-client", version: "1.0.0" });
+    client = new Client({ name: "flopeek-test-client", version: "1.0.0" });
     await client.connect(transport);
     const tools = await client.listTools();
     assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), [
@@ -2465,7 +2465,7 @@ test("MCP server exposes deterministic graph tools over stdio", async () => {
     const scanStatusResult = await client.callTool({ name: "get_scan_status", arguments: {} });
     assert.equal(scanStatusResult.isError, undefined);
     const scanStatus = JSON.parse(scanStatusResult.content.find((item) => item.type === "text").text);
-    assert.equal(scanStatus.schemaVersion, "flowpeek-scan-outcome/v1");
+    assert.equal(scanStatus.schemaVersion, "flopeek-scan-outcome/v1");
     assert.equal(scanStatus.status, "complete");
     assert.equal(scanStatus.activeGraph.freshness, "current");
     assert.match(scanStatus.activeGraph.projectId, /^project:/);
@@ -2498,7 +2498,7 @@ test("MCP server exposes deterministic graph tools over stdio", async () => {
     const bootstrapResult = await client.callTool({ name: "get_agent_bootstrap", arguments: {} });
     assert.equal(bootstrapResult.isError, undefined);
     const bootstrap = JSON.parse(bootstrapResult.content.find((item) => item.type === "text").text);
-    assert.equal(bootstrap.schemaVersion, "flowpeek-agent-bootstrap/v1");
+    assert.equal(bootstrap.schemaVersion, "flopeek-agent-bootstrap/v1");
     assert.equal(bootstrap.project.projectId, context.project.projectId);
     assert.equal(bootstrap.graph.graphVersion, context.graphState.graphVersion);
     assert.equal(bootstrap.policy.strategy, "graph-first-with-source-fallback");
@@ -2510,13 +2510,13 @@ test("MCP server exposes deterministic graph tools over stdio", async () => {
     const trustResult = await client.callTool({ name: "get_trust_analytics", arguments: {} });
     assert.equal(trustResult.isError, undefined);
     const trust = JSON.parse(trustResult.content.find((item) => item.type === "text").text);
-    assert.equal(trust.schemaVersion, "flowpeek-trust-analytics/v1");
+    assert.equal(trust.schemaVersion, "flopeek-trust-analytics/v1");
     assert.equal(trust.project.projectId, context.project.projectId);
     assert.equal(trust.overallScore, null);
     const proofResult = await client.callTool({ name: "get_product_proof", arguments: {} });
     assert.equal(proofResult.isError, undefined);
     const proof = JSON.parse(proofResult.content.find((item) => item.type === "text").text);
-    assert.equal(proof.schemaVersion, "flowpeek-product-proof/v1");
+    assert.equal(proof.schemaVersion, "flopeek-product-proof/v1");
     assert.equal(proof.currentRepository.projectId, context.project.projectId);
     assert.equal(proof.headlineMetrics.auditedRelationships, 92);
     assert.equal(proof.localBenchmark.status, "not-run");
@@ -2529,7 +2529,7 @@ test("MCP server exposes deterministic graph tools over stdio", async () => {
     } });
     assert.equal(handoffResult.isError, undefined);
     const handoff = JSON.parse(handoffResult.content.find((item) => item.type === "text").text);
-    assert.equal(handoff.schemaVersion, "flowpeek-handoff-context/v1");
+    assert.equal(handoff.schemaVersion, "flopeek-handoff-context/v1");
     assert.equal(handoff.budget.status, "within-budget");
     assert.deepEqual(handoff.pathResolution.matched.items, ["src/payment/payment.service.ts"]);
     assert.ok(handoff.included.features.some((item) => item.id === "feature:payment"));
@@ -2548,7 +2548,7 @@ test("MCP server exposes deterministic graph tools over stdio", async () => {
       changedPaths: [],
       verificationStatus: "not-run",
       verificationSummary: "No code change or verification command was required.",
-      actor: "flowpeek-test-client",
+      actor: "flopeek-test-client",
     } });
     assert.equal(traceResult.isError, undefined);
     const trace = JSON.parse(traceResult.content.find((item) => item.type === "text").text);
@@ -2601,7 +2601,7 @@ test("MCP server exposes deterministic graph tools over stdio", async () => {
         risk: "high",
         questions: ["Which decline codes are expected?"],
       },
-      proposedBy: "flowpeek-test-client",
+      proposedBy: "flopeek-test-client",
       provider: "fixture-provider",
       rationale: "The current endpoint and service evidence support a bounded review draft.",
     } });
@@ -2622,7 +2622,7 @@ test("MCP server exposes deterministic graph tools over stdio", async () => {
         eventType,
         summary: `${eventType} fixture observation`,
         runner: "fixture-adapter",
-        actor: "flowpeek-test-client",
+        actor: "flopeek-test-client",
         observedAt: new Date(Date.UTC(2026, 6, 15, 8, 0, sequence)).toISOString(),
         ...extra,
       } });
@@ -2646,7 +2646,7 @@ test("MCP server exposes deterministic graph tools over stdio", async () => {
       changedPaths: [],
       verificationStatus: "passed",
       verificationSummary: "The MCP payment-flow contract passed.",
-      actor: "flowpeek-test-client",
+      actor: "flopeek-test-client",
     } });
     assert.equal(flowTraceResult.isError, undefined);
     const feedbackRecordResult = await client.callTool({ name: "record_semantic_suggestion_feedback", arguments: {
@@ -2716,7 +2716,7 @@ test("MCP server exposes deterministic graph tools over stdio", async () => {
     assert.deepEqual(persistedDelta.changedPaths, ["src/payment/payment.service.ts"]);
     assert.ok(refreshPayload.delta.addedNodes.some((node) => node.path === "src/payment/tax.ts" && node.kind === "file"));
     assert.match(refreshPayload.delta.limitation, /not a source diff/);
-    assert.ok(fs.existsSync(path.join(root, ".flowpeek", "graph.json")));
+    assert.ok(fs.existsSync(path.join(root, ".flopeek", "graph.json")));
   } finally {
     if (client) await client.close();
     else if (transport) await transport.close();
@@ -2725,7 +2725,7 @@ test("MCP server exposes deterministic graph tools over stdio", async () => {
 });
 
 test("package-scoped MCP exposes an explicit static subtree boundary without a repository-wide cache", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-package-mcp-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-package-mcp-"));
   let client;
   let instance;
   try {
@@ -2740,7 +2740,7 @@ test("package-scoped MCP exposes an explicit static subtree boundary without a r
     const durableSecond = scanRepository(root);
     writeGraphCache(root, durableSecond, { reason: "package-mcp-durable-second" });
     const durableDelta = readGraphDelta(root, durableFirst.state.graphVersion, durableSecond.state.graphVersion);
-    const cachePath = path.join(root, ".flowpeek", "graph.json");
+    const cachePath = path.join(root, ".flopeek", "graph.json");
     const cacheBefore = fs.readFileSync(cachePath);
     assert.ok(durableDelta);
     instance = await createMcpServer({ root, cache: true, packagePath: "apps/api" });
@@ -2749,7 +2749,7 @@ test("package-scoped MCP exposes an explicit static subtree boundary without a r
       import("@modelcontextprotocol/sdk/inMemory.js"),
     ]);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    client = new Client({ name: "flowpeek-package-mcp-client", version: "1.0.0" });
+    client = new Client({ name: "flopeek-package-mcp-client", version: "1.0.0" });
     await instance.server.connect(serverTransport);
     await client.connect(clientTransport);
 
@@ -2785,7 +2785,7 @@ test("package-scoped MCP exposes an explicit static subtree boundary without a r
 });
 
 test("package-scoped Viewer HTTP data labels the selected subtree and excludes sibling package source", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-package-viewer-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-package-viewer-"));
   let app;
   try {
     write(root, "package.json", JSON.stringify({ name: "package-viewer-example" }));
@@ -2804,15 +2804,15 @@ test("package-scoped Viewer HTTP data labels the selected subtree and excludes s
     assert.equal(view.aiContext.packageSelection.path, "apps/api");
     assert.equal(rawGraph.analysis.packageSelection.path, "apps/api");
     assert.equal(rawGraph.nodes.some((node) => node.path === "packages/core/src/core.ts"), false);
-    assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false);
+    assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
   } finally {
     if (app) await new Promise((resolve) => app.server.close(resolve));
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("invalid package scope is rejected by Viewer and MCP startup without Flowpeek metadata", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-invalid-package-surface-"));
+test("invalid package scope is rejected by Viewer and MCP startup without Flopeek metadata", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-invalid-package-surface-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "invalid-package-surface" }));
     await assert.rejects(
@@ -2823,14 +2823,14 @@ test("invalid package scope is rejected by Viewer and MCP startup without Flowpe
       () => createMcpServer({ root, cache: true, packagePath: "../outside" }),
       /packagePath must not contain parent-directory traversal/,
     );
-    assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false);
+    assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
 test("bounded MCP cancellation preserves the current graph and exposes stale-unverified readiness", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-mcp-cancel-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-mcp-cancel-"));
   let client;
   let instance;
   try {
@@ -2841,7 +2841,7 @@ test("bounded MCP cancellation preserves the current graph and exposes stale-unv
       import("@modelcontextprotocol/sdk/inMemory.js"),
     ]);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    client = new Client({ name: "flowpeek-mcp-cancellation-client", version: "1.0.0" });
+    client = new Client({ name: "flopeek-mcp-cancellation-client", version: "1.0.0" });
     await instance.server.connect(serverTransport);
     await client.connect(clientTransport);
     const before = JSON.parse((await client.callTool({ name: "get_agent_bootstrap", arguments: {} })).content.find((item) => item.type === "text").text);
@@ -2876,7 +2876,7 @@ test("bounded MCP cancellation preserves the current graph and exposes stale-unv
 });
 
 test("cache-disabled HTTP and MCP sessions never read a persisted project delta", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-session-delta-isolation-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-session-delta-isolation-"));
   let app;
   let client;
   let instance;
@@ -2903,7 +2903,7 @@ test("cache-disabled HTTP and MCP sessions never read a persisted project delta"
       import("@modelcontextprotocol/sdk/inMemory.js"),
     ]);
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    client = new Client({ name: "flowpeek-session-delta-client", version: "1.0.0" });
+    client = new Client({ name: "flopeek-session-delta-client", version: "1.0.0" });
     await instance.server.connect(serverTransport);
     await client.connect(clientTransport);
 
@@ -2938,12 +2938,13 @@ test("cache-disabled HTTP and MCP sessions never read a persisted project delta"
 });
 
 test("repository scope defaults keep test and fixture endpoints out of application flows", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-scope-defaults-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-scope-defaults-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "scope-defaults" }));
     write(root, "src/orders.routes.ts", "router.get('/orders', () => ({ ok: true }));");
     write(root, "test/orders.routes.spec.ts", "router.put('/test-orders', () => ({ ok: true }));");
     write(root, "test/fixtures/orders.routes.ts", "router.post('/fixture-orders', () => ({ ok: true }));");
+    write(root, ".flowpeek/legacy.routes.ts", "router.delete('/legacy-cache', () => ({ ok: true }));");
     const graph = scanRepository(root);
     assert.deepEqual(graph.flows.map((flow) => flow.title), ["GET /orders"]);
     assert.deepEqual(graph.diagnosticFlows.map((flow) => flow.title).sort(), ["GET /orders", "POST /fixture-orders", "PUT /test-orders"]);
@@ -2953,7 +2954,7 @@ test("repository scope defaults keep test and fixture endpoints out of applicati
     assert.equal(graph.nodes.find((node) => node.path === "test/orders.routes.spec.ts" && node.kind === "file").sourceScope, "test");
     assert.equal(graph.nodes.find((node) => node.path === "test/fixtures/orders.routes.ts" && node.kind === "file").sourceScope, "fixture");
     assert.deepEqual(graph.analysis.repositoryScope.counts, { application: 1, test: 1, fixture: 1, generated: 0, excluded: 0 });
-    const cliRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-no-cache-cli-"));
+    const cliRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-no-cache-cli-"));
     write(cliRoot, "package.json", JSON.stringify({ name: "no-cache-cli" }));
     write(cliRoot, "src/orders.routes.ts", "router.get('/orders', () => ({ ok: true }));");
     const cliGraph = JSON.parse(execFileSync(process.execPath, [path.join(__dirname, "..", "src", "cli.js"), "scan", cliRoot, "--json", "--no-cache"], { encoding: "utf8" }));
@@ -2962,13 +2963,13 @@ test("repository scope defaults keep test and fixture endpoints out of applicati
     assert.match(cliGraph.project.projectId, /^session:/);
     assert.match(cliGraph.project.identity.canonicalProjectId, /^project:/);
     assert.equal(cliGraph.analysis.cacheState.status, "disabled");
-    assert.equal(fs.existsSync(path.join(cliRoot, ".flowpeek")), false, "--no-cache must not create Flowpeek cache or identity metadata");
+    assert.equal(fs.existsSync(path.join(cliRoot, ".flopeek")), false, "--no-cache must not create Flopeek cache or identity metadata");
     fs.rmSync(cliRoot, { recursive: true, force: true });
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test("route-like nodes without a supported static entry fact do not create Flow Lenses", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-non-http-entry-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-non-http-entry-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "non-http-entry" }));
     write(root, "src/orders.controller.ts", "export class OrdersController { list() { return []; } }");
@@ -2980,10 +2981,10 @@ test("route-like nodes without a supported static entry fact do not create Flow 
 });
 
 test("repository scope config applies roots, exclusions, generated diagnostics, and entry policy", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-scope-config-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-scope-config-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "scope-config" }));
-    write(root, ".flowpeek/config.json", JSON.stringify({
+    write(root, ".flopeek/config.json", JSON.stringify({
       schemaVersion: 1,
       sourceRoots: ["app"],
       testRoots: ["verification"],
@@ -3004,29 +3005,29 @@ test("repository scope config applies roots, exclusions, generated diagnostics, 
     assert.equal(graph.nodes.some((node) => node.path === "outside/routes.ts"), false);
     assert.deepEqual(graph.analysis.repositoryScope.counts, { application: 1, test: 1, fixture: 1, generated: 1, excluded: 2 });
     assert.equal(graph.analysis.repositoryScope.source, "config");
-    assert.equal(graph.analysis.repositoryScope.configPath, ".flowpeek/config.json");
+    assert.equal(graph.analysis.repositoryScope.configPath, ".flopeek/config.json");
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test("repository scope rejects invalid schema and field types before cache writes", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-scope-invalid-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-scope-invalid-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "scope-invalid" }));
     write(root, "src/live.routes.ts", "router.get('/live', () => ({ ok: true }));");
     const valid = scanRepository(root);
     writeGraphCache(root, valid);
-    const cached = fs.readFileSync(path.join(root, ".flowpeek", "graph.json"), "utf8");
-    write(root, ".flowpeek/config.json", JSON.stringify({ schemaVersion: 2 }));
+    const cached = fs.readFileSync(path.join(root, ".flopeek", "graph.json"), "utf8");
+    write(root, ".flopeek/config.json", JSON.stringify({ schemaVersion: 2 }));
     assert.throws(() => scanRepository(root), /schemaVersion must be 1/);
-    assert.equal(fs.readFileSync(path.join(root, ".flowpeek", "graph.json"), "utf8"), cached);
-    write(root, ".flowpeek/config.json", JSON.stringify({ schemaVersion: 1, sourceRoots: "src" }));
+    assert.equal(fs.readFileSync(path.join(root, ".flopeek", "graph.json"), "utf8"), cached);
+    write(root, ".flopeek/config.json", JSON.stringify({ schemaVersion: 1, sourceRoots: "src" }));
     assert.throws(() => scanRepository(root), /sourceRoots must be an array/);
     assert.equal(readGraphCache(root)?.project.name, "scope-invalid");
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test("incremental repository scope refresh reclassifies retained source facts", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-scope-incremental-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-scope-incremental-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "scope-incremental" }));
     write(root, "src/live.routes.ts", "router.get('/live', () => ({ ok: true }));");
@@ -3034,8 +3035,8 @@ test("incremental repository scope refresh reclassifies retained source facts", 
     const scanner = createRepositoryScanner(root);
     const initial = scanner.scan();
     assert.deepEqual(initial.flows.map((flow) => flow.title), ["GET /live"]);
-    write(root, ".flowpeek/config.json", JSON.stringify({ schemaVersion: 1, flowEntries: { fixtures: true } }));
-    const refreshed = scanner.scan([".flowpeek/config.json"]);
+    write(root, ".flopeek/config.json", JSON.stringify({ schemaVersion: 1, flowEntries: { fixtures: true } }));
+    const refreshed = scanner.scan([".flopeek/config.json"]);
     assert.equal(refreshed.analysis.refresh.mode, "reconciled");
     assert.equal(refreshed.analysis.refresh.scopeChanged, true);
     assert.deepEqual(refreshed.flows.map((flow) => flow.title).sort(), ["GET /live", "POST /fixture"]);
@@ -3044,7 +3045,7 @@ test("incremental repository scope refresh reclassifies retained source facts", 
 });
 
 test("local API exposes scope metadata and diagnostic fixture flows", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-scope-api-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-scope-api-"));
   let app;
   try {
     write(root, "package.json", JSON.stringify({ name: "scope-api" }));
@@ -3066,7 +3067,7 @@ test("local API exposes scope metadata and diagnostic fixture flows", async () =
 });
 
 test("serve watches repository scope configuration changes", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-scope-watch-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-scope-watch-"));
   let app;
   let reader;
   try {
@@ -3079,7 +3080,7 @@ test("serve watches repository scope configuration changes", async () => {
     reader = eventResponse.body.getReader();
     const events = createSseEventReader(reader);
     await events.next((event) => event.event === "ready");
-    write(root, ".flowpeek/config.json", JSON.stringify({ schemaVersion: 1, flowEntries: { fixtures: true } }));
+    write(root, ".flopeek/config.json", JSON.stringify({ schemaVersion: 1, flowEntries: { fixtures: true } }));
     const event = await events.next((candidate) => candidate.event === "graph");
     const update = JSON.parse(event.data);
     assert.equal(update.reason, "filesystem");
@@ -3115,38 +3116,38 @@ test("graph schema validates the v5 contract fixture and migrates v4 graph evide
 });
 
 test("graph cache reports malformed, unsupported, and wrong-project payloads without serving them", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-cache-validation-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-cache-validation-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "cache-validation" }));
     write(root, "src/example.ts", "export const example = true;");
     const graph = scanRepository(root);
     writeGraphCache(root, graph);
     assert.equal(readGraphCacheResult(root).status, "valid");
-    write(root, ".flowpeek/graph.json", "{");
+    write(root, ".flopeek/graph.json", "{");
     const malformed = readGraphCacheResult(root);
     assert.equal(malformed.status, "invalid");
     assert.equal(malformed.diagnostics[0].code, "invalid-json");
     const unsupported = { ...graph, schemaVersion: 99 };
-    write(root, ".flowpeek/graph.json", JSON.stringify(unsupported));
+    write(root, ".flopeek/graph.json", JSON.stringify(unsupported));
     assert.equal(readGraphCacheResult(root).diagnostics[0].code, "unsupported-schema-version");
     const wrongProject = { ...graph, project: { ...graph.project, root: "C:/another-project" } };
-    write(root, ".flowpeek/graph.json", JSON.stringify(wrongProject));
+    write(root, ".flopeek/graph.json", JSON.stringify(wrongProject));
     assert.equal(readGraphCacheResult(root).diagnostics[0].code, "wrong-project-root");
     const wrongIdentity = { ...graph, project: { ...graph.project, projectId: "project:another" } };
-    write(root, ".flowpeek/graph.json", JSON.stringify(wrongIdentity));
+    write(root, ".flopeek/graph.json", JSON.stringify(wrongIdentity));
     assert.equal(readGraphCacheResult(root, { expectedProjectId: graph.project.projectId }).diagnostics[0].code, "wrong-project-id");
     assert.equal(readGraphCache(root, { expectedProjectId: graph.project.projectId }), null);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test("atomic graph cache writes retry transient locks and preserve prior data on failure", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-cache-atomic-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-cache-atomic-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "cache-atomic" }));
     write(root, "src/example.ts", "export const example = true;");
     const previous = scanRepository(root);
     writeGraphCache(root, previous);
-    const before = fs.readFileSync(path.join(root, ".flowpeek", "graph.json"), "utf8");
+    const before = fs.readFileSync(path.join(root, ".flopeek", "graph.json"), "utf8");
     const next = { ...scanRepository(root), generatedAt: "2026-07-14T12:00:00.000Z" };
     let renameAttempts = 0;
     const written = writeGraphCache(root, next, {
@@ -3166,10 +3167,10 @@ test("atomic graph cache writes retry transient locks and preserve prior data on
     assert.equal(written.status, "written");
     assert.equal(written.attempts, 2);
     assert.equal(readGraphCache(root).generatedAt, next.generatedAt);
-    const preserved = fs.readFileSync(path.join(root, ".flowpeek", "graph.json"), "utf8");
+    const preserved = fs.readFileSync(path.join(root, ".flopeek", "graph.json"), "utf8");
     assert.notEqual(preserved, before);
     assert.throws(() => writeGraphCache(root, { ...next, nodes: null }), GraphCacheError);
-    assert.equal(fs.readFileSync(path.join(root, ".flowpeek", "graph.json"), "utf8"), preserved);
+    assert.equal(fs.readFileSync(path.join(root, ".flopeek", "graph.json"), "utf8"), preserved);
     assert.throws(() => writeGraphCache(root, { ...next, generatedAt: "2026-07-14T12:01:00.000Z" }, {
       attempts: 2,
       retryDelayMs: 0,
@@ -3180,13 +3181,13 @@ test("atomic graph cache writes retry transient locks and preserve prior data on
         throw error;
       },
     }), /previous cache was preserved/);
-    assert.equal(fs.readFileSync(path.join(root, ".flowpeek", "graph.json"), "utf8"), preserved);
-    assert.equal(fs.readdirSync(path.join(root, ".flowpeek")).some((name) => name.endsWith(".tmp")), false);
+    assert.equal(fs.readFileSync(path.join(root, ".flopeek", "graph.json"), "utf8"), preserved);
+    assert.equal(fs.readdirSync(path.join(root, ".flopeek")).some((name) => name.endsWith(".tmp")), false);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test("atomic graph cache writes use bounded backoff for transient Windows locks", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-cache-backoff-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-cache-backoff-"));
   try {
     const target = path.join(root, "records.json");
     const waits = [];
@@ -3212,7 +3213,7 @@ test("atomic graph cache writes use bounded backoff for transient Windows locks"
 });
 
 test("project identity persists across moves and supports an explicit configured ID", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-project-identity-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-project-identity-"));
   const moved = `${root}-moved`;
   try {
     write(root, "package.json", JSON.stringify({ name: "identity-example" }));
@@ -3220,11 +3221,11 @@ test("project identity persists across moves and supports an explicit configured
     const first = scanRepository(root);
     assert.match(first.project.projectId, /^project:/);
     assert.equal(first.project.identity.source, "generated");
-    assert.ok(fs.existsSync(path.join(root, ".flowpeek", "project.json")));
+    assert.ok(fs.existsSync(path.join(root, ".flopeek", "project.json")));
     fs.renameSync(root, moved);
     const movedGraph = scanRepository(moved);
     assert.equal(movedGraph.project.projectId, first.project.projectId);
-    write(moved, ".flowpeek/config.json", JSON.stringify({ schemaVersion: 1, projectId: "project:customer-billing" }));
+    write(moved, ".flopeek/config.json", JSON.stringify({ schemaVersion: 1, projectId: "project:customer-billing" }));
     const configured = scanRepository(moved);
     assert.equal(configured.project.projectId, "project:customer-billing");
     assert.equal(configured.project.identity.source, "configured");
@@ -3232,7 +3233,7 @@ test("project identity persists across moves and supports an explicit configured
 });
 
 test("graph versions persist across restart and record topology-neutral source edits", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-versioned-state-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-versioned-state-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "versioned-state" }));
     write(root, "src/payment.ts", "export function pay() { return true; }\n");
@@ -3275,7 +3276,7 @@ test("graph versions persist across restart and record topology-neutral source e
 });
 
 test("changed contexts retain a content-only PHP view as a file-level context", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-php-view-context-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-php-view-context-"));
   let app;
   try {
     write(root, "package.json", JSON.stringify({ name: "php-view-context" }));
@@ -3309,13 +3310,13 @@ test("changed contexts retain a content-only PHP view as a file-level context", 
 });
 
 test("persistent full refresh derives adjacent delta paths from the prior Git revision", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-delta-provenance-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-delta-provenance-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "delta-provenance" }));
     write(root, "src/payment.ts", "export function pay() { return true; }\n");
     git(root, ["init", "--quiet"]);
-    git(root, ["config", "user.email", "flowpeek@example.test"]);
-    git(root, ["config", "user.name", "Flowpeek Test"]);
+    git(root, ["config", "user.email", "flopeek@example.test"]);
+    git(root, ["config", "user.name", "Flopeek Test"]);
     git(root, ["add", "."]);
     git(root, ["commit", "--quiet", "-m", "baseline"]);
     const first = scanRepository(root);
@@ -3329,7 +3330,7 @@ test("persistent full refresh derives adjacent delta paths from the prior Git re
 });
 
 test("changed contexts connect a source edit to the current HTTP Flow Lens", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-changed-contexts-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-changed-contexts-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "changed-contexts" }));
     write(root, "src/orders.routes.ts", "import { submit } from './orders.service';\nrouter.post('/orders', () => submit());");
@@ -3351,7 +3352,7 @@ test("changed contexts connect a source edit to the current HTTP Flow Lens", () 
     assert.match(flow.flowContextRef, /^fp:\/\/local\/.+\/flow\//);
     assert.ok(flow.flowComparisonAvailable);
     const comparison = getFlowComparison(second, flow.id, { fromVersion: 1, toVersion: 2 });
-    assert.equal(comparison.schemaVersion, "flowpeek-flow-comparison/v1");
+    assert.equal(comparison.schemaVersion, "flopeek-flow-comparison/v1");
     assert.equal(comparison.available, true);
     assert.equal(comparison.comparison.status, "affected");
     assert.equal(comparison.comparison.before.project.graphVersion, 1);
@@ -3363,7 +3364,7 @@ test("changed contexts connect a source edit to the current HTTP Flow Lens", () 
 });
 
 test("Flow Lens comparison retains an added static step without reconstructing old code", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-flow-comparison-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-flow-comparison-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "flow-comparison" }));
     write(root, "src/orders.routes.ts", "import { submit } from './orders.service';\nrouter.post('/orders', () => submit());");
@@ -3388,7 +3389,7 @@ test("Flow Lens comparison retains an added static step without reconstructing o
 });
 
 test("Flow Context Cards resolve current, stale, historical, and unresolved refs without source contents", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-flow-context-card-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-flow-context-card-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "flow-context-card" }));
     write(root, "src/orders.routes.ts", "import { submit } from './orders.service';\nrouter.post('/orders', () => submit());");
@@ -3399,8 +3400,8 @@ test("Flow Context Cards resolve current, stale, historical, and unresolved refs
     writeGraphCache(root, first, { reason: "initial" });
     const flowId = "flow:endpoint:src/orders.routes.ts:POST:/orders";
     const packet = getFlowContextCard(first, flowId);
-    assert.equal(packet.schemaVersion, "flowpeek-context-packet/v1");
-    assert.equal(packet.card.schemaVersion, "flowpeek-context/v1");
+    assert.equal(packet.schemaVersion, "flopeek-context-packet/v1");
+    assert.equal(packet.card.schemaVersion, "flopeek-context/v1");
     assert.equal(packet.card.kind, "flow");
     assert.equal(packet.card.project.graphVersion, 1);
     assert.match(packet.card.contextRef, /^fp:\/\/local\/.+\/flow\//);
@@ -3437,7 +3438,7 @@ test("Flow Context Cards resolve current, stale, historical, and unresolved refs
 });
 
 test("Context Cards resolve current, stale, historical, and successor-candidate node references without source contents", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-context-card-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-context-card-"));
   try {
     write(root, "package.json", JSON.stringify({ name: "context-card-example" }));
     write(root, "src/payment.ts", "export function authorize() { return true; }\n");
@@ -3448,8 +3449,8 @@ test("Context Cards resolve current, stale, historical, and successor-candidate 
     const oldSymbolId = "symbol:src/payment.ts:function:authorize";
     const filePacket = getContextCard(first, fileId);
     const oldSymbolPacket = getContextCard(first, oldSymbolId);
-    assert.equal(filePacket.schemaVersion, "flowpeek-context-packet/v1");
-    assert.equal(filePacket.card.schemaVersion, "flowpeek-context/v1");
+    assert.equal(filePacket.schemaVersion, "flopeek-context-packet/v1");
+    assert.equal(filePacket.card.schemaVersion, "flopeek-context/v1");
     assert.equal(filePacket.card.project.graphVersion, 1);
     assert.match(filePacket.card.contextRef, /^fp:\/\/local\//);
     assert.equal(JSON.stringify(filePacket).includes("return true"), false);
@@ -3487,14 +3488,14 @@ test("Context Cards resolve current, stale, historical, and successor-candidate 
 });
 
 test("local API reports invalid cache diagnostics while serving the current validated graph", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-cache-api-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-cache-api-"));
   let app;
   try {
     write(root, "package.json", JSON.stringify({ name: "cache-api" }));
     write(root, "src/live.routes.ts", "router.get('/live', () => ({ ok: true }));");
     app = await startServer({ root, port: 0 });
     const baseUrl = `http://127.0.0.1:${app.port}`;
-    write(root, ".flowpeek/graph.json", "{");
+    write(root, ".flopeek/graph.json", "{");
     const cache = await (await fetch(`${baseUrl}/api/cache`)).json();
     assert.equal(cache.status, "invalid");
     assert.equal(cache.diagnostics[0].code, "invalid-json");
@@ -3505,7 +3506,7 @@ test("local API reports invalid cache diagnostics while serving the current vali
     assert.equal(context.cache.graphSchemaVersion, 5);
     assert.equal(context.graphState.graphVersion, 1);
     const bootstrap = await (await fetch(`${baseUrl}/api/agent-bootstrap`)).json();
-    assert.equal(bootstrap.schemaVersion, "flowpeek-agent-bootstrap/v1");
+    assert.equal(bootstrap.schemaVersion, "flopeek-agent-bootstrap/v1");
     assert.equal(bootstrap.project.projectId, graph.project.projectId);
     assert.equal(bootstrap.graph.graphVersion, context.graphState.graphVersion);
   } finally {
@@ -3515,7 +3516,7 @@ test("local API reports invalid cache diagnostics while serving the current vali
 });
 
 test("bounded local server reports stale-unverified fallback instead of serving a partial graph", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-bounded-server-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-bounded-server-"));
   let app;
   try {
     write(root, "package.json", JSON.stringify({ name: "bounded-server" }));
@@ -3523,12 +3524,12 @@ test("bounded local server reports stale-unverified fallback instead of serving 
     write(root, "src/orders.service.ts", "export function listOrders() { return []; }");
     const baseline = scanRepository(root);
     writeGraphCache(root, baseline, { reason: "bounded-server-baseline" });
-    const cacheBefore = fs.readFileSync(path.join(root, ".flowpeek", "graph.json"));
+    const cacheBefore = fs.readFileSync(path.join(root, ".flopeek", "graph.json"));
 
     app = await startServer({ root, port: 0, maxFiles: 1 });
     const baseUrl = `http://127.0.0.1:${app.port}`;
     const scanStatus = await (await fetch(`${baseUrl}/api/scan-status`)).json();
-    assert.equal(scanStatus.schemaVersion, "flowpeek-scan-outcome/v1");
+    assert.equal(scanStatus.schemaVersion, "flopeek-scan-outcome/v1");
     assert.equal(scanStatus.status, "partial-by-budget");
     assert.equal(scanStatus.activeGraph.source, "last-complete-cache");
     assert.equal(scanStatus.activeGraph.freshness, "stale-unverified");
@@ -3543,7 +3544,7 @@ test("bounded local server reports stale-unverified fallback instead of serving 
     });
     assert.equal(cancellationResponse.status, 409);
     assert.equal((await cancellationResponse.json()).reason, "no-scan-running");
-    assert.deepEqual(fs.readFileSync(path.join(root, ".flowpeek", "graph.json")), cacheBefore);
+    assert.deepEqual(fs.readFileSync(path.join(root, ".flopeek", "graph.json")), cacheBefore);
   } finally {
     if (app) await new Promise((resolve) => app.server.close(resolve));
     fs.rmSync(root, { recursive: true, force: true });
@@ -3551,7 +3552,7 @@ test("bounded local server reports stale-unverified fallback instead of serving 
 });
 
 test("bounded HTTP cancellation emits one authoritative SSE terminal outcome and retains the complete graph", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-http-cancel-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-http-cancel-"));
   let app;
   let reader;
   try {
@@ -3602,7 +3603,7 @@ test("bounded HTTP cancellation emits one authoritative SSE terminal outcome and
 });
 
 test("SSE stays available while the initial bounded scan is still building its first graph", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-startup-sse-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-startup-sse-"));
   const port = await reserveLoopbackPort();
   let app;
   let reader;
@@ -3640,7 +3641,7 @@ test("SSE stays available while the initial bounded scan is still building its f
 });
 
 test("a filesystem change during a bounded manual scan is reconciled after the active operation", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-manual-watch-race-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-manual-watch-race-"));
   let app;
   let reader;
   try {
@@ -3688,8 +3689,8 @@ test("a filesystem change during a bounded manual scan is reconciled after the a
 });
 
 test("bounded local server preserves its active graph when a repository switch cannot produce evidence", async () => {
-  const activeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-active-server-"));
-  const candidateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-candidate-server-"));
+  const activeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-active-server-"));
+  const candidateRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-candidate-server-"));
   let app;
   let reader;
   try {
@@ -3731,7 +3732,7 @@ test("bounded local server preserves its active graph when a repository switch c
 });
 
 test("submitting the active repository reuses the current no-cache scan session", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-same-root-server-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-same-root-server-"));
   let app;
   try {
     write(root, "package.json", JSON.stringify({ name: "same-root-server" }));

@@ -6,9 +6,9 @@ Accepted for Iteration 19.
 
 ## Decision
 
-Flowpeek evaluates handoff quality from explicit, versioned benchmark cases rather than an opaque product score. The committed legacy fixture combines ambiguous `manager`/`helper` naming, two HTTP handlers in one route file, indirect static calls, a cross-feature notification path, and related tests. Its parser relationships remain part of the existing precision/recall corpus.
+Flopeek evaluates handoff quality from explicit, versioned benchmark cases rather than an opaque product score. The committed legacy fixture combines ambiguous `manager`/`helper` naming, two HTTP handlers in one route file, indirect static calls, a cross-feature notification path, and related tests. Its parser relationships remain part of the existing precision/recall corpus.
 
-`flowpeek-handoff-quality/v1` reports, per case:
+`flopeek-handoff-quality/v1` reports, per case:
 
 - deterministic inspection stages needed to reach the declared target;
 - observed Context Packet composition time, as non-gating host-specific evidence;
@@ -21,7 +21,7 @@ Flowpeek evaluates handoff quality from explicit, versioned benchmark cases rath
 
 The deterministic gate passes only when every declared target is retrieved, every packet remains within budget, every returned evidence ref resolves, and every supplied stale ref is detected. Wall-clock timing is never a threshold because host performance varies.
 
-Fixture retrieval success is not an AI coding-task result. An agent-declared pass remains audit metadata, not independent proof. Supplied human/runtime evidence requires a resolvable Context Ref, but ref resolution proves evidence identity rather than task correctness. Flowpeek does not infer task success from context retrieval, test names, or source topology, and does not claim runtime behavior unless runtime evidence is supplied explicitly.
+Fixture retrieval success is not an AI coding-task result. An agent-declared pass remains audit metadata, not independent proof. Supplied human/runtime evidence requires a resolvable Context Ref, but ref resolution proves evidence identity rather than task correctness. Flopeek does not infer task success from context retrieval, test names, or source topology, and does not claim runtime behavior unless runtime evidence is supplied explicitly.
 
 ## Portability and safety
 

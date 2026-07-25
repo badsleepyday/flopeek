@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "flowpeek-runner-adapter-fixture/v1",
+  "schemaVersion": "flopeek-runner-adapter-fixture/v1",
   "runner": "fixture-adapter",
   "actor": "CI runner",
   "runId": "fixture-failing-run",

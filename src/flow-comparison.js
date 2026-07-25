@@ -1,7 +1,7 @@
 const { createFlowProjection } = require("./flow-lens");
 
-const FLOW_COMPARISON_SCHEMA = "flowpeek-flow-comparison/v1";
-const FLOW_LENS_SNAPSHOT_SCHEMA = "flowpeek-flow-lens-snapshot/v1";
+const FLOW_COMPARISON_SCHEMA = "flopeek-flow-comparison/v1";
+const FLOW_LENS_SNAPSHOT_SCHEMA = "flopeek-flow-lens-snapshot/v1";
 const MAX_FLOW_COMPARISONS = 12;
 
 function uniqueSorted(values) {
@@ -136,7 +136,7 @@ function flowComparisonResult(graph, delta, flowId) {
       ...base,
       available: false,
       comparison: null,
-      limitation: "This flow was not captured as an affected flow in the retained adjacent delta. Flowpeek does not reconstruct an old Flow Lens from the current graph or runtime behavior.",
+      limitation: "This flow was not captured as an affected flow in the retained adjacent delta. Flopeek does not reconstruct an old Flow Lens from the current graph or runtime behavior.",
     };
   }
   return {

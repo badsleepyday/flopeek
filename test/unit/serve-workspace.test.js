@@ -48,7 +48,7 @@ test("port fallback skips occupied and OS-reserved loopback ports", async () => 
 });
 
 test("serve keeps an occupied instance alive and registers multiple project services in one workspace", async () => {
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-serve-workspace-"));
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-serve-workspace-"));
   const registryRoot = path.join(temporary, "registry");
   const firstRoot = repository(temporary, "orders-service");
   const secondRoot = repository(temporary, "payments-service");
@@ -67,7 +67,7 @@ test("serve keeps an occupied instance alive and registers multiple project serv
     assert.equal(firstHealth.workspaceId, "commerce-platform");
 
     const workspace = await (await fetch(`http://127.0.0.1:${second.port}/api/serve-workspace`)).json();
-    assert.equal(workspace.schemaVersion, "flowpeek-serve-workspace/v1");
+    assert.equal(workspace.schemaVersion, "flopeek-serve-workspace/v1");
     assert.equal(workspace.activeMemberCount, 2);
     assert.equal(workspace.projectIds.length, 2);
     assert.deepEqual(workspace.members.map((member) => member.service.label), ["orders", "payments"]);
@@ -86,7 +86,7 @@ test("serve keeps an occupied instance alive and registers multiple project serv
 });
 
 test("strict port mode reports collision and never stops the existing server", async () => {
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-strict-port-"));
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-strict-port-"));
   const registryRoot = path.join(temporary, "registry");
   const firstRoot = repository(temporary, "first-service");
   const secondRoot = repository(temporary, "second-service");

@@ -4,10 +4,10 @@ const os = require("node:os");
 const path = require("node:path");
 const { findPlatform, platformRegistry } = require("./agent-integration-registry");
 
-const AGENT_INTEGRATION_MANIFEST_SCHEMA = "flowpeek-agent-integrations/v1";
-const MANAGED_BLOCK_START = "# >>> flowpeek managed MCP >>>";
-const MANAGED_BLOCK_END = "# <<< flowpeek managed MCP <<<";
-const CANONICAL_SKILL = path.resolve(__dirname, "..", "integrations", "skills", "flowpeek");
+const AGENT_INTEGRATION_MANIFEST_SCHEMA = "flopeek-agent-integrations/v1";
+const MANAGED_BLOCK_START = "# >>> flopeek managed MCP >>>";
+const MANAGED_BLOCK_END = "# <<< flopeek managed MCP <<<";
+const CANONICAL_SKILL = path.resolve(__dirname, "..", "integrations", "skills", "flopeek");
 const TRANSIENT_RENAME_CODES = new Set(["EACCES", "EBUSY", "EPERM"]);
 
 function normalizeRelative(value) {
@@ -68,14 +68,14 @@ function directoryHash(directory) {
 }
 
 function mcpEntry() {
-  return { command: "flowpeek", args: ["mcp", "."] };
+  return { command: "flopeek", args: ["mcp", "."] };
 }
 
 function managedTomlBlock() {
   return [
     MANAGED_BLOCK_START,
-    "[mcp_servers.flowpeek]",
-    'command = "flowpeek"',
+    "[mcp_servers.flopeek]",
+    'command = "flopeek"',
     'args = ["mcp", "."]',
     MANAGED_BLOCK_END,
   ].join(os.EOL);
@@ -133,11 +133,11 @@ function readJsonConfig(file) {
 function planSkill(root, platform, action, canonicalHash) {
   const target = path.join(root, normalizeRelative(platform.skillDirectory));
   const exists = fs.existsSync(target);
-  if (exists && !fs.statSync(target).isDirectory()) return { platform: platform.id, kind: "skill", path: target, status: "conflict", reason: "The Flowpeek skill target exists but is not a directory." };
+  if (exists && !fs.statSync(target).isDirectory()) return { platform: platform.id, kind: "skill", path: target, status: "conflict", reason: "The Flopeek skill target exists but is not a directory." };
   if (action === "install") {
     if (!exists) return { platform: platform.id, kind: "skill", path: target, status: "create" };
     if (directoryHash(target) === canonicalHash) return { platform: platform.id, kind: "skill", path: target, status: "unchanged" };
-    return { platform: platform.id, kind: "skill", path: target, status: "conflict", reason: "An unmanaged or modified Flowpeek skill already exists." };
+    return { platform: platform.id, kind: "skill", path: target, status: "conflict", reason: "An unmanaged or modified Flopeek skill already exists." };
   }
   if (!exists) return { platform: platform.id, kind: "skill", path: target, status: "absent" };
   if (directoryHash(target) === canonicalHash) return { platform: platform.id, kind: "skill", path: target, status: "remove" };
@@ -158,18 +158,18 @@ function planTomlConfig(root, platform, action) {
   const content = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
   const range = tomlManagedRange(content);
   const expected = managedTomlBlock();
-  if (range?.invalid) return { platform: platform.id, kind: "mcp", path: file, status: "conflict", reason: "Flowpeek managed-block markers are incomplete." };
-  if (!range && content.includes("[mcp_servers.flowpeek]")) return { platform: platform.id, kind: "mcp", path: file, status: "conflict", reason: "An unmanaged Flowpeek MCP entry already exists." };
+  if (range?.invalid) return { platform: platform.id, kind: "mcp", path: file, status: "conflict", reason: "Flopeek managed-block markers are incomplete." };
+  if (!range && content.includes("[mcp_servers.flopeek]")) return { platform: platform.id, kind: "mcp", path: file, status: "conflict", reason: "An unmanaged Flopeek MCP entry already exists." };
   if (action === "install") {
     if (!range) {
       const separator = content && !content.endsWith("\n") && !content.endsWith("\r") ? os.EOL + os.EOL : content ? os.EOL : "";
       return { platform: platform.id, kind: "mcp", path: file, status: "create", content: `${content}${separator}${expected}${os.EOL}` };
     }
     if (range.text.split("\r\n").join("\n") === expected.split("\r\n").join("\n")) return { platform: platform.id, kind: "mcp", path: file, status: "unchanged" };
-    return { platform: platform.id, kind: "mcp", path: file, status: "conflict", reason: "The managed Flowpeek MCP block was modified." };
+    return { platform: platform.id, kind: "mcp", path: file, status: "conflict", reason: "The managed Flopeek MCP block was modified." };
   }
   if (!range) return { platform: platform.id, kind: "mcp", path: file, status: "absent" };
-  if (range.text.split("\r\n").join("\n") !== expected.split("\r\n").join("\n")) return { platform: platform.id, kind: "mcp", path: file, status: "conflict", reason: "The managed Flowpeek MCP block was modified; it will not be removed." };
+  if (range.text.split("\r\n").join("\n") !== expected.split("\r\n").join("\n")) return { platform: platform.id, kind: "mcp", path: file, status: "conflict", reason: "The managed Flopeek MCP block was modified; it will not be removed." };
   const next = `${content.slice(0, range.start)}${content.slice(range.end)}`;
   return { platform: platform.id, kind: "mcp", path: file, status: "remove", content: next.trim() ? next : "" };
 }
@@ -181,18 +181,18 @@ function planJsonConfig(root, platform, action) {
   if (config.mcpServers !== undefined && (!config.mcpServers || typeof config.mcpServers !== "object" || Array.isArray(config.mcpServers))) {
     return { platform: platform.id, kind: "mcp", path: file, status: "conflict", reason: "The existing mcpServers value must be an object." };
   }
-  const current = config.mcpServers?.flowpeek;
+  const current = config.mcpServers?.flopeek;
   const expected = mcpEntry();
   if (action === "install") {
-    if (current && !sameJson(current, expected)) return { platform: platform.id, kind: "mcp", path: file, status: "conflict", reason: "An unmanaged or different Flowpeek MCP entry already exists." };
+    if (current && !sameJson(current, expected)) return { platform: platform.id, kind: "mcp", path: file, status: "conflict", reason: "An unmanaged or different Flopeek MCP entry already exists." };
     if (current) return { platform: platform.id, kind: "mcp", path: file, status: "unchanged" };
-    const next = { ...config, mcpServers: { ...(config.mcpServers || {}), flowpeek: expected } };
+    const next = { ...config, mcpServers: { ...(config.mcpServers || {}), flopeek: expected } };
     return { platform: platform.id, kind: "mcp", path: file, status: "create", content: `${JSON.stringify(next, null, 2)}\n` };
   }
   if (!current) return { platform: platform.id, kind: "mcp", path: file, status: "absent" };
-  if (!sameJson(current, expected)) return { platform: platform.id, kind: "mcp", path: file, status: "conflict", reason: "The Flowpeek MCP entry differs from the managed value; it will not be removed." };
+  if (!sameJson(current, expected)) return { platform: platform.id, kind: "mcp", path: file, status: "conflict", reason: "The Flopeek MCP entry differs from the managed value; it will not be removed." };
   const mcpServers = { ...config.mcpServers };
-  delete mcpServers.flowpeek;
+  delete mcpServers.flopeek;
   const next = { ...config };
   if (Object.keys(mcpServers).length) next.mcpServers = mcpServers;
   else delete next.mcpServers;
@@ -208,7 +208,7 @@ function planPlatform(root, platform, action, canonicalHash) {
 }
 
 function manifestPath(root) {
-  return path.join(root, ".flowpeek", "agent-integrations.json");
+  return path.join(root, ".flopeek", "agent-integrations.json");
 }
 
 function readManifest(root) {
@@ -269,7 +269,7 @@ function executePlan(root, platforms, action, plan, canonicalHash, dryRun) {
 
 function integrationAction(root, action, options = {}) {
   const repository = fs.realpathSync(root);
-  if (!fs.existsSync(path.join(CANONICAL_SKILL, "SKILL.md"))) throw new Error(`Canonical Flowpeek skill is missing: ${CANONICAL_SKILL}`);
+  if (!fs.existsSync(path.join(CANONICAL_SKILL, "SKILL.md"))) throw new Error(`Canonical Flopeek skill is missing: ${CANONICAL_SKILL}`);
   let selection = options.platforms || "auto";
   if (action === "uninstall" && (selection === "auto" || (Array.isArray(selection) && selection.includes("auto")))) {
     const installed = readManifest(repository)?.platforms || [];
@@ -304,15 +304,15 @@ function uninstallAgentIntegration(root, options = {}) {
 
 function doctorAgentIntegration(root, options = {}) {
   const repository = fs.realpathSync(root);
-  if (!fs.existsSync(path.join(CANONICAL_SKILL, "SKILL.md"))) throw new Error(`Canonical Flowpeek skill is missing: ${CANONICAL_SKILL}`);
+  if (!fs.existsSync(path.join(CANONICAL_SKILL, "SKILL.md"))) throw new Error(`Canonical Flopeek skill is missing: ${CANONICAL_SKILL}`);
   const selection = options.platforms || "all";
   const platforms = selectPlatforms(selection, options.env || process.env);
   const canonicalHash = directoryHash(CANONICAL_SKILL);
   const checks = [];
   const nodeMajor = Number(process.versions.node.split(".")[0]);
-  checks.push({ id: "node", status: nodeMajor >= 20 ? "pass" : "error", message: `Node.js ${process.versions.node}; Flowpeek requires Node.js 20 or newer.` });
-  const flowpeekCommand = detectExecutable(["flowpeek"], options.env || process.env);
-  checks.push({ id: "flowpeek-command", status: flowpeekCommand ? "pass" : "warning", message: flowpeekCommand ? `Flowpeek detected at ${flowpeekCommand.path}.` : "The flowpeek command must be available on PATH for MCP hosts." });
+  checks.push({ id: "node", status: nodeMajor >= 20 ? "pass" : "error", message: `Node.js ${process.versions.node}; Flopeek requires Node.js 20 or newer.` });
+  const flopeekCommand = detectExecutable(["flopeek"], options.env || process.env);
+  checks.push({ id: "flopeek-command", status: flopeekCommand ? "pass" : "warning", message: flopeekCommand ? `Flopeek detected at ${flopeekCommand.path}.` : "The flopeek command must be available on PATH for MCP hosts." });
   for (const platform of platforms) {
     const executable = detectExecutable(platform.executables, options.env || process.env);
     checks.push({ id: `${platform.id}:host`, platform: platform.id, status: executable ? "pass" : "warning", message: executable ? `${platform.label} detected at ${executable.path}.` : `${platform.label} executable was not detected on PATH.` });
@@ -323,7 +323,7 @@ function doctorAgentIntegration(root, options = {}) {
   const errors = checks.filter((check) => check.status === "error");
   const warnings = checks.filter((check) => check.status === "warning");
   return {
-    schemaVersion: "flowpeek-agent-integration-doctor/v1",
+    schemaVersion: "flopeek-agent-integration-doctor/v1",
     repository,
     ok: errors.length === 0 && (!options.strict || warnings.length === 0),
     strict: Boolean(options.strict),

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="820" height="348" viewBox="0 0 820 348" role="img" aria-labelledby="title description">
   <title id="title">Incremental scan speedup across four external monorepos</title>
-  <desc id="description">Logarithmic horizontal bars compare the median speedup of Flowpeek incremental scans over full reparses: pnpm 1.67 times, NestJS 1.69 times, SvelteKit 4.21 times, and Symfony 54.53 times.</desc>
+  <desc id="description">Logarithmic horizontal bars compare the median speedup of Flopeek incremental scans over full reparses: pnpm 1.67 times, NestJS 1.69 times, SvelteKit 4.21 times, and Symfony 54.53 times.</desc>
   <style>
     .background { fill: #ffffff; }
     .title { fill: #1f2328; font: 600 18px -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; }

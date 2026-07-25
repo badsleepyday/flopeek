@@ -16,7 +16,7 @@ function write(root, relative, content) {
 }
 
 function fixture() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-view-projection-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-view-projection-"));
   write(root, "package.json", JSON.stringify({ name: "view-projection" }));
   const imports = [];
   for (let index = 0; index < 52; index += 1) {
@@ -33,7 +33,7 @@ test("view projections are version-bound, bounded, and explicit about omitted st
   try {
     const graph = scanRepository(root, { persistIdentity: false });
     const view = projectView(graph, { mode: "dependencies", scope: "application", focus: "file:src/main.ts", maxNodes: 10, maxEdges: 8 });
-    assert.equal(view.schemaVersion, "flowpeek-view-projection/v2");
+    assert.equal(view.schemaVersion, "flopeek-view-projection/v2");
     assert.equal(view.basis.projectId, graph.project.projectId);
     assert.equal(view.basis.graphVersion, graph.state.graphVersion);
     assert.equal(view.display.bounds.maxNodes, 10);
@@ -56,10 +56,10 @@ test("view CLI exposes the same bounded projection contract without creating cac
     const cli = path.join(__dirname, "..", "..", "src", "cli.js");
     const output = execFileSync(process.execPath, [cli, "view", root, "--mode", "dependencies", "--focus", "file:src/main.ts", "--max-nodes", "9", "--max-edges", "7", "--no-cache", "--format", "json"], { encoding: "utf8" });
     const view = JSON.parse(output);
-    assert.equal(view.schemaVersion, "flowpeek-view-projection/v2");
+    assert.equal(view.schemaVersion, "flopeek-view-projection/v2");
     assert.equal(view.display.bounds.maxNodes, 9);
     assert.equal(view.display.bounds.maxEdges, 7);
-    assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false);
+    assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -73,7 +73,7 @@ test("view CLI accepts the documented semantic level option instead of treating 
     const view = JSON.parse(output);
     assert.equal(view.view.level, "domain");
     assert.ok(view.nodes.every((node) => node.hierarchy.level === "domain"));
-    assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false);
+    assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

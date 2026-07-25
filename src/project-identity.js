@@ -5,13 +5,13 @@ const { atomicWriteJson } = require("./graph-cache");
 const { readOriginRemote } = require("./git-metadata");
 
 const PROJECT_IDENTITY_SCHEMA_VERSION = 1;
-const PROJECT_IDENTITY_FILENAME = ".flowpeek/project.json";
+const PROJECT_IDENTITY_FILENAME = ".flopeek/project.json";
 
 class ProjectIdentityError extends Error {
   constructor(message) {
-    super(`Invalid Flowpeek project identity metadata: ${message}`);
+    super(`Invalid Flopeek project identity metadata: ${message}`);
     this.name = "ProjectIdentityError";
-    this.code = "FLOWPEEK_INVALID_PROJECT_IDENTITY";
+    this.code = "FLOPEEK_INVALID_PROJECT_IDENTITY";
   }
 }
 
@@ -64,7 +64,7 @@ function resolveProjectIdentity(root, configuredId = null, options = {}) {
       source: "generated",
       status: "created",
       originRemote: currentRemote,
-      limitation: "The generated ID persists with .flowpeek/project.json. A copied directory can retain the same ID and is not automatically distinguished without an explicit projectId.",
+      limitation: "The generated ID persists with .flopeek/project.json. A copied directory can retain the same ID and is not automatically distinguished without an explicit projectId.",
     };
   }
   let record;

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "flowpeek-supported-language-dogfood/v1",
+  "schemaVersion": "flopeek-supported-language-dogfood/v1",
   "generatedAt": "2026-07-22T07:36:10.556Z",
   "casesPath": "benchmarks/supported-language-dogfood-cases.json",
   "outcomes": [

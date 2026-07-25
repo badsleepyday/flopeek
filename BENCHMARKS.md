@@ -1,6 +1,6 @@
-# Flowpeek evidence
+# Flopeek evidence
 
-This page answers one question: **what has Flowpeek actually demonstrated?**
+This page answers one question: **what has Flopeek actually demonstrated?**
 
 Every result is bounded by its dataset, revision, host, and evidence class. Raw JSON is linked next to the claim it supports.
 
@@ -10,18 +10,18 @@ Every result is bounded by its dataset, revision, host, and evidence class. Raw 
 | --- | ---: | --- |
 | Are declared static relationships recovered? | **92/92** | Exact result for 14 manually audited scopes in 5 pinned repositories |
 | Is parser reuse faster than full reparse? | **1.67×–54.53×** | Four host-specific repository samples; not a universal promise |
-| Does Flowpeek add context beyond literal retrieval? | **14/14 ordered steps; 3/3 stale refs** | Three small source-pinned fixtures; no productivity claim |
+| Does Flopeek add context beyond literal retrieval? | **14/14 ordered steps; 3/3 stale refs** | Three small source-pinned fixtures; no productivity claim |
 | Can the package install from its exact tarball? | **Passed** | One private Windows/Node clean-room observation; no publish approval |
 | Does a framework command adapter work beyond a fixture? | **47 declarations** | One pinned Django source snapshot; static declaration evidence only |
 
 Machine-readable entry point: [`benchmarks/public-proof.json`](benchmarks/public-proof.json).
 
 ```powershell
-flowpeek proof D:\path\to\repository --iterations 3
-flowpeek proof D:\path\to\repository --iterations 3 --format json
+flopeek proof D:\path\to\repository --iterations 3
+flopeek proof D:\path\to\repository --iterations 3 --format json
 ```
 
-The Viewer exposes the same contract through **Why Flowpeek**. MCP exposes it through `get_product_proof`. Read-only proof retrieval does not start a benchmark; a local timing run is always explicit.
+The Viewer exposes the same contract through **Why Flopeek**. MCP exposes it through `get_product_proof`. Read-only proof retrieval does not start a benchmark; a local timing run is always explicit.
 
 ## Audited relationship slice
 
@@ -36,33 +36,33 @@ Raw manifest: [`benchmarks/real-repository-corpus.json`](benchmarks/real-reposit
 Fresh declared-host reproduction: [`production-static-evidence.json`](benchmarks/production-static-evidence.json) records the complete 5/5 corpus run at the current dirty development baseline.
 
 ```powershell
-node src/real-repository-corpus.js --clone-directory D:\benchmarks\flowpeek-real-corpus --format json
+node src/real-repository-corpus.js --clone-directory D:\benchmarks\flopeek-real-corpus --format json
 ```
 
 **Boundary:** 92/92 describes only the declared relationships in those 14 scopes. It is not accuracy for every edge, file, language construct, or runtime path in the repositories.
 
 ## Django command declaration slice
 
-Flowpeek scanned [Django 5.2.5](https://github.com/django/django/tree/5.2.5) at pinned revision `a3b1107a4955bdd994908efb4c6e1d03c281e69f`: **2,864** scanned files, **47** supported narrow management-command declarations, and **24** application-scope Framework Command Flow Lenses. The checked command-to-class relation passed.
+Flopeek scanned [Django 5.2.5](https://github.com/django/django/tree/5.2.5) at pinned revision `a3b1107a4955bdd994908efb4c6e1d03c281e69f`: **2,864** scanned files, **47** supported narrow management-command declarations, and **24** application-scope Framework Command Flow Lenses. The checked command-to-class relation passed.
 
 Raw evidence: [`framework-entry-production-evidence.json`](benchmarks/framework-entry-production-evidence.json).
 
 The same Django snapshot was re-scanned at the current dirty development baseline; the reproduced 2,864 files, 47 supported declarations, 24 Flow Lenses, and checked relation are recorded in [`production-static-evidence.json`](benchmarks/production-static-evidence.json).
 
-**Boundary:** this validates only Flowpeek's narrow static `management/commands` declaration subset. It does not prove Django app registration, settings loading, command discovery at runtime, invocation, `handle()` execution, or application behavior.
+**Boundary:** this validates only Flopeek's narrow static `management/commands` declaration subset. It does not prove Django app registration, settings loading, command discovery at runtime, invocation, `handle()` execution, or application behavior.
 
 ## Repository orientation
 
 The orientation suite compares two deterministic tools:
 
 - **Literal retrieval:** case-insensitive substring matches over repository text.
-- **Flowpeek:** static graph lookup, Flow Lens, test relationships, and versioned Context Refs.
+- **Flopeek:** static graph lookup, Flow Lens, test relationships, and versioned Context Refs.
 
 Benchmark oracle files such as `expectations.json` are explicitly excluded from literal retrieval and disclosed in each raw report.
 
 ![Capability comparison](docs/assets/orientation-capabilities.svg)
 
-| Metric | Literal retrieval | Flowpeek |
+| Metric | Literal retrieval | Flopeek |
 | --- | ---: | ---: |
 | Correct targets | 10/10 | 10/10 |
 | Ordered static steps | unavailable | 14/14 |
@@ -74,16 +74,16 @@ Benchmark oracle files such as `expectations.json` are explicitly excluded from 
 | Three case retrievals | 0.777 ms | 15.676 ms |
 | Separate stale-ref probe | unavailable | 2,413.364 ms |
 
-Raw runs: [`orientation-baseline.json`](benchmarks/orientation-baseline.json), [`orientation-flowpeek.json`](benchmarks/orientation-flowpeek.json), and [`orientation-cases.json`](benchmarks/orientation-cases.json).
+Raw runs: [`orientation-baseline.json`](benchmarks/orientation-baseline.json), [`orientation-flopeek.json`](benchmarks/orientation-flopeek.json), and [`orientation-cases.json`](benchmarks/orientation-cases.json).
 
 ```powershell
-flowpeek evaluate orientation . --cases benchmarks/orientation-cases.json
+flopeek evaluate orientation . --cases benchmarks/orientation-cases.json
 ```
 
 ### Interpretation
 
 - Literal retrieval is faster and smaller when exact identifiers are already supplied.
-- Flowpeek pays a cold graph-build cost for ordered relationships and reusable versioned context.
+- Flopeek pays a cold graph-build cost for ordered relationships and reusable versioned context.
 - The stale-ref probe is separate: it copies a fixture, scans a baseline, changes source, refreshes, and resolves the older ref.
 - Token values use the disclosed four-characters-per-token estimator. They are not provider tokenizer measurements.
 - Timing is one Windows/Node 24.18.0 observation and is non-gating.
@@ -104,7 +104,7 @@ This suite does not measure developer time, agent patch quality, runtime correct
 Each row contains three full and incremental samples for one supported unchanged source file. Incremental mode reuses parser facts, then rebuilds global relationships. Selected paths and raw samples come from:
 
 ```powershell
-flowpeek benchmark D:\path\to\repository --iterations 3 --format json
+flopeek benchmark D:\path\to\repository --iterations 3 --format json
 ```
 
 **Boundary:** this measures local CPU time on one machine. It does not prove watcher latency, every change shape, every language adapter, or universal speedup. The pnpm checkout also parsed 1,043 Rust files and produced 1,091 static module-import edges; that is scale evidence, not Rust relationship accuracy.
@@ -180,11 +180,11 @@ These contracts never become parser truth. A provider answer, human observation,
 
 ## What evidence is still missing?
 
-- Paired real-provider tasks with and without Flowpeek.
+- Paired real-provider tasks with and without Flopeek.
 - Consented developer orientation studies on unfamiliar repositories.
 - Patch correctness, regression, and end-to-end token outcomes.
 - Large-repository warm-query and watcher-latency distributions.
 - Cross-platform clean-room results beyond completed CI/host observations.
 - Large-workspace initial-scan budget and workspace-level discovery behavior.
 
-Until those datasets exist, Flowpeek should be evaluated as a promising evidence-oriented context tool—not as proven universal SDLC acceleration.
+Until those datasets exist, Flopeek should be evaluated as a promising evidence-oriented context tool—not as proven universal SDLC acceleration.

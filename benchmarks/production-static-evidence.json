@@ -1,7 +1,7 @@
 {
-  "schemaVersion": "flowpeek-production-static-evidence/v1",
+  "schemaVersion": "flopeek-production-static-evidence/v1",
   "capturedAt": "2026-07-22T16:14:11+07:00",
-  "flowpeek": {
+  "flopeek": {
     "sourceRevision": "da6ae3941e2369a5b99b0eaff56ffbbf44e25b2f",
     "workingTree": "dirty",
     "node": "v24.18.0",

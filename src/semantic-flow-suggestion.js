@@ -1,7 +1,7 @@
 "use strict";
 
-const SEMANTIC_FLOW_SUGGESTION_SCHEMA = "flowpeek-semantic-flow-suggestion/v1";
-const SEMANTIC_FLOW_SUGGESTIONS_SCHEMA = "flowpeek-semantic-flow-suggestions/v1";
+const SEMANTIC_FLOW_SUGGESTION_SCHEMA = "flopeek-semantic-flow-suggestion/v1";
+const SEMANTIC_FLOW_SUGGESTIONS_SCHEMA = "flopeek-semantic-flow-suggestions/v1";
 const HTTP_ENTRY = /^(GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD)\s+(\/\S*)$/;
 const METHOD_ROLES = {
   GET: "read-request",

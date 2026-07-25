@@ -19,7 +19,7 @@ function fixture(root) {
 }
 
 test("derived artifacts report exact hits, bounded misses, selective invalidation, and stale non-reuse", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-artifact-cache-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-artifact-cache-"));
   try {
     const graph = fixture(root);
     let computes = 0;
@@ -60,12 +60,12 @@ test("derived artifacts report exact hits, bounded misses, selective invalidatio
 });
 
 test("invalid derived cache metadata is unavailable and never silently overwritten", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-artifact-cache-invalid-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-artifact-cache-invalid-"));
   try {
     const graph = fixture(root);
-    const registry = path.join(root, ".flowpeek", "cache", "artifacts.json");
+    const registry = path.join(root, ".flopeek", "cache", "artifacts.json");
     fs.mkdirSync(path.dirname(registry), { recursive: true });
-    fs.writeFileSync(registry, JSON.stringify({ schemaVersion: "flowpeek-derived-artifact-registry/v1", projectId: graph.project.projectId, records: [{ id: "broken" }], events: [], eventsOmitted: 0 }));
+    fs.writeFileSync(registry, JSON.stringify({ schemaVersion: "flopeek-derived-artifact-registry/v1", projectId: graph.project.projectId, records: [{ id: "broken" }], events: [], eventsOmitted: 0 }));
     const before = fs.readFileSync(registry, "utf8");
     assert.equal(listArtifactCacheAudit(root, graph).status, "unavailable");
     const fallback = getOrCreateArtifact(root, graph, "context-packet", { task: "x" }, () => ({ ok: true }));
@@ -77,8 +77,8 @@ test("invalid derived cache metadata is unavailable and never silently overwritt
   }
 });
 
-test("cache hygiene measures only Flowpeek state and manual pruning removes only registered old artifacts", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-cache-hygiene-"));
+test("cache hygiene measures only Flopeek state and manual pruning removes only registered old artifacts", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-cache-hygiene-"));
   try {
     const graph = fixture(root);
     const key = { mode: "overview" };
@@ -86,10 +86,10 @@ test("cache hygiene measures only Flowpeek state and manual pruning removes only
       const versioned = { ...graph, state: { ...graph.state, graphVersion: version, sourceFingerprint: `sha256:source-${version}` } };
       getOrCreateArtifact(root, versioned, "feature-summary", key, () => ({ version }), { dependencyPaths: ["src/orders.ts"], now: `2026-07-14T01:0${version}:00.000Z` });
     }
-    const unknown = path.join(root, ".flowpeek", "unknown-user-state.json");
+    const unknown = path.join(root, ".flopeek", "unknown-user-state.json");
     fs.writeFileSync(unknown, "keep", "utf8");
     const before = cacheHygiene(root, graph);
-    assert.equal(before.schemaVersion, "flowpeek-cache-hygiene/v1");
+    assert.equal(before.schemaVersion, "flopeek-cache-hygiene/v1");
     assert.equal(before.storage.derivedArtifacts.records, 3);
     assert.ok(before.storage.unclassifiedBytes >= 4);
     const preview = pruneArtifactCache(root, { keepRecords: 1, dryRun: true, now: "2026-07-14T01:10:00.000Z" });
@@ -109,7 +109,7 @@ test("cache hygiene measures only Flowpeek state and manual pruning removes only
 });
 
 test("session-only scans never create derived artifact cache state", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-no-cache-artifacts-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-no-cache-artifacts-"));
   try {
     fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "no-cache-artifacts" }));
     fs.mkdirSync(path.join(root, "src"));
@@ -118,7 +118,7 @@ test("session-only scans never create derived artifact cache state", () => {
     const graph = scanRepository(root, { persistIdentity: false });
     assert.equal(graph.analysis.cacheState.status, "disabled");
     getFlowProjection(graph, "flow:endpoint:src/orders.routes.ts:POST:/orders");
-    assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false);
+    assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -132,7 +132,7 @@ test("Flow Lens maxSteps validation is strict and isolates compact and expanded 
   for (const value of [0, 25, 1.5, "12", NaN, Infinity]) assert.throws(() => validateFlowLensMaxSteps(value), /integer from 1 through 24/);
   for (const value of ["", "0", "25", "1.5", "12.0", "not-a-number"]) assert.throws(() => parseFlowLensMaxStepsQuery(value), /integer from 1 through 24/);
 
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-flow-lens-options-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-flow-lens-options-"));
   try {
     fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "flow-lens-options-fixture" }));
     fs.mkdirSync(path.join(root, "src"));
@@ -159,7 +159,7 @@ test("Flow Lens maxSteps validation is strict and isolates compact and expanded 
       assert.throws(() => getFlowContextCard(graph, flowId, "json", "application", { maxSteps }), /integer from 1 through 24/);
     }
 
-    const registry = JSON.parse(fs.readFileSync(path.join(root, ".flowpeek", "cache", "artifacts.json"), "utf8"));
+    const registry = JSON.parse(fs.readFileSync(path.join(root, ".flopeek", "cache", "artifacts.json"), "utf8"));
     const projectionRecords = registry.records.filter((record) => record.type === "flow-projection");
     assert.equal(projectionRecords.length, 2);
     assert.equal(new Set(projectionRecords.map((record) => record.keyHash)).size, 2);

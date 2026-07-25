@@ -1,7 +1,7 @@
-# Releasing Flowpeek Core
+# Releasing Flopeek Core
 
 `main` is the only long-lived public source branch. It is the canonical
-Flowpeek Core that users clone, test, review, and extend.
+Flopeek Core that users clone, test, review, and extend.
 
 ## Release channels
 

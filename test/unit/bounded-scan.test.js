@@ -11,7 +11,7 @@ const { discoverRepository } = require("../../src/repository-discovery");
 const { scanRepository, writeGraphCache } = require("../../src/scanner");
 
 function fixture(t, files = 2) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-bounded-scan-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-bounded-scan-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "bounded-scan-fixture" }));
   fs.mkdirSync(path.join(root, "src"));
@@ -33,13 +33,13 @@ function packageFixture(t) {
 test("bounded scan returns a complete graph only after successful preflight and worker analysis", async (t) => {
   const root = fixture(t);
   const result = await scanRepositoryBounded(root, { maxFiles: 10, maxBytes: 100_000, persistIdentity: false });
-  assert.equal(result.schemaVersion, "flowpeek-bounded-scan-result/v1");
+  assert.equal(result.schemaVersion, "flopeek-bounded-scan-result/v1");
   assert.equal(result.status, "complete");
   assert.equal(result.cachePromotion.allowed, true);
   assert.equal(result.graph.project.name, "bounded-scan-fixture");
   assert.equal(result.graph.stats.scannedFiles, 2);
   assert.match(result.discovery.inventory.fingerprint, /^sha256:[a-f0-9]{64}$/);
-  assert.equal(result.verification.schemaVersion, "flowpeek-analysis-plan-verification/v1");
+  assert.equal(result.verification.schemaVersion, "flopeek-analysis-plan-verification/v1");
   assert.equal(result.verification.valid, true);
 });
 
@@ -60,7 +60,7 @@ test("package-scoped bounded scan emits only the selected static subtree with ex
   assert.equal(result.graph.nodes.some((node) => node.path === "packages/core/src/core.js"), false);
   assert.ok(progress.some((event) => event.phase === "discovery-completed" && event.discovery.selection.path === "apps/api"));
   assert.ok(progress.some((event) => event.phase === "analysis-started" && event.selection.path === "apps/api"));
-  assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false);
+  assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
 });
 
 test("package-scoped bounded scan discards the graph when a selected package resolver control changes", async (t) => {
@@ -83,7 +83,7 @@ test("package-scoped bounded scan discards the graph when a selected package res
   assert.equal(result.cachePromotion.allowed, false);
   assert.equal(result.failure.code, "repository-changed-during-analysis");
   assert.equal(result.failure.verification.reason, "source-inventory-changed");
-  assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false);
+  assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
 });
 
 test("bounded scan discards a planned graph when the source set changes after discovery", async (t) => {
@@ -135,7 +135,7 @@ test("bounded scan reports an explicit diagnostic result and no graph when disco
   assert.equal(result.graph, null);
   assert.equal(result.cachePromotion.allowed, false);
   assert.match(result.reason, /file-limit-exceeded/);
-  assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false);
+  assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
 });
 
 test("bounded scan cancellation cannot produce or promote a graph", async (t) => {
@@ -152,7 +152,7 @@ test("bounded failure leaves the previous complete cache byte-for-byte unchanged
   const root = fixture(t, 3);
   const graph = scanRepository(root);
   writeGraphCache(root, graph, { reason: "bounded-scan-test-baseline" });
-  const cachePath = path.join(root, ".flowpeek", "graph.json");
+  const cachePath = path.join(root, ".flopeek", "graph.json");
   const before = fs.readFileSync(cachePath);
   const result = await scanRepositoryBounded(root, { maxFiles: 1 });
   assert.equal(result.status, "partial-by-budget");
@@ -165,10 +165,10 @@ test("bounded scan CLI returns a versioned envelope and never writes a partial c
   const result = spawnSync(process.execPath, [cli, "scan", root, "--max-files", "1", "--format", "json"], { encoding: "utf8" });
   assert.equal(result.status, 2, result.stderr);
   const report = JSON.parse(result.stdout);
-  assert.equal(report.schemaVersion, "flowpeek-bounded-scan-result/v1");
+  assert.equal(report.schemaVersion, "flopeek-bounded-scan-result/v1");
   assert.equal(report.status, "partial-by-budget");
   assert.equal(report.graph, null);
-  assert.equal(fs.existsSync(path.join(root, ".flowpeek", "graph.json")), false);
+  assert.equal(fs.existsSync(path.join(root, ".flopeek", "graph.json")), false);
 });
 
 test("package-scoped scan CLI keeps the repository-wide cache untouched", (t) => {
@@ -182,7 +182,7 @@ test("package-scoped scan CLI keeps the repository-wide cache untouched", (t) =>
   assert.equal(report.discovery.selection.path, "apps/api");
   assert.equal(report.graph.analysis.cacheState.reason, "package-scoped-session");
   assert.equal(report.graph.stats.scannedFiles, 1);
-  assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false);
+  assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
   const summary = spawnSync(process.execPath, [cli, "scan", root, "--package", "apps/api"], { encoding: "utf8", timeout: 30_000 });
   assert.equal(summary.status, 0, summary.stderr);
   assert.match(summary.stdout, /Static package scope: apps\/api/);
@@ -198,5 +198,5 @@ test("bounded no-cache CLI promotes only the complete in-memory result", (t) => 
   assert.equal(report.status, "complete");
   assert.equal(report.graph.stats.scannedFiles, 2);
   assert.equal(report.graph.analysis.cacheState.status, "disabled");
-  assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false);
+  assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
 });

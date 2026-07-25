@@ -7,14 +7,14 @@ const path = require("node:path");
 const { createScanCoordinator } = require("./scan-coordinator");
 const { getFlowContextCard, projectView, resolveContextRef } = require("./graph-service");
 
-const CASE_SCHEMA = "flowpeek-supported-language-dogfood-cases/v1";
-const REPORT_SCHEMA = "flowpeek-supported-language-dogfood/v1";
+const CASE_SCHEMA = "flopeek-supported-language-dogfood-cases/v1";
+const REPORT_SCHEMA = "flopeek-supported-language-dogfood/v1";
 
 function sourceFiles(root) {
   const files = [];
   const visit = (directory) => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      if (entry.name === ".flowpeek" || entry.name === "expectations.json") continue;
+      if (entry.name === ".flopeek" || entry.name === ".flowpeek" || entry.name === "expectations.json") continue;
       const absolute = path.join(directory, entry.name);
       if (entry.isDirectory()) visit(absolute);
       else if (entry.isFile()) files.push(path.relative(root, absolute).replaceAll("\\", "/"));
@@ -98,7 +98,7 @@ async function mcpFlowBasis(disposableRoot, flowId) {
       import("@modelcontextprotocol/sdk/client/stdio.js"),
     ]);
     transport = new StdioClientTransport({ command: process.execPath, args: [path.join(__dirname, "cli.js"), "mcp", disposableRoot], cwd: path.resolve(__dirname, ".."), stderr: "pipe" });
-    client = new Client({ name: "flowpeek-supported-language-dogfood", version: "1.0.0" });
+    client = new Client({ name: "flopeek-supported-language-dogfood", version: "1.0.0" });
     await client.connect(transport);
     const bootstrap = toolPayload(await client.callTool({ name: "get_agent_bootstrap", arguments: {} }));
     const flow = toolPayload(await client.callTool({ name: "get_flow_context_card", arguments: { flowId } }));
@@ -115,7 +115,7 @@ async function evaluateCase(repositoryRoot, definition) {
   const expectations = JSON.parse(fs.readFileSync(path.join(fixtureRoot, "expectations.json"), "utf8"));
   const digest = sourceDigest(fixtureRoot);
   if (digest !== definition.sourceDigest) throw new Error(`${definition.id}: source digest does not match the pinned case definition.`);
-  const disposableRoot = fs.mkdtempSync(path.join(os.tmpdir(), `flowpeek-dogfood-${definition.id}-`));
+  const disposableRoot = fs.mkdtempSync(path.join(os.tmpdir(), `flopeek-dogfood-${definition.id}-`));
   fs.cpSync(fixtureRoot, disposableRoot, { recursive: true });
   const coordinator = createScanCoordinator(disposableRoot, { cache: false });
   try {

@@ -6,12 +6,12 @@ const path = require("node:path");
 const { atomicWriteJson } = require("./graph-cache");
 const { readAgentEvidenceTraceStore } = require("./agent-evidence-trace");
 
-const SEMANTIC_SUGGESTION_FEEDBACK_SCHEMA = "flowpeek-semantic-suggestion-feedback/v1";
-const SEMANTIC_SUGGESTION_FEEDBACK_STORE_SCHEMA = "flowpeek-semantic-suggestion-feedbacks/v1";
-const SEMANTIC_SUGGESTION_FEEDBACK_LIST_SCHEMA = "flowpeek-semantic-suggestion-feedback-list/v1";
-const SEMANTIC_SUGGESTION_FEEDBACK_RESOLUTION_SCHEMA = "flowpeek-semantic-suggestion-feedback-resolution/v1";
-const SEMANTIC_SUGGESTION_LABEL_SCHEMA = "flowpeek-semantic-suggestion-labels/v1";
-const SEMANTIC_SUGGESTION_FEEDBACKS_RELATIVE_PATH = ".flowpeek/semantic-suggestion-feedback.json";
+const SEMANTIC_SUGGESTION_FEEDBACK_SCHEMA = "flopeek-semantic-suggestion-feedback/v1";
+const SEMANTIC_SUGGESTION_FEEDBACK_STORE_SCHEMA = "flopeek-semantic-suggestion-feedbacks/v1";
+const SEMANTIC_SUGGESTION_FEEDBACK_LIST_SCHEMA = "flopeek-semantic-suggestion-feedback-list/v1";
+const SEMANTIC_SUGGESTION_FEEDBACK_RESOLUTION_SCHEMA = "flopeek-semantic-suggestion-feedback-resolution/v1";
+const SEMANTIC_SUGGESTION_LABEL_SCHEMA = "flopeek-semantic-suggestion-labels/v1";
+const SEMANTIC_SUGGESTION_FEEDBACKS_RELATIVE_PATH = ".flopeek/semantic-suggestion-feedback.json";
 const DECISIONS = new Set(["accepted", "edited", "rejected", "abstained"]);
 
 class SemanticSuggestionFeedbackError extends Error {
@@ -101,8 +101,8 @@ function suggestionFingerprint(suggestion) {
 }
 
 function validateSuggestion(suggestion) {
-  if (!suggestion || suggestion.schemaVersion !== "flowpeek-semantic-flow-suggestion/v1" || !suggestion.flow?.id || !suggestion.flow?.contextRef || !Number.isSafeInteger(suggestion.flow.graphVersion)) {
-    throw new SemanticSuggestionFeedbackError("invalid-suggestion", "Semantic feedback requires a current Flowpeek semantic suggestion.");
+  if (!suggestion || suggestion.schemaVersion !== "flopeek-semantic-flow-suggestion/v1" || !suggestion.flow?.id || !suggestion.flow?.contextRef || !Number.isSafeInteger(suggestion.flow.graphVersion)) {
+    throw new SemanticSuggestionFeedbackError("invalid-suggestion", "Semantic feedback requires a current Flopeek semantic suggestion.");
   }
   if (!new Set(["suggested", "abstained"]).has(suggestion.status)) throw new SemanticSuggestionFeedbackError("invalid-suggestion", "Semantic feedback requires a suggested or abstained result.");
 }
@@ -163,7 +163,7 @@ function readSemanticSuggestionFeedbackStore(root, projectId) {
     const ids = Array.isArray(store?.records) ? store.records.map((record) => record.id) : [];
     const operationIds = Array.isArray(store?.records) ? store.records.map((record) => record.operationId) : [];
     if (!store || typeof store !== "object" || Array.isArray(store) || store.schemaVersion !== SEMANTIC_SUGGESTION_FEEDBACK_STORE_SCHEMA || store.projectId !== projectId || !Array.isArray(store.records) || !store.records.every(isRecord) || new Set(ids).size !== ids.length || new Set(operationIds).size !== operationIds.length) {
-      return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-semantic-feedback-store", message: "Semantic suggestion feedback metadata does not match flowpeek-semantic-suggestion-feedbacks/v1." }] };
+      return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-semantic-feedback-store", message: "Semantic suggestion feedback metadata does not match flopeek-semantic-suggestion-feedbacks/v1." }] };
     }
     return { status: "valid", path: target, store, diagnostics: [] };
   } catch (error) {
@@ -212,7 +212,7 @@ function saveSemanticSuggestionFeedback(root, graph, suggestion, input, options 
   const existing = store.records.find((record) => record.operationId === normalized.operationId);
   if (existing) {
     if (existing.inputFingerprint !== inputFingerprint) throw new SemanticSuggestionFeedbackError("operation-id-conflict", "operationId already belongs to a different immutable semantic feedback record.");
-    return { schemaVersion: "flowpeek-semantic-suggestion-feedback-result/v1", created: false, record: existing, path: feedbackPath(root), limitation: "The existing immutable feedback record was returned for this idempotent operationId." };
+    return { schemaVersion: "flopeek-semantic-suggestion-feedback-result/v1", created: false, record: existing, path: feedbackPath(root), limitation: "The existing immutable feedback record was returned for this idempotent operationId." };
   }
   const createdAt = options.now || new Date().toISOString();
   if (typeof createdAt !== "string" || Number.isNaN(Date.parse(createdAt))) throw new SemanticSuggestionFeedbackError("invalid-created-at", "Semantic feedback createdAt must be an ISO-compatible timestamp.");
@@ -240,7 +240,7 @@ function saveSemanticSuggestionFeedback(root, graph, suggestion, input, options 
   };
   const next = { ...store, records: [...store.records, record] };
   atomicWriteJson(feedbackPath(root), next);
-  return { schemaVersion: "flowpeek-semantic-suggestion-feedback-result/v1", created: true, record, path: feedbackPath(root), limitation: "Feedback is append-only. A later review creates a superseding record rather than overwriting this one." };
+  return { schemaVersion: "flopeek-semantic-suggestion-feedback-result/v1", created: true, record, path: feedbackPath(root), limitation: "Feedback is append-only. A later review creates a superseding record rather than overwriting this one." };
 }
 
 function listSemanticSuggestionFeedback(root, graph, options = {}) {
@@ -320,7 +320,7 @@ function semanticSuggestionFeedbackPolicy(root, graph) {
   const listed = listSemanticSuggestionFeedback(root, graph, { limit: 5 });
   const metrics = listed.status === "available" ? feedbackMetrics(listed.records) : feedbackMetrics([]);
   return {
-    schemaVersion: "flowpeek-semantic-suggestion-feedback-policy/v1",
+    schemaVersion: "flopeek-semantic-suggestion-feedback-policy/v1",
     status: listed.status,
     storeSchemaVersion: SEMANTIC_SUGGESTION_FEEDBACK_STORE_SCHEMA,
     labelSchemaVersion: SEMANTIC_SUGGESTION_LABEL_SCHEMA,

@@ -6,15 +6,15 @@ const path = require("node:path");
 const { parseContextRef } = require("./context-card");
 const { normalizeDefinition } = require("./orientation-benchmark");
 
-const AGENT_COMPARISON_RUNS_SCHEMA = "flowpeek-agent-comparison-runs/v1";
-const AGENT_COMPARISON_REPORT_SCHEMA = "flowpeek-agent-comparison-report/v1";
-const CONDITIONS = new Set(["direct-repository", "flowpeek"]);
+const AGENT_COMPARISON_RUNS_SCHEMA = "flopeek-agent-comparison-runs/v1";
+const AGENT_COMPARISON_REPORT_SCHEMA = "flopeek-agent-comparison-report/v1";
+const CONDITIONS = new Set(["direct-repository", "flopeek"]);
 const CLAIM_OUTCOMES = new Set(["supported", "unsupported", "unknown"]);
 const VERIFICATION_STATUSES = new Set(["passed", "failed", "not-run", "unknown"]);
 const STALE_STATUSES = new Set(["stale", "historical", "successor-candidate"]);
 const CONTEXT_STATUSES = new Set(["current", "stale", "historical", "successor-candidate", "unavailable", "unresolved", "expired"]);
-const FLOWPEEK_TOOLS = new Set(["cancel_scan", "find_nodes", "get_active_branch_git_evidence", "get_agent_bootstrap", "get_changed_contexts", "get_entry_flows", "get_flow_comparison", "get_flow_context_card", "get_flow_projection", "get_git_context_continuity", "get_handoff_context", "get_related_tests", "get_request_flows", "get_scan_status", "refresh_graph", "resolve_context_ref"]);
-const TOKEN_ESTIMATOR = "flowpeek-char4-estimator/v1";
+const FLOPEEK_TOOLS = new Set(["cancel_scan", "find_nodes", "get_active_branch_git_evidence", "get_agent_bootstrap", "get_changed_contexts", "get_entry_flows", "get_flow_comparison", "get_flow_context_card", "get_flow_projection", "get_git_context_continuity", "get_handoff_context", "get_related_tests", "get_request_flows", "get_scan_status", "refresh_graph", "resolve_context_ref"]);
+const TOKEN_ESTIMATOR = "flopeek-char4-estimator/v1";
 
 class AgentComparisonError extends Error {
   constructor(code, message) {
@@ -67,22 +67,22 @@ function normalizeProvider(value, field) {
   };
 }
 
-function normalizeFlowpeekContext(value, field) {
+function normalizeFlopeekContext(value, field) {
   exactKeys(value, ["projectId", "graphVersion", "contextRefs", "toolsUsed"], field);
   if (!Number.isSafeInteger(value.graphVersion) || value.graphVersion < 0) throw new AgentComparisonError("invalid-graph-version", `${field}.graphVersion must be a non-negative integer.`);
   const projectId = boundedText(value.projectId, `${field}.projectId`, 240);
   const toolsUsed = uniqueList(value.toolsUsed, `${field}.toolsUsed`, boundedText, 30, false);
-  const unsupported = toolsUsed.filter((tool) => !FLOWPEEK_TOOLS.has(tool));
-  if (unsupported.length) throw new AgentComparisonError("unsupported-flowpeek-tool", `${field}.toolsUsed contains unsupported tools: ${unsupported.join(", ")}.`);
+  const unsupported = toolsUsed.filter((tool) => !FLOPEEK_TOOLS.has(tool));
+  if (unsupported.length) throw new AgentComparisonError("unsupported-flopeek-tool", `${field}.toolsUsed contains unsupported tools: ${unsupported.join(", ")}.`);
   const contextRefs = uniqueList(value.contextRefs, `${field}.contextRefs`, (item, itemField) => {
     const contextRef = reference(item, itemField);
     let parsed;
     try {
       parsed = parseContextRef(contextRef);
     } catch (error) {
-      throw new AgentComparisonError("invalid-context-ref", `${itemField} is not a valid Flowpeek Context Ref: ${error.message}`);
+      throw new AgentComparisonError("invalid-context-ref", `${itemField} is not a valid Flopeek Context Ref: ${error.message}`);
     }
-    if (parsed.projectId !== projectId) throw new AgentComparisonError("wrong-context-project", `${itemField} belongs to a different Flowpeek project.`);
+    if (parsed.projectId !== projectId) throw new AgentComparisonError("wrong-context-project", `${itemField} belongs to a different Flopeek project.`);
     if (!new Set(["node", "flow"]).has(parsed.kind)) throw new AgentComparisonError("unsupported-context-kind", `${itemField} must refer to a node or flow.`);
     if (parsed.graphVersion > value.graphVersion) throw new AgentComparisonError("future-context-version", `${itemField} cannot target a graph version newer than the declared run graph.`);
     return contextRef;
@@ -113,11 +113,11 @@ function normalizeExecution(value, index) {
   const field = `executions[${index}]`;
   exactKeys(value, ["id", "pairId", "caseId", "condition", "provider", "durationMilliseconds", "context", "answer", "verification", "cost"], field);
   const condition = boundedText(value.condition, `${field}.condition`, 40);
-  if (!CONDITIONS.has(condition)) throw new AgentComparisonError("invalid-condition", `${field}.condition must be direct-repository or flowpeek.`);
-  exactKeys(value.context, ["inspectedPaths", "estimatedCharacters", "flowpeek"], `${field}.context`);
-  const flowpeek = value.context.flowpeek == null ? null : normalizeFlowpeekContext(value.context.flowpeek, `${field}.context.flowpeek`);
-  if (condition === "flowpeek" && !flowpeek) throw new AgentComparisonError("missing-flowpeek-context", `${field} must declare the Flowpeek graph and tools it used.`);
-  if (condition === "direct-repository" && flowpeek) throw new AgentComparisonError("contaminated-baseline", `${field} cannot declare Flowpeek context in the direct-repository condition.`);
+  if (!CONDITIONS.has(condition)) throw new AgentComparisonError("invalid-condition", `${field}.condition must be direct-repository or flopeek.`);
+  exactKeys(value.context, ["inspectedPaths", "estimatedCharacters", "flopeek"], `${field}.context`);
+  const flopeek = value.context.flopeek == null ? null : normalizeFlopeekContext(value.context.flopeek, `${field}.context.flopeek`);
+  if (condition === "flopeek" && !flopeek) throw new AgentComparisonError("missing-flopeek-context", `${field} must declare the Flopeek graph and tools it used.`);
+  if (condition === "direct-repository" && flopeek) throw new AgentComparisonError("contaminated-baseline", `${field} cannot declare Flopeek context in the direct-repository condition.`);
   exactKeys(value.answer, ["targetPaths", "flowStepIds", "relatedTestPaths", "staleContextStatuses", "claimReviews"], `${field}.answer`);
   exactKeys(value.verification, ["status", "evidenceRefs"], `${field}.verification`);
   const verificationStatus = boundedText(value.verification.status, `${field}.verification.status`, 40);
@@ -145,7 +145,7 @@ function normalizeExecution(value, index) {
     context: {
       inspectedPaths: uniqueList(value.context.inspectedPaths, `${field}.context.inspectedPaths`, portablePath, 500),
       estimatedCharacters: nonNegativeNumber(value.context.estimatedCharacters, `${field}.context.estimatedCharacters`),
-      flowpeek,
+      flopeek,
     },
     answer: {
       targetPaths: uniqueList(value.answer.targetPaths, `${field}.answer.targetPaths`, portablePath, 100),
@@ -225,7 +225,7 @@ function scoreExecution(execution, benchmarkCase) {
       estimatedCharacters: execution.context.estimatedCharacters,
       estimatedTokens: Math.ceil(execution.context.estimatedCharacters / 4),
       tokenizerId: TOKEN_ESTIMATOR,
-      flowpeek: execution.context.flowpeek ? { projectId: execution.context.flowpeek.projectId, graphVersion: execution.context.flowpeek.graphVersion, contextRefCount: execution.context.flowpeek.contextRefs.length, toolsUsed: execution.context.flowpeek.toolsUsed } : null,
+      flopeek: execution.context.flopeek ? { projectId: execution.context.flopeek.projectId, graphVersion: execution.context.flopeek.graphVersion, contextRefCount: execution.context.flopeek.contextRefs.length, toolsUsed: execution.context.flopeek.toolsUsed } : null,
     },
     durationMilliseconds: execution.durationMilliseconds,
     claimReview: { reviewed: reviewedClaims.length, unsupported: unsupportedClaims, unknown: execution.answer.claimReviews.length - reviewedClaims.length, unsupportedRate: ratio(unsupportedClaims, reviewedClaims.length) },
@@ -273,7 +273,7 @@ function validatePairs(executions, casesById) {
     pairs.get(execution.pairId).push(execution);
   }
   for (const [pairId, items] of pairs) {
-    if (items.length !== 2 || new Set(items.map((item) => item.condition)).size !== 2) throw new AgentComparisonError("incomplete-pair", `Pair ${pairId} requires exactly one direct-repository and one flowpeek execution.`);
+    if (items.length !== 2 || new Set(items.map((item) => item.condition)).size !== 2) throw new AgentComparisonError("incomplete-pair", `Pair ${pairId} requires exactly one direct-repository and one flopeek execution.`);
     if (new Set(items.map((item) => item.caseId)).size !== 1) throw new AgentComparisonError("pair-case-mismatch", `Pair ${pairId} must use one case.`);
     if (new Set(items.map((item) => `${item.provider.name}\0${item.provider.model}`)).size !== 1) throw new AgentComparisonError("pair-provider-mismatch", `Pair ${pairId} must use the same provider and model.`);
     if (new Set(items.map((item) => item.provider.sessionId)).size !== 2) throw new AgentComparisonError("reused-session", `Pair ${pairId} requires distinct provider sessions.`);
@@ -292,41 +292,41 @@ function evaluateAgentComparison(suiteRoot, casesDefinition, runsInput) {
       suite: { id: definition.suiteId, caseCount: casesById.size },
       status: "not-run",
       evidenceClass: "ai-provider-outcome",
-      providerExecutionInvokedByFlowpeek: false,
+      providerExecutionInvokedByFlopeek: false,
       summary: null,
       reason: "The checked artifact is a privacy-reviewed input template. No provider execution was supplied or inferred.",
-      conclusionBoundary: "Harness availability is not evidence that Flowpeek improves agent outcomes.",
+      conclusionBoundary: "Harness availability is not evidence that Flopeek improves agent outcomes.",
     };
   }
   const pairs = validatePairs(runs.executions, casesById);
   const scored = runs.executions.map((execution) => scoreExecution(execution, casesById.get(execution.caseId)));
   const baseline = aggregate(scored.filter((item) => item.condition === "direct-repository"));
-  const flowpeek = aggregate(scored.filter((item) => item.condition === "flowpeek"));
+  const flopeek = aggregate(scored.filter((item) => item.condition === "flopeek"));
   return {
     schemaVersion: AGENT_COMPARISON_REPORT_SCHEMA,
     studyId: runs.studyId,
     suite: { id: definition.suiteId, caseCount: casesById.size, pairsMeasured: pairs.size },
     status: "measured-from-supplied-provider-executions",
     evidenceClass: "ai-provider-outcome-with-committed-oracle",
-    providerExecutionInvokedByFlowpeek: false,
+    providerExecutionInvokedByFlopeek: false,
     consent: runs.consent,
     independence: { distinctProviders: new Set(scored.map((item) => item.provider.name)).size, distinctModels: new Set(scored.map((item) => `${item.provider.name}\0${item.provider.model}`)).size, providerQuorumClaimed: false },
     executions: scored,
     summary: {
       directRepository: baseline,
-      flowpeek,
+      flopeek,
       pairedDelta: {
-        targetRecall: delta(baseline.targets.recall, flowpeek.targets.recall),
-        flowStepRecall: delta(baseline.flowSteps.recall, flowpeek.flowSteps.recall),
-        relatedTestRecall: delta(baseline.relatedTests.recall, flowpeek.relatedTests.recall),
-        staleContextRate: delta(baseline.staleContext.rate, flowpeek.staleContext.rate),
-        meanDurationMilliseconds: delta(baseline.timing.meanMilliseconds, flowpeek.timing.meanMilliseconds),
-        filesInspected: flowpeek.context.filesInspected - baseline.context.filesInspected,
-        estimatedTokens: flowpeek.context.estimatedTokens - baseline.context.estimatedTokens,
+        targetRecall: delta(baseline.targets.recall, flopeek.targets.recall),
+        flowStepRecall: delta(baseline.flowSteps.recall, flopeek.flowSteps.recall),
+        relatedTestRecall: delta(baseline.relatedTests.recall, flopeek.relatedTests.recall),
+        staleContextRate: delta(baseline.staleContext.rate, flopeek.staleContext.rate),
+        meanDurationMilliseconds: delta(baseline.timing.meanMilliseconds, flopeek.timing.meanMilliseconds),
+        filesInspected: flopeek.context.filesInspected - baseline.context.filesInspected,
+        estimatedTokens: flopeek.context.estimatedTokens - baseline.context.estimatedTokens,
       },
     },
     limitations: [
-      "Flowpeek validates and scores operator-supplied execution metadata; it does not invoke an AI provider or target application.",
+      "Flopeek validates and scores operator-supplied execution metadata; it does not invoke an AI provider or target application.",
       "Provider outputs remain AI-provider outcome evidence even when deterministic scoring uses a committed fixture oracle.",
       "Unsupported-claim rates are available only for separately supplied claim-review labels; absence of labels is unavailable, not zero.",
       "Session identifiers are reduced to one-way fingerprints in the report; source bodies, raw prompts, raw logs, credentials, and machine-local paths are not accepted.",
@@ -345,10 +345,10 @@ function agentComparisonSummary(report) {
   if (report.status === "not-run") return `Agent comparison: not run\n${report.reason}\n${report.conclusionBoundary}`;
   return [
     `Agent comparison: ${report.suite.pairsMeasured} supplied A/B pairs`,
-    `Target recall: direct ${report.summary.directRepository.targets.recall ?? "unavailable"}, Flowpeek ${report.summary.flowpeek.targets.recall ?? "unavailable"}`,
-    `Flow-step recall: direct ${report.summary.directRepository.flowSteps.recall ?? "unavailable"}, Flowpeek ${report.summary.flowpeek.flowSteps.recall ?? "unavailable"}`,
-    `Related-test recall: direct ${report.summary.directRepository.relatedTests.recall ?? "unavailable"}, Flowpeek ${report.summary.flowpeek.relatedTests.recall ?? "unavailable"}`,
-    `Mean duration delta (Flowpeek - direct): ${report.summary.pairedDelta.meanDurationMilliseconds ?? "unavailable"} ms`,
+    `Target recall: direct ${report.summary.directRepository.targets.recall ?? "unavailable"}, Flopeek ${report.summary.flopeek.targets.recall ?? "unavailable"}`,
+    `Flow-step recall: direct ${report.summary.directRepository.flowSteps.recall ?? "unavailable"}, Flopeek ${report.summary.flopeek.flowSteps.recall ?? "unavailable"}`,
+    `Related-test recall: direct ${report.summary.directRepository.relatedTests.recall ?? "unavailable"}, Flopeek ${report.summary.flopeek.relatedTests.recall ?? "unavailable"}`,
+    `Mean duration delta (Flopeek - direct): ${report.summary.pairedDelta.meanDurationMilliseconds ?? "unavailable"} ms`,
     report.conclusionBoundary,
   ].join("\n");
 }

@@ -5,9 +5,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { atomicWriteJson } = require("./graph-cache");
 
-const TEST_RUN_EVENT_SCHEMA = "flowpeek-test-run-event/v1";
-const TEST_RUN_STORE_SCHEMA = "flowpeek-test-run-events/v1";
-const TEST_RUN_EVENTS_RELATIVE_PATH = ".flowpeek/test-runs/events.json";
+const TEST_RUN_EVENT_SCHEMA = "flopeek-test-run-event/v1";
+const TEST_RUN_STORE_SCHEMA = "flopeek-test-run-events/v1";
+const TEST_RUN_EVENTS_RELATIVE_PATH = ".flopeek/test-runs/events.json";
 const EVENT_TYPES = new Set(["run-started", "step-started", "step-passed", "step-failed", "run-passed", "run-failed", "run-cancelled"]);
 const TERMINAL_TYPES = new Set(["step-failed", "run-passed", "run-failed", "run-cancelled"]);
 const STEP_TYPES = new Set(["step-started", "step-passed", "step-failed"]);
@@ -86,7 +86,7 @@ function readTestRunStore(root, projectId) {
     const store = JSON.parse(fs.readFileSync(target, "utf8"));
     const operations = Array.isArray(store?.events) ? store.events.map((event) => event.operationId) : [];
     if (!onlyKnownKeys(store, ["schemaVersion", "projectId", "events"]) || store.schemaVersion !== TEST_RUN_STORE_SCHEMA || store.projectId !== projectId || !Array.isArray(store.events) || !store.events.every(isRecord) || new Set(operations).size !== operations.length) {
-      return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-test-run-store", message: "Test-run journal does not match flowpeek-test-run-events/v1." }] };
+      return { status: "invalid", path: target, store: null, diagnostics: [{ code: "invalid-test-run-store", message: "Test-run journal does not match flopeek-test-run-events/v1." }] };
     }
     return { status: "valid", path: target, store, diagnostics: [] };
   } catch (error) {
@@ -176,7 +176,7 @@ function saveTestRunEvent(root, graph, lens, input) {
   const existing = read.store.events.find((event) => event.operationId === normalized.operationId);
   if (existing) {
     if (existing.inputFingerprint !== inputFingerprint) throw new TestRunJournalError("operation-id-conflict", "operationId already belongs to another test-run event.");
-    return { schemaVersion: "flowpeek-test-run-event-result/v1", created: false, event: existing, run: summarizeRun(read.store.events.filter((event) => event.runId === existing.runId)) };
+    return { schemaVersion: "flopeek-test-run-event-result/v1", created: false, event: existing, run: summarizeRun(read.store.events.filter((event) => event.runId === existing.runId)) };
   }
   if (read.store.events.length >= MAX_EVENTS) throw new TestRunJournalError("test-run-store-full", `Test-run journal reached its explicit ${MAX_EVENTS}-event limit; archive or remove it before recording more events.`, 507);
   const runEvents = read.store.events.filter((event) => event.runId === normalized.runId);
@@ -204,12 +204,12 @@ function saveTestRunEvent(root, graph, lens, input) {
   };
   const event = { ...base, id: `test-run-event:${fingerprint(base).slice(7, 39)}` };
   atomicWriteJson(read.path, { ...read.store, events: [...read.store.events, event] });
-  return { schemaVersion: "flowpeek-test-run-event-result/v1", created: true, event, run: summarizeRun([...runEvents, event]) };
+  return { schemaVersion: "flopeek-test-run-event-result/v1", created: true, event, run: summarizeRun([...runEvents, event]) };
 }
 
 function listTestRuns(root, graph, options = {}) {
   const read = readTestRunStore(root, graph.project.projectId);
-  if (read.status === "invalid") return { schemaVersion: "flowpeek-test-run-list/v1", status: "unavailable", runs: [], diagnostics: read.diagnostics };
+  if (read.status === "invalid") return { schemaVersion: "flopeek-test-run-list/v1", status: "unavailable", runs: [], diagnostics: read.diagnostics };
   const grouped = new Map();
   for (const event of read.store.events) grouped.set(event.runId, [...(grouped.get(event.runId) || []), event]);
   let runs = [...grouped.values()].map(summarizeRun);
@@ -218,7 +218,7 @@ function listTestRuns(root, graph, options = {}) {
   runs.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.runId.localeCompare(right.runId));
   const limit = Number.isSafeInteger(Number(options.limit)) ? Math.max(1, Math.min(Number(options.limit), 100)) : 20;
   return {
-    schemaVersion: "flowpeek-test-run-list/v1",
+    schemaVersion: "flopeek-test-run-list/v1",
     status: "available",
     project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion },
     totalMatched: runs.length,
@@ -226,7 +226,7 @@ function listTestRuns(root, graph, options = {}) {
     truncated: runs.length > limit,
     runs: runs.slice(0, limit),
     diagnostics: [],
-    limitation: "Runs are explicit adapter-reported events. Flowpeek does not execute commands, capture raw logs, or claim that static step order is runtime order.",
+    limitation: "Runs are explicit adapter-reported events. Flopeek does not execute commands, capture raw logs, or claim that static step order is runtime order.",
   };
 }
 

@@ -5,13 +5,13 @@ const { execFileSync } = require("node:child_process");
 const { atomicWriteJson, readGraphCacheResult, validateGraphForCache, writeGraphCache: writeValidatedGraphCache } = require("./graph-cache");
 const { createAdjacentFlowComparisons } = require("./flow-comparison");
 
-const GRAPH_STATE_SCHEMA = "flowpeek-graph-state/v1";
-const GRAPH_DELTA_SCHEMA = "flowpeek-delta/v1";
-const STATE_RELATIVE_PATH = ".flowpeek/state.json";
-const DELTAS_RELATIVE_PATH = ".flowpeek/deltas";
+const GRAPH_STATE_SCHEMA = "flopeek-graph-state/v1";
+const GRAPH_DELTA_SCHEMA = "flopeek-delta/v1";
+const STATE_RELATIVE_PATH = ".flopeek/state.json";
+const DELTAS_RELATIVE_PATH = ".flopeek/deltas";
 const DEFAULT_DELTA_HISTORY_LIMIT = 8;
 const DEFAULT_DELTA_HISTORY_MAX_BYTES = 16 * 1024 * 1024;
-const DELTA_PRUNE_JOURNAL_SCHEMA = "flowpeek-graph-delta-prune-journal/v1";
+const DELTA_PRUNE_JOURNAL_SCHEMA = "flopeek-graph-delta-prune-journal/v1";
 
 class GraphStateError extends Error {
   constructor(code, message) {
@@ -59,8 +59,8 @@ function readGraphStateResult(root, expectedProjectId = null) {
   if (!fs.existsSync(target)) return { status: "missing", path: target, state: null, diagnostics: [] };
   try {
     const value = JSON.parse(fs.readFileSync(target, "utf8"));
-    if (!isStateRecord(value)) return { status: "invalid", path: target, state: null, diagnostics: [{ code: "invalid-state-record", message: "Graph state metadata does not match flowpeek-graph-state/v1.", path: null }] };
-    if (expectedProjectId && value.projectId !== expectedProjectId) return { status: "invalid", path: target, state: null, diagnostics: [{ code: "wrong-state-project-id", message: "Graph state metadata belongs to a different Flowpeek project identity.", path: "projectId" }] };
+    if (!isStateRecord(value)) return { status: "invalid", path: target, state: null, diagnostics: [{ code: "invalid-state-record", message: "Graph state metadata does not match flopeek-graph-state/v1.", path: null }] };
+    if (expectedProjectId && value.projectId !== expectedProjectId) return { status: "invalid", path: target, state: null, diagnostics: [{ code: "wrong-state-project-id", message: "Graph state metadata belongs to a different Flopeek project identity.", path: "projectId" }] };
     return { status: "valid", path: target, state: value, diagnostics: [] };
   } catch (error) {
     return { status: "invalid", path: target, state: null, diagnostics: [{ code: "invalid-state-json", message: `Graph state metadata is not valid JSON (${error.message}).`, path: null }] };
@@ -157,7 +157,7 @@ function changedPathProvenance(root, previousGraph, options = {}) {
       .map((value) => value.trim().replaceAll("\\", "/"))
       .filter(Boolean);
     const paths = [...new Set([...changed, ...untracked])]
-      .filter((value) => value !== ".flowpeek" && !value.startsWith(".flowpeek/"))
+      .filter((value) => value !== ".flopeek" && !value.startsWith(".flopeek/") && value !== ".flowpeek" && !value.startsWith(".flowpeek/"))
       .sort();
     return { status: "available", source: "git-revision-diff", reason: null, paths };
   } catch {
@@ -391,7 +391,7 @@ function deltaRetentionPlan(root, options = {}) {
 function listGraphDeltaHistory(root, options = {}) {
   const plan = deltaRetentionPlan(root, options);
   return {
-    schemaVersion: "flowpeek-graph-delta-history/v1",
+    schemaVersion: "flopeek-graph-delta-history/v1",
     status: "available",
     policy: {
       mode: "manual-dry-run-first",
@@ -423,7 +423,7 @@ function pruneGraphDeltas(root, options = {}) {
   const dryRun = options.dryRun !== false;
   const recovery = dryRun ? { status: "not-run", diagnostics: [] } : recoverGraphDeltaPrune(root);
   if (recovery.status === "unavailable" || recovery.status === "partial") {
-    return { schemaVersion: "flowpeek-graph-delta-history-prune/v1", status: "unavailable", dryRun, pruned: [], retained: [], reclaimedBytes: 0, diagnostics: recovery.diagnostics, limitation: "A previous delta prune requires explicit recovery before another history mutation can proceed." };
+    return { schemaVersion: "flopeek-graph-delta-history-prune/v1", status: "unavailable", dryRun, pruned: [], retained: [], reclaimedBytes: 0, diagnostics: recovery.diagnostics, limitation: "A previous delta prune requires explicit recovery before another history mutation can proceed." };
   }
   const plan = deltaRetentionPlan(root, options);
   const pruned = plan.prunable.map((entry) => ({ relativePath: entry.relativePath, fromGraphVersion: entry.fromGraphVersion, toGraphVersion: entry.toGraphVersion, bytes: entry.bytes }));
@@ -457,7 +457,7 @@ function pruneGraphDeltas(root, options = {}) {
     }
   }
   return {
-    schemaVersion: "flowpeek-graph-delta-history-prune/v1",
+    schemaVersion: "flopeek-graph-delta-history-prune/v1",
     status: diagnostics.length ? "partial" : "available",
     dryRun,
     policy: { keepDeltas: plan.keepDeltas, maxBytes: plan.maxBytes, latestAdjacentDelta: "always-retained", unknownFiles: "protected-unclassified" },

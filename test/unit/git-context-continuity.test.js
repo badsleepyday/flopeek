@@ -16,11 +16,11 @@ function write(root, relative, content) { const target = path.join(root, relativ
 function commit(root, subject) { git(root, ["add", "."]); git(root, ["commit", "-m", subject]); }
 
 function repository() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-git-context-continuity-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-git-context-continuity-"));
   git(root, ["init"]);
-  git(root, ["config", "user.email", "flowpeek@example.invalid"]);
-  git(root, ["config", "user.name", "Flowpeek test"]);
-  write(root, ".gitignore", ".flowpeek/\n");
+  git(root, ["config", "user.email", "flopeek@example.invalid"]);
+  git(root, ["config", "user.name", "Flopeek test"]);
+  write(root, ".gitignore", ".flopeek/\n");
   write(root, "package.json", JSON.stringify({ name: "git-context-continuity" }));
   write(root, "src/app/api/orders/route.ts", "export async function GET() { return { status: 'initial' }; }\n");
   commit(root, "add orders endpoint");
@@ -37,7 +37,7 @@ test("Git Context continuity distinguishes exact static flow identity from same-
     const card = getFlowContextCard(graph, graph.flows[0].id).card;
     const statusBefore = git(fixture.root, ["status", "--porcelain"]);
     const result = getGitContextContinuity(graph, card.contextRef, { from: fixture.before, to: fixture.after });
-    assert.equal(result.schemaVersion, "flowpeek-git-context-continuity/v1");
+    assert.equal(result.schemaVersion, "flopeek-git-context-continuity/v1");
     assert.equal(result.status, "available");
     assert.equal(result.context.kind, "flow");
     assert.deepEqual(result.context.paths, ["src/app/api/orders/route.ts"]);

@@ -6,7 +6,7 @@ const { getGraphDelta } = require("./graph-delta");
 const { scanRepository } = require("./scanner");
 const { resolveProjectIdentity } = require("./project-identity");
 
-const HISTORY_SCHEMA = "flowpeek-git-history/v1";
+const HISTORY_SCHEMA = "flopeek-git-history/v1";
 const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
 
 function git(root, args, options = {}) {
@@ -43,7 +43,7 @@ function commitMetadata(root, ref) {
 }
 
 function historyDirectory(root) {
-  return path.join(root, ".flowpeek", "history");
+  return path.join(root, ".flopeek", "history");
 }
 
 function snapshotPath(root, revision) {
@@ -156,7 +156,7 @@ function extractGitArchive(archive, temporaryRoot) {
 }
 
 function scanCommit(root, commit) {
-  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-git-snapshot-"));
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-git-snapshot-"));
   try {
     // Extract Git's own archive in-process. Windows tar implementations can
     // treat C:\\temp as a remote target, while an in-process extractor keeps the
@@ -236,13 +236,13 @@ function compareGitSnapshots(inputRoot, options = {}) {
   const to = createGitSnapshot(root, { ref: options.to || "HEAD" });
   const limit = options.limit;
   return {
-    schemaVersion: "flowpeek-git-history-comparison/v1",
+    schemaVersion: "flopeek-git-history-comparison/v1",
     before: { commit: from.snapshot.commit, path: from.path, created: from.created },
     after: { commit: to.snapshot.commit, path: to.path, created: to.created },
     changedPaths: changedPathsBetween(root, from.snapshot.commit.revision, to.snapshot.commit.revision),
     topology: getGraphDelta(from.snapshot.graph, to.snapshot.graph, { limit }),
     flows: getFlowDelta(from.snapshot.graph, to.snapshot.graph, { limit }),
-    limitation: "Snapshots use Git commit archives and are stored locally in .flowpeek/history. They exclude uncommitted working-tree changes and do not execute code or configuration.",
+    limitation: "Snapshots use Git commit archives and are stored locally in .flopeek/history. They exclude uncommitted working-tree changes and do not execute code or configuration.",
   };
 }
 

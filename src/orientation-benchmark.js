@@ -10,12 +10,12 @@ const { findNodes, getRelatedTests, getRequestFlows, resolveContextRef } = requi
 const { getFlowProjection: buildFlowProjection } = require("./flow-lens");
 const { createRepositoryScanner, scanRepository, writeGraphCache } = require("./scanner");
 
-const ORIENTATION_CASES_SCHEMA = "flowpeek-orientation-cases/v1";
-const ORIENTATION_REPORT_SCHEMA = "flowpeek-orientation-benchmark/v2";
-const ORIENTATION_COMPARISON_SCHEMA = "flowpeek-orientation-comparison/v2";
-const TOKEN_ESTIMATOR = "flowpeek-char4-estimator/v1";
-const CONDITIONS = new Set(["direct-repository", "flowpeek"]);
-const IGNORED_DIRECTORIES = new Set([".flowpeek", ".git", ".next", ".nuxt", ".turbo", "build", "coverage", "dist", "node_modules", "out", "target", "vendor"]);
+const ORIENTATION_CASES_SCHEMA = "flopeek-orientation-cases/v1";
+const ORIENTATION_REPORT_SCHEMA = "flopeek-orientation-benchmark/v2";
+const ORIENTATION_COMPARISON_SCHEMA = "flopeek-orientation-comparison/v2";
+const TOKEN_ESTIMATOR = "flopeek-char4-estimator/v1";
+const CONDITIONS = new Set(["direct-repository", "flopeek"]);
+const IGNORED_DIRECTORIES = new Set([".flopeek", ".flowpeek", ".git", ".next", ".nuxt", ".turbo", "build", "coverage", "dist", "node_modules", "out", "target", "vendor"]);
 const MAX_REPOSITORIES = 20;
 const MAX_CASES_PER_REPOSITORY = 50;
 const MAX_TEXT_FILES = 10_000;
@@ -254,7 +254,7 @@ function directObservation(inventory, benchmarkCase, preparationMilliseconds) {
   };
 }
 
-function flowpeekObservation(graph, benchmarkCase, preparationMilliseconds) {
+function flopeekObservation(graph, benchmarkCase, preparationMilliseconds) {
   const started = process.hrtime.bigint();
   const nodeResults = benchmarkCase.request.searchTerms.flatMap((term) => findNodes(graph, { query: term, scope: "application" }).results || []);
   const boundedNodeResults = [];
@@ -316,7 +316,7 @@ function copyRepository(source, destination) {
 
 function staleProbe(repositoryRoot, benchmarkCase) {
   if (!benchmarkCase.staleContext) return { status: "not-requested", requested: 0, detected: null, rate: null };
-  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-orientation-stale-"));
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-orientation-stale-"));
   try {
     copyRepository(repositoryRoot, temporaryRoot);
     const scanner = createRepositoryScanner(temporaryRoot);
@@ -402,8 +402,8 @@ function evaluateCondition(suiteRoot, definition, condition) {
     const cases = repository.cases.map((benchmarkCase) => {
       const observation = condition === "direct-repository"
         ? directObservation(prepared, benchmarkCase, preparationMilliseconds)
-        : flowpeekObservation(prepared, benchmarkCase, preparationMilliseconds);
-      if (condition === "flowpeek" && benchmarkCase.staleContext) {
+        : flopeekObservation(prepared, benchmarkCase, preparationMilliseconds);
+      if (condition === "flopeek" && benchmarkCase.staleContext) {
         const validationStarted = process.hrtime.bigint();
         observation.staleContextDetection = staleProbe(repository.root, benchmarkCase);
         observation.timing.separateValidationMilliseconds = Number((Number(process.hrtime.bigint() - validationStarted) / 1_000_000).toFixed(3));
@@ -436,7 +436,7 @@ function evaluateCondition(suiteRoot, definition, condition) {
     schemaVersion: ORIENTATION_REPORT_SCHEMA,
     generatedAt: new Date().toISOString(),
     runEnvironment: {
-      flowpeekVersion: packageInfo.version,
+      flopeekVersion: packageInfo.version,
       nodeVersion: process.versions.node,
       platform: process.platform,
       architecture: process.arch,
@@ -459,7 +459,7 @@ function evaluateCondition(suiteRoot, definition, condition) {
       "This is a deterministic retrieval benchmark, not a human productivity study or an AI-agent task-outcome study.",
       "Direct-repository uses plain case-insensitive substring retrieval and does not produce or score relationship order.",
       "Repository-declared benchmark oracle files are excluded from direct retrieval and disclosed per repository.",
-      "Flowpeek results are static parser and graph projections; they do not prove runtime order, business intent, successful behavior, or complete coverage.",
+      "Flopeek results are static parser and graph projections; they do not prove runtime order, business intent, successful behavior, or complete coverage.",
       "Timing is host-specific and non-gating. Repository preparation, bounded case retrieval, separate stale-ref validation, and unavailable process startup/module load are disclosed independently.",
       "Repository preparation is counted once per repository even when that repository contains multiple cases.",
       "Files inspected means unique paths exposed in the bounded result. Repository files processed is reported separately per case.",
@@ -468,23 +468,23 @@ function evaluateCondition(suiteRoot, definition, condition) {
   };
 }
 
-function compareReports(baseline, flowpeek) {
-  if (baseline.suite.id !== flowpeek.suite.id || baseline.suite.caseCount !== flowpeek.suite.caseCount) throw new OrientationBenchmarkError("incompatible-reports", "Orientation reports must use the same suite and case count.");
+function compareReports(baseline, flopeek) {
+  if (baseline.suite.id !== flopeek.suite.id || baseline.suite.caseCount !== flopeek.suite.caseCount) throw new OrientationBenchmarkError("incompatible-reports", "Orientation reports must use the same suite and case count.");
   const safeReduction = (left, right) => left > 0 ? Number(((left - right) / left).toFixed(6)) : null;
   return {
     schemaVersion: ORIENTATION_COMPARISON_SCHEMA,
     suite: baseline.suite,
     baseline,
-    flowpeek,
+    flopeek,
     comparison: {
-      correctTargetRecallDelta: baseline.summary.correctTargetRetrieval.recall !== null && flowpeek.summary.correctTargetRetrieval.recall !== null ? Number((flowpeek.summary.correctTargetRetrieval.recall - baseline.summary.correctTargetRetrieval.recall).toFixed(6)) : null,
-      relatedTestRecallDelta: baseline.summary.relatedTests.recall !== null && flowpeek.summary.relatedTests.recall !== null ? Number((flowpeek.summary.relatedTests.recall - baseline.summary.relatedTests.recall).toFixed(6)) : null,
-      contextFilesReduction: safeReduction(baseline.summary.context.filesInspected, flowpeek.summary.context.filesInspected),
-      estimatedTokenReduction: safeReduction(baseline.summary.context.estimatedTokens, flowpeek.summary.context.estimatedTokens),
-      flowStepComparison: { status: "not-comparable", baseline: baseline.summary.flowSteps.status, flowpeek: flowpeek.summary.flowSteps.status, reason: "The lexical baseline does not create relationship order, so Flowpeek flow recall is reported independently rather than as a fabricated delta." },
-      timing: { status: "reported-not-gating", baseline: baseline.summary.timing, flowpeek: flowpeek.summary.timing },
+      correctTargetRecallDelta: baseline.summary.correctTargetRetrieval.recall !== null && flopeek.summary.correctTargetRetrieval.recall !== null ? Number((flopeek.summary.correctTargetRetrieval.recall - baseline.summary.correctTargetRetrieval.recall).toFixed(6)) : null,
+      relatedTestRecallDelta: baseline.summary.relatedTests.recall !== null && flopeek.summary.relatedTests.recall !== null ? Number((flopeek.summary.relatedTests.recall - baseline.summary.relatedTests.recall).toFixed(6)) : null,
+      contextFilesReduction: safeReduction(baseline.summary.context.filesInspected, flopeek.summary.context.filesInspected),
+      estimatedTokenReduction: safeReduction(baseline.summary.context.estimatedTokens, flopeek.summary.context.estimatedTokens),
+      flowStepComparison: { status: "not-comparable", baseline: baseline.summary.flowSteps.status, flopeek: flopeek.summary.flowSteps.status, reason: "The lexical baseline does not create relationship order, so Flopeek flow recall is reported independently rather than as a fabricated delta." },
+      timing: { status: "reported-not-gating", baseline: baseline.summary.timing, flopeek: flopeek.summary.timing },
     },
-    conclusionBoundary: "The comparison measures deterministic retrieval on pinned fixtures only. It does not prove that developers or AI agents are faster, more accurate, or more successful with Flowpeek.",
+    conclusionBoundary: "The comparison measures deterministic retrieval on pinned fixtures only. It does not prove that developers or AI agents are faster, more accurate, or more successful with Flopeek.",
   };
 }
 
@@ -496,22 +496,22 @@ function loadOrientationCases(file) {
 function evaluateOrientation(suiteRoot, definition, options = {}) {
   const condition = options.condition || "both";
   if (condition === "direct-repository" || condition === "baseline") return evaluateCondition(suiteRoot, definition, "direct-repository");
-  if (condition === "flowpeek") return evaluateCondition(suiteRoot, definition, "flowpeek");
-  if (condition !== "both") throw new OrientationBenchmarkError("invalid-condition", "condition must be baseline, direct-repository, flowpeek, or both.");
-  return compareReports(evaluateCondition(suiteRoot, definition, "direct-repository"), evaluateCondition(suiteRoot, definition, "flowpeek"));
+  if (condition === "flopeek") return evaluateCondition(suiteRoot, definition, "flopeek");
+  if (condition !== "both") throw new OrientationBenchmarkError("invalid-condition", "condition must be baseline, direct-repository, flopeek, or both.");
+  return compareReports(evaluateCondition(suiteRoot, definition, "direct-repository"), evaluateCondition(suiteRoot, definition, "flopeek"));
 }
 
 function orientationSummary(report) {
   if (report.schemaVersion === ORIENTATION_COMPARISON_SCHEMA) {
     return [
       `Orientation benchmark: ${report.suite.caseCount} deterministic cases`,
-      `Target recall: baseline ${report.baseline.summary.correctTargetRetrieval.recall ?? "unavailable"}, Flowpeek ${report.flowpeek.summary.correctTargetRetrieval.recall ?? "unavailable"}`,
-      `Related-test recall: baseline ${report.baseline.summary.relatedTests.recall ?? "unavailable"}, Flowpeek ${report.flowpeek.summary.relatedTests.recall ?? "unavailable"}`,
-      `Context files: baseline ${report.baseline.summary.context.filesInspected}, Flowpeek ${report.flowpeek.summary.context.filesInspected}`,
-      `Estimated tokens: baseline ${report.baseline.summary.context.estimatedTokens}, Flowpeek ${report.flowpeek.summary.context.estimatedTokens}`,
-      `Flow steps: baseline ${report.baseline.summary.flowSteps.status}, Flowpeek ${report.flowpeek.summary.flowSteps.recall ?? report.flowpeek.summary.flowSteps.status}`,
-      `Preparation + retrieval: baseline ${report.baseline.summary.timing.totalTimeToUsefulContextMilliseconds} ms, Flowpeek ${report.flowpeek.summary.timing.totalTimeToUsefulContextMilliseconds} ms`,
-      `Separate stale-ref validation: baseline ${report.baseline.summary.timing.separateValidationMilliseconds} ms, Flowpeek ${report.flowpeek.summary.timing.separateValidationMilliseconds} ms`,
+      `Target recall: baseline ${report.baseline.summary.correctTargetRetrieval.recall ?? "unavailable"}, Flopeek ${report.flopeek.summary.correctTargetRetrieval.recall ?? "unavailable"}`,
+      `Related-test recall: baseline ${report.baseline.summary.relatedTests.recall ?? "unavailable"}, Flopeek ${report.flopeek.summary.relatedTests.recall ?? "unavailable"}`,
+      `Context files: baseline ${report.baseline.summary.context.filesInspected}, Flopeek ${report.flopeek.summary.context.filesInspected}`,
+      `Estimated tokens: baseline ${report.baseline.summary.context.estimatedTokens}, Flopeek ${report.flopeek.summary.context.estimatedTokens}`,
+      `Flow steps: baseline ${report.baseline.summary.flowSteps.status}, Flopeek ${report.flopeek.summary.flowSteps.recall ?? report.flopeek.summary.flowSteps.status}`,
+      `Preparation + retrieval: baseline ${report.baseline.summary.timing.totalTimeToUsefulContextMilliseconds} ms, Flopeek ${report.flopeek.summary.timing.totalTimeToUsefulContextMilliseconds} ms`,
+      `Separate stale-ref validation: baseline ${report.baseline.summary.timing.separateValidationMilliseconds} ms, Flopeek ${report.flopeek.summary.timing.separateValidationMilliseconds} ms`,
       "Human study: not run. AI-agent study: not run. Timing is host-specific and non-gating.",
     ].join("\n");
   }

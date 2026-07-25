@@ -1,6 +1,6 @@
-# Use Flowpeek
+# Use Flopeek
 
-Flowpeek helps you answer four questions before changing an unfamiliar repository:
+Flopeek helps you answer four questions before changing an unfamiliar repository:
 
 1. Where does this request or feature start?
 2. Which static path connects it to code and integrations?
@@ -9,20 +9,20 @@ Flowpeek helps you answer four questions before changing an unfamiliar repositor
 
 ## Start locally
 
-Flowpeek is currently used from its source checkout:
+Flopeek is currently used from its source checkout:
 
 ```powershell
-git clone https://github.com/badsleepyday/flowpeek.git
-cd flowpeek
+git clone https://github.com/badsleepyday/flopeek.git
+cd flopeek
 npm install
-npm exec -- flowpeek serve D:\work\my-project
+npm exec -- flopeek serve D:\work\my-project
 ```
 
-The Viewer opens on loopback. If the preferred port is occupied, Flowpeek advances to an available port without stopping the existing service. Use `--strict-port` when a fixed port is required.
+The Viewer opens on loopback. If the preferred port is occupied, Flopeek advances to an available port without stopping the existing service. Use `--strict-port` when a fixed port is required.
 
 ```powershell
-npm exec -- flowpeek serve D:\work\my-project --port 4780
-npm exec -- flowpeek serve D:\work\my-project --port 4780 --strict-port
+npm exec -- flopeek serve D:\work\my-project --port 4780
+npm exec -- flopeek serve D:\work\my-project --port 4780 --strict-port
 ```
 
 ## Read the Viewer
@@ -44,12 +44,12 @@ Open a detected HTTP/request endpoint, a supported literal package script, a nar
 
 A package-script entry is intentionally narrow: the manifest must declare one
 supported runner followed by one repository-local scanned source-file target,
-for example `node src/main.ts`. Flowpeek records the declaration and its exact
+for example `node src/main.ts`. Flopeek records the declaration and its exact
 target edge; it does not run the script, validate the runner, or infer its
 purpose. Shell composition, flags, quoted values, package-manager indirection,
 and unsupported framework command forms remain visible only as unsupported entry inventory.
 
-A Django management-command entry is intentionally narrow: Flowpeek requires a
+A Django management-command entry is intentionally narrow: Flopeek requires a
 non-private `management/commands/<name>.py` module, one top-level `Command`
 class directly extending an imported `django.core.management.base.BaseCommand`
 binding, and one direct `handle` method. It records the declaration and exact
@@ -58,15 +58,15 @@ invoke the command, or infer its purpose. Indirect base classes, dynamic
 registration, and alternate command forms remain unsupported entry inventory.
 
 Click, Typer, and Flask CLI command entries are also intentionally narrow.
-Flowpeek accepts a direct Click module decorator, a decorator on a direct
+Flopeek accepts a direct Click module decorator, a decorator on a direct
 top-level `typer.Typer()` receiver, or a CLI decorator on a direct top-level
 imported `Flask` receiver. Each must target one direct top-level function and
-use a default or literal command name. Flowpeek does not import the module,
+use a default or literal command name. Flopeek does not import the module,
 initialize the application, prove registration, invoke the command, or infer
 its purpose. Factory indirection, computed decorators, and computed names stay
 in unsupported entry inventory.
 
-A node-cron schedule entry is intentionally narrower still: Flowpeek requires a
+A node-cron schedule entry is intentionally narrower still: Flopeek requires a
 module-scope default `cron` import from `node-cron`, a literal five- or six-field cron
 expression, and one unshadowed local top-level function identifier, for example
 `cron.schedule("0 * * * *", refreshSnapshot)`. It records the static
@@ -87,7 +87,7 @@ Use **Copy reference**, **Copy JSON**, or **Copy Markdown**. A reference such as
 fp://local/<project-id>/flow/<flow-id>@<graph-version>
 ```
 
-can resolve as `current`, `stale`, `historical`, or `unresolved`. Flowpeek never silently redirects an old reference.
+can resolve as `current`, `stale`, `historical`, or `unresolved`. Flopeek never silently redirects an old reference.
 
 ## Keep the Viewer open while coding
 
@@ -106,7 +106,7 @@ A static comparison explains graph evidence. It does not prove runtime order or 
 
 ## Inspect the local Work ledger
 
-Flowpeek currently stores evidence-linked delivery metadata separately from the
+Flopeek currently stores evidence-linked delivery metadata separately from the
 technical graph. The Viewer **Work** inspector is read-only and shows planned
 records, Context Ref freshness, available workflow methods, and recent append-
 only actual events.
@@ -114,20 +114,20 @@ only actual events.
 Use the CLI for compact read-only inventory:
 
 ```powershell
-npm exec -- flowpeek work list D:\work\my-project
-npm exec -- flowpeek work timeline D:\work\my-project --record task-id
-npm exec -- flowpeek work workflows D:\work\my-project
-npm exec -- flowpeek work dependencies D:\work\my-project --record task-id
+npm exec -- flopeek work list D:\work\my-project
+npm exec -- flopeek work timeline D:\work\my-project --record task-id
+npm exec -- flopeek work workflows D:\work\my-project
+npm exec -- flopeek work dependencies D:\work\my-project --record task-id
 ```
 
 Trusted local HTTP clients and MCP metadata tools can create Work records,
 record events, assign a workflow, and request evidence-gated transitions. These
-operations update `.flowpeek/delivery` only. A record, event, or workflow state
+operations update `.flopeek/delivery` only. A record, event, or workflow state
 does not prove that source changed, a test passed, approval authority exists, a
 release occurred, or runtime behavior succeeded.
 
 When a record declares dependencies, `work dependencies` reports whether each
-one is locally `ready`, `blocking`, `unresolved`, or `unknown`. Flowpeek blocks
+one is locally `ready`, `blocking`, `unresolved`, or `unknown`. Flopeek blocks
 only built-in workflow entry into implementation when a declared dependency is
 not ready. The result is a delivery-metadata guard: it does not prove that the
 dependency's source implementation, tests, approval, release, runtime behavior,
@@ -143,7 +143,7 @@ When a handoff needs bounded local Git context, resolve the exact Context Ref
 first, then inspect only commits reachable from the current attached branch:
 
 ```powershell
-npm exec -- flowpeek git-evidence D:\work\my-project --context-ref "fp://local/..." --limit 12 --format json
+npm exec -- flopeek git-evidence D:\work\my-project --context-ref "fp://local/..." --limit 12 --format json
 ```
 
 This is path-touch evidence for the current Context Card paths. It does not
@@ -154,7 +154,7 @@ explicitly unavailable.
 To compare the exact static Context Ref across two pinned commits, use:
 
 ```powershell
-npm exec -- flowpeek git-continuity D:\work\my-project --context-ref "fp://local/..." --from HEAD~1 --to HEAD --format json
+npm exec -- flopeek git-continuity D:\work\my-project --context-ref "fp://local/..." --from HEAD~1 --to HEAD --format json
 ```
 
 The result distinguishes an exact static node/flow identity from nodes found at
@@ -163,11 +163,11 @@ match, semantic-equivalence claim, or runtime proof.
 
 ## Give the graph to a coding agent
 
-Install the project-local Flowpeek skill and MCP entry:
+Install the project-local Flopeek skill and MCP entry:
 
 ```powershell
-npm exec -- flowpeek install D:\work\my-project --platform codex
-npm exec -- flowpeek doctor D:\work\my-project --platform codex
+npm exec -- flopeek install D:\work\my-project --platform codex
+npm exec -- flopeek doctor D:\work\my-project --platform codex
 ```
 
 Supported installer targets are `codex`, `claude`, `cursor`, and `gemini`. Existing unrelated configuration is preserved; unmanaged conflicts are refused.
@@ -186,7 +186,7 @@ Confirm     get_scan_status
 Review      get_changed_contexts / resolve_context_ref
 ```
 
-The agent still reads and edits source through its own workspace tools. Flowpeek MCP does not expose source bodies or arbitrary command execution.
+The agent still reads and edits source through its own workspace tools. Flopeek MCP does not expose source bodies or arbitrary command execution.
 
 ### Find repeated static view conventions
 
@@ -195,7 +195,7 @@ opt-in **Find repeated static conventions** action. CLI and MCP use the same
 bounded projection:
 
 ```powershell
-npm exec -- flowpeek related-implementations D:\work\my-project --context-ref "fp://local/..." --format summary
+npm exec -- flopeek related-implementations D:\work\my-project --context-ref "fp://local/..." --format summary
 ```
 
 `get_related_implementations` compares only same-extension source files and
@@ -206,13 +206,13 @@ not prove UI behavior, runtime wiring, semantic equivalence, ownership, or a
 relationship beyond the reported exact token co-occurrence.
 
 Treat `complete` + `current` as current-source scan evidence. When status is
-`stale-unverified`, Flowpeek is deliberately serving the last complete graph
+`stale-unverified`, Flopeek is deliberately serving the last complete graph
 instead of a partial result. A bounded scan can be stopped with `cancel_scan`;
 unbounded scans cannot be interrupted.
 
 ## Control repository scope
 
-Create `.flowpeek/config.json` when a monorepo needs explicit roots or exclusions. Flowpeek validates the file before updating cache evidence.
+Create `.flopeek/config.json` when a monorepo needs explicit roots or exclusions. Flopeek validates the file before updating cache evidence.
 
 ```json
 {
@@ -229,7 +229,7 @@ Scope controls what is treated as application evidence. It does not make unsuppo
 Use discovery first when the repository is large or unfamiliar:
 
 ```powershell
-npm exec -- flowpeek discover D:\work\my-project --max-files 5000 --max-bytes 250000000 --budget-ms 10000
+npm exec -- flopeek discover D:\work\my-project --max-files 5000 --max-bytes 250000000 --budget-ms 10000
 ```
 
 Discovery reads static inventory and configuration only. It does not parse
@@ -239,10 +239,10 @@ which declared limit was exceeded.
 Run a complete-result-only bounded scan with the same controls:
 
 ```powershell
-npm exec -- flowpeek scan D:\work\my-project --max-files 5000 --max-bytes 250000000 --budget-ms 60000
+npm exec -- flopeek scan D:\work\my-project --max-files 5000 --max-bytes 250000000 --budget-ms 60000
 ```
 
-Flowpeek writes the canonical graph cache only after the discovered source plan
+Flopeek writes the canonical graph cache only after the discovered source plan
 was analyzed completely and its inventory fingerprint still matches. A bounded,
 cancelled, invalidated, or failed result is diagnostic output, not a partial
 technical graph. The same complete-result-only contract applies to the CLI,
@@ -256,10 +256,10 @@ When the repository is large, select a concrete package directory rather than
 asking the first graph to cover every package:
 
 ```powershell
-npm exec -- flowpeek discover D:\work\my-project --package apps\api --format json
-npm exec -- flowpeek scan D:\work\my-project --package apps\api
-npm exec -- flowpeek serve D:\work\my-project --package apps\api
-npm exec -- flowpeek mcp D:\work\my-project --package apps\api
+npm exec -- flopeek discover D:\work\my-project --package apps\api --format json
+npm exec -- flopeek scan D:\work\my-project --package apps\api
+npm exec -- flopeek serve D:\work\my-project --package apps\api
+npm exec -- flopeek mcp D:\work\my-project --package apps\api
 ```
 
 `--package` accepts only a repository-relative directory with its own regular
@@ -269,20 +269,20 @@ identify the selected path. Treat that graph as a **static package subtree**:
 it does not establish workspace membership, package ownership, build activation,
 or runtime topology outside the selected source set.
 
-Package selection still intersects the repository-owned `.flowpeek/config.json`
+Package selection still intersects the repository-owned `.flopeek/config.json`
 source, test, fixture, and exclusion rules. It does not override a configured
 source boundary just because the selected directory contains `package.json`.
 
 Package scans use an ephemeral session identity and never replace the
-repository-wide `.flowpeek` cache. This prevents a focused map from becoming a
+repository-wide `.flopeek` cache. This prevents a focused map from becoming a
 misleading whole-repository baseline. Package-scoped Viewer and MCP sessions
 are per-project only; `serve --global --package ...` is intentionally refused.
 
 ## Use one Viewer for multiple projects
 
 ```powershell
-npm exec -- flowpeek serve D:\work\orders -g --workspace commerce
-npm exec -- flowpeek serve D:\work\payments -g --workspace commerce
+npm exec -- flopeek serve D:\work\orders -g --workspace commerce
+npm exec -- flopeek serve D:\work\payments -g --workspace commerce
 ```
 
 The hub keeps each project ID, graph, cache, watcher, and Context Ref isolated. Matching names do not create cross-project edges. A person may add an explicit version-bound contract reference between current flows.
@@ -301,15 +301,15 @@ The hub keeps each project ID, graph, cache, watcher, and Context Ref isolated. 
 ## Common checks
 
 ```powershell
-npm exec -- flowpeek discover D:\work\my-project --max-files 5000 --budget-ms 10000
-npm exec -- flowpeek scan D:\work\my-project --format json
-npm exec -- flowpeek scan D:\work\my-project --format json --no-cache
-npm exec -- flowpeek proof D:\work\my-project --iterations 3
-npm exec -- flowpeek benchmark D:\work\my-project --iterations 5 --format json
-npm exec -- flowpeek doctor D:\work\my-project --platform all --format json
+npm exec -- flopeek discover D:\work\my-project --max-files 5000 --budget-ms 10000
+npm exec -- flopeek scan D:\work\my-project --format json
+npm exec -- flopeek scan D:\work\my-project --format json --no-cache
+npm exec -- flopeek proof D:\work\my-project --iterations 3
+npm exec -- flopeek benchmark D:\work\my-project --iterations 5 --format json
+npm exec -- flopeek doctor D:\work\my-project --platform all --format json
 ```
 
-Use `--no-cache` for an inspection that must not create Flowpeek cache or project-identity metadata in the target repository. It still reads supported source and any existing Flowpeek configuration; it does not execute the target application.
+Use `--no-cache` for an inspection that must not create Flopeek cache or project-identity metadata in the target repository. It still reads supported source and any existing Flopeek configuration; it does not execute the target application.
 
 Benchmark timing is host-specific. Run it when you need local evidence, not on every scan.
 
@@ -324,7 +324,7 @@ Benchmark timing is host-specific. Run it when you need local evidence, not on e
 ## Remove an integration
 
 ```powershell
-npm exec -- flowpeek uninstall D:\work\my-project --platform codex
+npm exec -- flopeek uninstall D:\work\my-project --platform codex
 ```
 
-Flowpeek removes only its managed entry and generated skill. It preserves unrelated project configuration.
+Flopeek removes only its managed entry and generated skill. It preserves unrelated project configuration.

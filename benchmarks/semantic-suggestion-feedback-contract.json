@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "flowpeek-semantic-suggestion-feedback-evaluation/v1",
+  "schemaVersion": "flopeek-semantic-suggestion-feedback-evaluation/v1",
   "interpretation": "This synthetic contract corpus verifies local feedback metric aggregation and trace-link reporting. It is not collected human-review data, does not measure candidate usefulness, and must not be used as model-quality calibration.",
   "records": [
     { "id": "accepted-with-passed-trace", "decision": "accepted", "traceVerificationStatus": "passed" },

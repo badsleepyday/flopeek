@@ -6,9 +6,9 @@ const path = require("node:path");
 const { parseContextRef } = require("./context-card");
 const { atomicWriteJson } = require("./graph-cache");
 
-const RUNTIME_EVIDENCE_SCHEMA = "flowpeek-runtime-evidence/v1";
-const RUNTIME_EVIDENCE_STORE_SCHEMA = "flowpeek-runtime-evidence-store/v1";
-const RUNTIME_EVIDENCE_RELATIVE_PATH = ".flowpeek/runtime-evidence/records.json";
+const RUNTIME_EVIDENCE_SCHEMA = "flopeek-runtime-evidence/v1";
+const RUNTIME_EVIDENCE_STORE_SCHEMA = "flopeek-runtime-evidence-store/v1";
+const RUNTIME_EVIDENCE_RELATIVE_PATH = ".flopeek/runtime-evidence/records.json";
 const MAX_RETAINED_RECORDS = 100;
 const MAX_RETAINED_MANIFESTS = 500;
 const KINDS = new Set(["request-observation", "test-result", "deployment-observation", "manual-observation"]);
@@ -133,7 +133,7 @@ function validRecord(record) {
 function validManifest(manifest) {
   return onlyKnownKeys(manifest, ["schemaVersion", "id", "projectIdentity", "sourceFingerprint", "graphVersion", "evidenceClass", "contentHash", "createdAt", "artifactStatus"])
     && onlyKnownKeys(manifest.projectIdentity, ["projectId"])
-    && manifest?.schemaVersion === "flowpeek-runtime-evidence-manifest/v1"
+    && manifest?.schemaVersion === "flopeek-runtime-evidence-manifest/v1"
     && typeof manifest.id === "string" && manifest.id
     && typeof manifest.projectIdentity?.projectId === "string" && manifest.projectIdentity.projectId
     && typeof manifest.sourceFingerprint === "string"
@@ -167,7 +167,7 @@ function freshness(record, graph) {
 
 function manifest(record, createdAt) {
   return {
-    schemaVersion: "flowpeek-runtime-evidence-manifest/v1",
+    schemaVersion: "flopeek-runtime-evidence-manifest/v1",
     id: record.id,
     projectIdentity: record.projectIdentity,
     sourceFingerprint: record.sourceBasis.sourceFingerprint,
@@ -188,7 +188,7 @@ function saveRuntimeEvidence(root, graph, input, options = {}) {
   const existing = read.store.records.find((record) => record.operationId === normalized.operationId);
   if (existing) {
     if (existing.inputFingerprint !== inputFingerprint) throw new RuntimeEvidenceError("operation-id-conflict", "operationId already belongs to different immutable runtime evidence.");
-    return { schemaVersion: "flowpeek-runtime-evidence-result/v1", created: false, record: existing, retention: { maxRecords: MAX_RETAINED_RECORDS, manifestsRetained: read.store.manifests.length } };
+    return { schemaVersion: "flopeek-runtime-evidence-result/v1", created: false, record: existing, retention: { maxRecords: MAX_RETAINED_RECORDS, manifestsRetained: read.store.manifests.length } };
   }
   const createdAt = options.now || new Date().toISOString();
   if (typeof createdAt !== "string" || Number.isNaN(Date.parse(createdAt))) throw new RuntimeEvidenceError("invalid-created-at", "createdAt must be an ISO-compatible timestamp.");
@@ -210,17 +210,17 @@ function saveRuntimeEvidence(root, graph, input, options = {}) {
   const records = all.slice(expired.length);
   const manifests = [...read.store.manifests, ...expired.map((item) => manifest(item, createdAt))].slice(-MAX_RETAINED_MANIFESTS);
   atomicWriteJson(read.path, { ...read.store, records, manifests });
-  return { schemaVersion: "flowpeek-runtime-evidence-result/v1", created: true, record, retention: { maxRecords: MAX_RETAINED_RECORDS, expiredThisWrite: expired.map((item) => item.id), manifestsRetained: manifests.length } };
+  return { schemaVersion: "flopeek-runtime-evidence-result/v1", created: true, record, retention: { maxRecords: MAX_RETAINED_RECORDS, expiredThisWrite: expired.map((item) => item.id), manifestsRetained: manifests.length } };
 }
 
 function listRuntimeEvidence(root, graph, options = {}) {
   const read = readStore(root, graph.project.projectId);
-  if (read.status === "invalid") return { schemaVersion: "flowpeek-runtime-evidence-list/v1", status: "unavailable", records: [], manifests: [], diagnostics: read.diagnostics };
+  if (read.status === "invalid") return { schemaVersion: "flopeek-runtime-evidence-list/v1", status: "unavailable", records: [], manifests: [], diagnostics: read.diagnostics };
   const limit = Number.isSafeInteger(options.limit) ? Math.max(1, Math.min(options.limit, MAX_RETAINED_RECORDS)) : 30;
   const all = [...read.store.records].sort((left, right) => right.observedAt.localeCompare(left.observedAt) || right.id.localeCompare(left.id));
   const records = all.slice(0, limit).map((record) => ({ ...record, freshnessStatus: freshness(record, graph) }));
   return {
-    schemaVersion: "flowpeek-runtime-evidence-list/v1",
+    schemaVersion: "flopeek-runtime-evidence-list/v1",
     status: "available",
     projectIdentity: { projectId: graph.project.projectId },
     graphVersion: graph.state.graphVersion,

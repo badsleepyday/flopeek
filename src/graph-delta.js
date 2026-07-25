@@ -53,7 +53,7 @@ function getGraphDelta(previousGraph, graph, options = {}) {
     addedEdges: addedEdgeKeys.slice(0, limit).map((key) => graphEdgeSummary(currentEdges.get(key), currentNodes)),
     removedEdges: removedEdgeKeys.slice(0, limit).map((key) => graphEdgeSummary(previousEdges.get(key), previousNodes)),
     truncated: addedNodeIds.length > limit || removedNodeIds.length > limit || addedEdgeKeys.length > limit || removedEdgeKeys.length > limit,
-    limitation: "This compares only Flowpeek graph topology. Unchanged IDs can still have source edits, and this is not a source diff, Git diff, or runtime behavior diff.",
+    limitation: "This compares only Flopeek graph topology. Unchanged IDs can still have source edits, and this is not a source diff, Git diff, or runtime behavior diff.",
   };
 }
 

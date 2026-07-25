@@ -12,7 +12,7 @@ const BENCHMARK_FILE = path.join(ROOT, "benchmarks", "monorepo-package-selection
 test("monorepo package selection benchmark matches its pinned fixture and contract boundaries", async () => {
   assert.ok(fs.existsSync(BENCHMARK_FILE), "monorepo-package-selection.json must exist");
   const benchmark = JSON.parse(fs.readFileSync(BENCHMARK_FILE, "utf8"));
-  assert.equal(benchmark.schemaVersion, "flowpeek-monorepo-package-selection-benchmark/v1");
+  assert.equal(benchmark.schemaVersion, "flopeek-monorepo-package-selection-benchmark/v1");
 
   const fixturePath = path.join(ROOT, benchmark.fixture.path);
   assert.ok(fs.existsSync(fixturePath), "fixture directory must exist");
@@ -27,6 +27,6 @@ test("monorepo package selection benchmark matches its pinned fixture and contra
     assert.equal(result.discovery.selection.path, pkg.path);
     assert.equal(result.cachePromotion.allowed, false, "package-scoped scan must not allow cache promotion");
     assert.equal(result.graph.stats.scannedFiles, pkg.expectedScannedFiles, `${pkg.name} scanned file count mismatch`);
-    assert.equal(fs.existsSync(path.join(fixturePath, ".flowpeek")), false, "package scan must not leave cache on disk");
+    assert.equal(fs.existsSync(path.join(fixturePath, ".flopeek")), false, "package scan must not leave cache on disk");
   }
 });

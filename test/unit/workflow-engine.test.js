@@ -26,7 +26,7 @@ function write(root, relativePath, content) {
 }
 
 function setup() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-workflow-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-workflow-"));
   write(root, "package.json", JSON.stringify({ name: "workflow-fixture" }));
   write(root, "src/app/api/orders/route.ts", "export async function GET() { return { ok: true }; }\n");
   const graph = createRepositoryScanner(root).scan();

@@ -3,12 +3,12 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const PRODUCT_PROOF_SCHEMA = "flowpeek-product-proof/v1";
+const PRODUCT_PROOF_SCHEMA = "flopeek-product-proof/v1";
 const PUBLIC_PROOF_EVIDENCE_PATH = path.join(__dirname, "..", "benchmarks", "public-proof.json");
 const REAL_CORPUS_MANIFEST_PATH = path.join(__dirname, "..", "benchmarks", "real-repository-corpus.json");
 const ORIENTATION_CASES_PATH = path.join(__dirname, "..", "benchmarks", "orientation-cases.json");
 const ORIENTATION_BASELINE_PATH = path.join(__dirname, "..", "benchmarks", "orientation-baseline.json");
-const ORIENTATION_FLOWPEEK_PATH = path.join(__dirname, "..", "benchmarks", "orientation-flowpeek.json");
+const ORIENTATION_FLOPEEK_PATH = path.join(__dirname, "..", "benchmarks", "orientation-flopeek.json");
 
 function divide(numerator, denominator) {
   return denominator > 0 ? Number((numerator / denominator).toFixed(4)) : null;
@@ -23,7 +23,7 @@ function readJson(target) {
 }
 
 function validatePublicEvidence(evidence, manifest) {
-  if (evidence?.schemaVersion !== "flowpeek-public-proof-evidence/v1") throw new Error("Public proof evidence has an unsupported schema.");
+  if (evidence?.schemaVersion !== "flopeek-public-proof-evidence/v1") throw new Error("Public proof evidence has an unsupported schema.");
   if (evidence.relationshipAudit?.manifest !== "benchmarks/real-repository-corpus.json") throw new Error("Public proof evidence must name the pinned relationship manifest.");
   const repositories = manifest?.repositories || [];
   const scopes = repositories.flatMap((repository) => repository.focuses || []);
@@ -55,7 +55,7 @@ function loadPublicProofEvidence() {
 }
 
 function validateOrientationReport(report, condition, definition = null) {
-  if (report?.schemaVersion !== "flowpeek-orientation-benchmark/v2" || report.condition !== condition) throw new Error(`Orientation proof requires a ${condition} flowpeek-orientation-benchmark/v2 report.`);
+  if (report?.schemaVersion !== "flopeek-orientation-benchmark/v2" || report.condition !== condition) throw new Error(`Orientation proof requires a ${condition} flopeek-orientation-benchmark/v2 report.`);
   const repositories = report.repositories || [];
   const cases = repositories.flatMap((repository) => repository.cases || []);
   if (!cases.length || report.suite?.repositoryCount !== repositories.length || report.suite?.caseCount !== cases.length || report.summary?.caseCount !== cases.length) throw new Error(`Orientation ${condition} case totals are inconsistent.`);
@@ -96,7 +96,7 @@ function validateOrientationReport(report, condition, definition = null) {
   if (measuredStale.length) {
     if (report.summary.staleContextDetection.status !== "measured" || report.summary.staleContextDetection.requested !== measuredStale.length || report.summary.staleContextDetection.detected !== detectedStale || report.summary.staleContextDetection.rate !== divideOrientation(detectedStale, measuredStale.length)) throw new Error(`Orientation ${condition} stale-context totals are inconsistent.`);
   } else if (report.summary.staleContextDetection.status !== "unavailable" || report.summary.staleContextDetection.requested !== requestedStale || report.summary.staleContextDetection.detected !== null || report.summary.staleContextDetection.rate !== null) throw new Error(`Orientation ${condition} unavailable stale-context evidence is inconsistent.`);
-  if (report.summary.context.filesInspected !== contextFiles || report.summary.context.estimatedCharacters !== contextCharacters || report.summary.context.estimatedTokens !== contextTokens || report.summary.context.tokenizerId !== "flowpeek-char4-estimator/v1") throw new Error(`Orientation ${condition} context totals are inconsistent.`);
+  if (report.summary.context.filesInspected !== contextFiles || report.summary.context.estimatedCharacters !== contextCharacters || report.summary.context.estimatedTokens !== contextTokens || report.summary.context.tokenizerId !== "flopeek-char4-estimator/v1") throw new Error(`Orientation ${condition} context totals are inconsistent.`);
   if (report.summary.timing.repositoryPreparationMilliseconds !== preparationMilliseconds || report.summary.timing.caseRetrievalMilliseconds !== retrievalMilliseconds || report.summary.timing.totalTimeToUsefulContextMilliseconds !== totalToUsefulContextMilliseconds || report.summary.timing.separateValidationMilliseconds !== validationMilliseconds || report.summary.timing.coldTimeToUsefulContextMilliseconds !== totalToUsefulContextMilliseconds || report.summary.timing.warmTimeToUsefulContextMilliseconds !== retrievalMilliseconds || report.summary.timing.processStartupAndModuleLoad?.status !== "unavailable" || report.summary.timing.gating !== false) throw new Error(`Orientation ${condition} timing totals are inconsistent.`);
   if (cases.some((item) => item.metrics.unsupportedClaims?.status !== "no-claims-emitted" || item.metrics.unsupportedClaims?.evaluated !== 0 || item.metrics.unsupportedClaims?.unsupported !== 0 || item.metrics.unsupportedClaims?.rate !== null) || report.summary.unsupportedClaims?.status !== "no-claims-emitted" || report.summary.unsupportedClaims?.evaluated !== 0 || report.summary.unsupportedClaims?.unsupported !== 0 || report.summary.unsupportedClaims?.rate !== null) throw new Error(`Orientation ${condition} unsupported-claim evidence is inconsistent.`);
   if (report.studyEvidence?.humanStudy?.status !== "not-run" || report.studyEvidence?.agentStudy?.status !== "not-run") throw new Error(`Orientation ${condition} checked-in evidence must not imply an executed human or agent study.`);
@@ -106,14 +106,14 @@ function validateOrientationReport(report, condition, definition = null) {
 function loadOrientationProofEvidence() {
   const definition = readJson(ORIENTATION_CASES_PATH);
   const baseline = validateOrientationReport(readJson(ORIENTATION_BASELINE_PATH), "direct-repository", definition);
-  const flowpeek = validateOrientationReport(readJson(ORIENTATION_FLOWPEEK_PATH), "flowpeek", definition);
-  if (baseline.suite.id !== flowpeek.suite.id || baseline.suite.caseCount !== flowpeek.suite.caseCount) throw new Error("Orientation proof reports must use the same suite.");
+  const flopeek = validateOrientationReport(readJson(ORIENTATION_FLOPEEK_PATH), "flopeek", definition);
+  if (baseline.suite.id !== flopeek.suite.id || baseline.suite.caseCount !== flopeek.suite.caseCount) throw new Error("Orientation proof reports must use the same suite.");
   return {
-    schemaVersion: "flowpeek-orientation-proof-summary/v1",
+    schemaVersion: "flopeek-orientation-proof-summary/v1",
     suite: baseline.suite,
     baseline: { generatedAt: baseline.generatedAt, runEnvironment: baseline.runEnvironment, summary: baseline.summary },
-    flowpeek: { generatedAt: flowpeek.generatedAt, runEnvironment: flowpeek.runEnvironment, summary: flowpeek.summary },
-    artifacts: ["benchmarks/orientation-cases.json", "benchmarks/orientation-baseline.json", "benchmarks/orientation-flowpeek.json"],
+    flopeek: { generatedAt: flopeek.generatedAt, runEnvironment: flopeek.runEnvironment, summary: flopeek.summary },
+    artifacts: ["benchmarks/orientation-cases.json", "benchmarks/orientation-baseline.json", "benchmarks/orientation-flopeek.json"],
     evidenceClasses: { deterministicRetrieval: "measured", humanStudy: "not-run", agentStudy: "not-run" },
     limitation: "This is deterministic retrieval evidence on three pinned fixtures. It is not a human productivity result, AI-agent outcome, runtime proof, universal accuracy score, or universal speed claim.",
   };
@@ -151,7 +151,7 @@ function capabilityShowcase(graph) {
       title: "Static impact and related-test guidance",
       outcome: "Map changed files to affected nodes, endpoints, dependencies, and directly related tests before editing or review.",
       status: "partial",
-      proof: ["CLI: flowpeek impact", "HTTP: /api/impact", "MCP: get_change_impact"],
+      proof: ["CLI: flopeek impact", "HTTP: /api/impact", "MCP: get_change_impact"],
       boundary: "Stored-edge traversal can miss dynamic behavior and can be conservatively broad."
     },
     {
@@ -159,7 +159,7 @@ function capabilityShowcase(graph) {
       title: "Local-first and source-safe agent surface",
       outcome: "Scan locally without executing the target application; MCP exposes graph/context operations and bounded metadata appends without arbitrary shell or repository-source writes.",
       status: "current",
-      proof: ["CLI: flowpeek scan", "MCP: stdio", "Cache: .flowpeek/graph.json"],
+      proof: ["CLI: flopeek scan", "MCP: stdio", "Cache: .flopeek/graph.json"],
       boundary: "Optional local language helpers parse supplied source text; they do not execute the target application."
     },
     {
@@ -183,8 +183,8 @@ function createProductProof(graph, options = {}) {
   return {
     schemaVersion: PRODUCT_PROOF_SCHEMA,
     generatedAt: options.generatedAt || new Date().toISOString(),
-    title: "Why Flowpeek",
-    summary: "Flowpeek turns repository structure into bounded, evidence-linked technical flows that people and coding agents can inspect from the same local graph state.",
+    title: "Why Flopeek",
+    summary: "Flopeek turns repository structure into bounded, evidence-linked technical flows that people and coding agents can inspect from the same local graph state.",
     headlineMetrics: {
       auditedRepositories: audit.repositories,
       auditedScopes: audit.auditedScopes,
@@ -201,14 +201,14 @@ function createProductProof(graph, options = {}) {
       },
       orientationRetrieval: {
         cases: orientationEvidence.suite.caseCount,
-        expectedTargets: orientationEvidence.flowpeek.summary.correctTargetRetrieval.expected,
-        matchedTargets: orientationEvidence.flowpeek.summary.correctTargetRetrieval.matched,
-        expectedFlowSteps: orientationEvidence.flowpeek.summary.flowSteps.expected,
-        matchedFlowSteps: orientationEvidence.flowpeek.summary.flowSteps.matchedInExpectedOrder,
-        expectedRelatedTests: orientationEvidence.flowpeek.summary.relatedTests.expected,
-        matchedRelatedTests: orientationEvidence.flowpeek.summary.relatedTests.matched,
-        staleRefsRequested: orientationEvidence.flowpeek.summary.staleContextDetection.requested,
-        staleRefsDetected: orientationEvidence.flowpeek.summary.staleContextDetection.detected,
+        expectedTargets: orientationEvidence.flopeek.summary.correctTargetRetrieval.expected,
+        matchedTargets: orientationEvidence.flopeek.summary.correctTargetRetrieval.matched,
+        expectedFlowSteps: orientationEvidence.flopeek.summary.flowSteps.expected,
+        matchedFlowSteps: orientationEvidence.flopeek.summary.flowSteps.matchedInExpectedOrder,
+        expectedRelatedTests: orientationEvidence.flopeek.summary.relatedTests.expected,
+        matchedRelatedTests: orientationEvidence.flopeek.summary.relatedTests.matched,
+        staleRefsRequested: orientationEvidence.flopeek.summary.staleContextDetection.requested,
+        staleRefsDetected: orientationEvidence.flopeek.summary.staleContextDetection.detected,
         evidenceClass: "deterministic-retrieval"
       }
     },
@@ -231,12 +231,12 @@ function createProductProof(graph, options = {}) {
     },
     localBenchmark: localBenchmark ? { status: "available", result: localBenchmark } : {
       status: "not-run",
-      command: "flowpeek proof <repository> --iterations 3",
+      command: "flopeek proof <repository> --iterations 3",
       viewerAction: "Run local proof benchmark",
       reason: "Local timing is opt-in because it reparses the selected repository several times and varies by machine."
     },
     reproducibility: {
-      local: ["flowpeek proof <repository> --iterations 3 --format json", "flowpeek benchmark <repository> --iterations 3 --format json", "flowpeek evaluate orientation . --cases benchmarks/orientation-cases.json --format json"],
+      local: ["flopeek proof <repository> --iterations 3 --format json", "flopeek benchmark <repository> --iterations 3 --format json", "flopeek evaluate orientation . --cases benchmarks/orientation-cases.json --format json"],
       externalAudit: "node src/real-repository-corpus.js --clone-directory <directory> --format json",
       documentation: ["BENCHMARKS.md", "SUPPORT.md", "docs/testing.md"]
     },

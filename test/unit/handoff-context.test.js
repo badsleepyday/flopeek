@@ -27,7 +27,7 @@ function fixture(root) {
 }
 
 test("get_handoff_context is deterministic, relevance-ranked, portable, and within its declared budget", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-handoff-context-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-handoff-context-"));
   try {
     const graph = fixture(root);
     saveHandoffWorkspace(root, graph, { operationId: "context-handoff-v1", author: "Test team", purpose: "Keep payment approval changes bounded and reviewable." }, { now: "2026-07-14T00:00:00.000Z" });
@@ -41,7 +41,7 @@ test("get_handoff_context is deterministic, relevance-ranked, portable, and with
     const first = createHandoffContext(graph, input);
     const second = createHandoffContext(graph, input);
     assert.deepEqual(first, second);
-    assert.equal(first.schemaVersion, "flowpeek-handoff-context/v1");
+    assert.equal(first.schemaVersion, "flopeek-handoff-context/v1");
     assert.equal(first.budget.tokenizerId, TOKENIZER_ID);
     assert.equal(first.budget.status, "within-budget");
     assert.equal(first.budget.estimatedCharacterCount, JSON.stringify(first).length);
@@ -71,7 +71,7 @@ test("get_handoff_context is deterministic, relevance-ranked, portable, and with
 });
 
 test("handoff context keeps exact changed paths and rejects same-feature tests without direct or task evidence", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-handoff-relevance-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-handoff-relevance-"));
   try {
     const graph = fixture(root);
     const packet = createHandoffContext(graph, {
@@ -91,7 +91,7 @@ test("handoff context keeps exact changed paths and rejects same-feature tests w
 });
 
 test("standard handoff depth retains every exact changed path while the token budget remains authoritative", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-handoff-path-anchors-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-handoff-path-anchors-"));
   try {
     const graph = fixture(root);
     const changedPaths = [
@@ -116,7 +116,7 @@ test("standard handoff depth retains every exact changed path while the token bu
 });
 
 test("small packets expose omissions and never silently exceed the minimum supported envelope", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-handoff-budget-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-handoff-budget-"));
   try {
     const graph = fixture(root);
     const packet = createHandoffContext(graph, { taskIntent: "understand the project", tokenBudget: 1024, desiredEvidenceDepth: "summary" });

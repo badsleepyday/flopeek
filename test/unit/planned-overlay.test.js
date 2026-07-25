@@ -86,7 +86,7 @@ function overlayInput(graph, checkpointId, contextRef, overrides = {}) {
 }
 
 test("planned overlays are immutable delivery-plan metadata with separate Plan Refs", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-planned-overlay-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-planned-overlay-"));
   try {
     const graph = graphFixture(root);
     const handoff = checkpoint(root, graph);
@@ -105,7 +105,7 @@ test("planned overlays are immutable delivery-plan metadata with separate Plan R
 
     const planRef = createPlanRef(graph.project.projectId, handoff.id, "planned.reviewer-session", 1);
     assert.deepEqual(parsePlanRef(planRef), {
-      schemaVersion: "flowpeek-plan-ref/v1",
+      schemaVersion: "flopeek-plan-ref/v1",
       planRef,
       projectId: graph.project.projectId,
       checkpointId: handoff.id,
@@ -134,7 +134,7 @@ test("planned overlays are immutable delivery-plan metadata with separate Plan R
 });
 
 test("planned overlays reject factual edges, unselected anchors, unsafe paths, stale graphs, and invalid stores", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-planned-overlay-invalid-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-planned-overlay-invalid-"));
   try {
     const graph = graphFixture(root);
     const handoff = checkpoint(root, graph);

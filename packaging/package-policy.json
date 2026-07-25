@@ -1,7 +1,7 @@
 {
-  "schemaVersion": "flowpeek-package-policy/v2",
+  "schemaVersion": "flopeek-package-policy/v2",
   "package": {
-    "name": "flowpeek",
+    "name": "flopeek",
     "publication": {
       "state": "prepared",
       "distTag": "beta",
@@ -25,7 +25,7 @@
     "benchmarks/handoff-quality.json",
     "benchmarks/orientation-baseline.json",
     "benchmarks/orientation-cases.json",
-    "benchmarks/orientation-flowpeek.json",
+    "benchmarks/orientation-flopeek.json",
     "benchmarks/private-dogfood-summary.json",
     "benchmarks/production-static-evidence.json",
     "benchmarks/public-proof.json",
@@ -38,7 +38,7 @@
   "allowedDirectories": [
     "docs",
     "examples/commerce-showcase",
-    "integrations/skills/flowpeek",
+    "integrations/skills/flopeek",
     "public",
     "src"
   ],
@@ -46,7 +46,7 @@
     "LICENSE",
     "README.md",
     "docs/README.md",
-    "docs/using-flowpeek.md",
+    "docs/using-flopeek.md",
     "docs/assets/shared-context-workflow.svg",
     "docs/assets/screenshots/flow-lens.png",
     "package.json",
@@ -56,8 +56,8 @@
     "public/index.html",
     "public/app.js",
     "public/styles.css",
-    "integrations/skills/flowpeek/SKILL.md",
-    "examples/commerce-showcase/flowpeek-showcase.json",
+    "integrations/skills/flopeek/SKILL.md",
+    "examples/commerce-showcase/flopeek-showcase.json",
     "benchmarks/public-proof.json",
     "benchmarks/real-repository-corpus.json",
     "benchmarks/orientation-cases.json"
@@ -65,7 +65,7 @@
   "deniedPathSegments": [
     ".agent-team",
     ".agents",
-    ".flowpeek",
+    ".flopeek",
     ".git",
     ".github",
     "node_modules"

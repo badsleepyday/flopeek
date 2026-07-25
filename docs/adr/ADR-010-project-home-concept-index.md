@@ -6,9 +6,9 @@ Accepted for Iteration 18.
 
 ## Decision
 
-Flowpeek provides one versioned Project Home projection for a person inheriting a repository. It composes Handoff Workspace knowledge with current graph facts and the latest retained adjacent delta. The projection keeps human-authored statements, parser facts, deterministic inference, verification, runtime evidence, stale state, and unavailable knowledge visibly distinct.
+Flopeek provides one versioned Project Home projection for a person inheriting a repository. It composes Handoff Workspace knowledge with current graph facts and the latest retained adjacent delta. The projection keeps human-authored statements, parser facts, deterministic inference, verification, runtime evidence, stale state, and unavailable knowledge visibly distinct.
 
-Project purpose, architecture, critical-flow selection, unresolved questions, and preferred starting points are human knowledge. When they have not been recorded, Flowpeek reports them as unavailable. It may provide a deterministic evidence-linked feature fallback for orientation, but it must not relabel that fallback as human advice or business intent.
+Project purpose, architecture, critical-flow selection, unresolved questions, and preferred starting points are human knowledge. When they have not been recorded, Flopeek reports them as unavailable. It may provide a deterministic evidence-linked feature fallback for orientation, but it must not relabel that fallback as human advice or business intent.
 
 Documentation readiness measures the completeness and freshness of recorded handoff fields. It is not code quality, delivery readiness, runtime correctness, or project health.
 

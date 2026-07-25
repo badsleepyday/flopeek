@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const { execFileSync } = require("node:child_process");
 
-const ACTIVE_BRANCH_GIT_EVIDENCE_SCHEMA = "flowpeek-active-branch-git-evidence/v1";
+const ACTIVE_BRANCH_GIT_EVIDENCE_SCHEMA = "flopeek-active-branch-git-evidence/v1";
 const DEFAULT_COMMIT_LIMIT = 12;
 const MAX_COMMIT_LIMIT = 50;
 const MAX_CONTEXT_PATHS = 24;

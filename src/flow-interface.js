@@ -35,7 +35,7 @@ function createFlowInterface(graph, lens) {
     : isScheduledTask
       ? { status: "unavailable", id: null, reason: "No exact scheduler-registration-to-local-task edge is available." }
       : null;
-  const parserContract = exactHandler.status === "available" && entry?.handlerId === exactHandler.id && entry?.contract?.schemaVersion === "flowpeek-next-route-contract/v1"
+  const parserContract = exactHandler.status === "available" && entry?.handlerId === exactHandler.id && entry?.contract?.schemaVersion === "flopeek-next-route-contract/v1"
     ? entry.contract
     : null;
   const request = parserContract
@@ -53,7 +53,7 @@ function createFlowInterface(graph, lens) {
       reason: isHttpEntry ? "Current parser adapters do not retain response schemas or status branches as deterministic contract evidence." : "HTTP response schemas are not applicable to this static entry family.",
     };
   return {
-    schemaVersion: "flowpeek-flow-interface/v1",
+    schemaVersion: "flopeek-flow-interface/v1",
     flow: { id: lens.flow.id, contextRef: lens.flow.contextRef, graphVersion: graph.state.graphVersion },
     boundary: {
       kind: isHttpEntry ? "http-endpoint" : isPackageScript ? "package-script" : isFrameworkCommand ? "framework-command" : isScheduledTask ? "scheduled-task" : "detected-flow-entry",
@@ -83,13 +83,13 @@ function createFlowInterface(graph, lens) {
     relatedTests: relatedTests(graph, lens),
     execution: {
       status: "observation-only",
-      adapterProtocol: "flowpeek-test-run-event/v1",
-      limitation: "Flowpeek can track explicit runner events and the failing static step, but MCP does not execute arbitrary repository commands or infer runtime order from the static graph.",
+      adapterProtocol: "flopeek-test-run-event/v1",
+      limitation: "Flopeek can track explicit runner events and the failing static step, but MCP does not execute arbitrary repository commands or infer runtime order from the static graph.",
     },
     nextSafeEvidence: [
       parserContract ? "This contract is limited to one exact Next.js handler and literal AST forms; dynamic schemas remain unavailable." : "Add adapter-specific schema extraction before showing payload fields as parser facts.",
       "Keep human examples, agent proposals, runtime observations, and test expectations in separate evidence classes.",
-      "Use repository-owned tests as executable truth; Flowpeek records bounded progress/result evidence rather than becoming a second test framework.",
+      "Use repository-owned tests as executable truth; Flopeek records bounded progress/result evidence rather than becoming a second test framework.",
     ],
   };
 }

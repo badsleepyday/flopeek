@@ -6,7 +6,7 @@ Accepted for Iteration 14.
 
 ## Decision
 
-Flowpeek exposes four versioned Brief kinds: Project, Feature, Flow, and Node. A Brief is a portable derived artifact, not a new source of truth.
+Flopeek exposes four versioned Brief kinds: Project, Feature, Flow, and Node. A Brief is a portable derived artifact, not a new source of truth.
 
 Every Brief carries:
 
@@ -33,7 +33,7 @@ Free-form bodies from legacy descriptions, feedback reasons, and verification de
 
 Materialized Brief artifacts are stored separately from an append-only minimal manifest. A manifest retains identity, source basis, graph version, schemas, hash, evidence class, creation time, and the repository-relative artifact locator.
 
-Artifact retention is allowed to evict heavy JSON. The manifest remains and resolution reports the result explicitly as `current`, `stale`, `expired`, or `unavailable`. Flowpeek never silently substitutes current context for an expired historical Brief.
+Artifact retention is allowed to evict heavy JSON. The manifest remains and resolution reports the result explicitly as `current`, `stale`, `expired`, or `unavailable`. Flopeek never silently substitutes current context for an expired historical Brief.
 
 ## Portability and security
 

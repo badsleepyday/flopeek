@@ -66,7 +66,7 @@ function checkpointInput(graph, overrides = {}) {
 }
 
 test("continuation checkpoints compose immutable current graph, handoff, work, and context metadata", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-continuation-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-continuation-"));
   try {
     const graph = graphFixture(root);
     createWorkRecord(root, graph, workRecordInput(graph));
@@ -114,7 +114,7 @@ test("continuation checkpoints compose immutable current graph, handoff, work, a
 });
 
 test("continuation checkpoints reject stale, unsafe, unknown, overlapping, and invalid persisted inputs", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-continuation-invalid-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-continuation-invalid-"));
   try {
     const graph = graphFixture(root);
     createWorkRecord(root, graph, workRecordInput(graph));

@@ -16,7 +16,7 @@ test("porcelain v2 metadata is parsed without treating headers as dirty files", 
 });
 
 test("Git directory, common directory, and origin remote are read statically", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-git-metadata-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-git-metadata-"));
   try {
     const repository = path.join(root, "repository");
     const nested = path.join(repository, "packages", "app");
@@ -26,10 +26,10 @@ test("Git directory, common directory, and origin remote are read statically", (
     fs.mkdirSync(worktree, { recursive: true });
     fs.writeFileSync(path.join(repository, ".git"), `gitdir: ${worktree}\n`, "utf8");
     fs.writeFileSync(path.join(worktree, "commondir"), "../..\n", "utf8");
-    fs.writeFileSync(path.join(common, "config"), '[core]\n\trepositoryformatversion = 0\n[remote "origin"]\n\turl = https://example.test/flowpeek.git\n', "utf8");
+    fs.writeFileSync(path.join(common, "config"), '[core]\n\trepositoryformatversion = 0\n[remote "origin"]\n\turl = https://example.test/flopeek.git\n', "utf8");
     assert.equal(gitDirectory(nested), worktree);
     assert.equal(commonGitDirectory(nested), common);
-    assert.equal(readOriginRemote(nested), "https://example.test/flowpeek.git");
+    assert.equal(readOriginRemote(nested), "https://example.test/flopeek.git");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

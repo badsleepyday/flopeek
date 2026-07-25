@@ -1,8 +1,8 @@
-# Flowpeek
+# Flopeek
 
 > Versioned change context for developers and coding agents.
 
-**Flowpeek is local-first code intelligence for developers and coding agents.**
+**Flopeek is local-first code intelligence for developers and coding agents.**
 It parses supported repository structure into a deterministic local graph, then
 turns that graph into small, evidence-backed views: where a technical flow
 enters, which symbols and static relationships it touches, which tests are
@@ -11,7 +11,7 @@ reuse.
 
 Large repositories make both people and coding agents repeatedly search,
 reconstruct call paths, and carry oversized source excerpts between tasks.
-Flowpeek keeps one versioned graph on the machine and lets every supported
+Flopeek keeps one versioned graph on the machine and lets every supported
 surface ask bounded questions of that same state.
 
 The public product identity and its explicit pre-release brand boundary are in
@@ -19,7 +19,7 @@ The public product identity and its explicit pre-release brand boundary are in
 
 ## The five-minute change-context loop
 
-Flowpeek is most useful when a change forces you to reconstruct a technical
+Flopeek is most useful when a change forces you to reconstruct a technical
 path before you edit it. The first experience is deliberately one loop, not a
 feature tour:
 
@@ -31,7 +31,7 @@ feature tour:
    remains current.
 
 The included checkout showcase runs that loop without executing its target
-application. It is the fastest way to decide whether Flowpeek is useful for a
+application. It is the fastest way to decide whether Flopeek is useful for a
 repository you need to change.
 
 ## How it works
@@ -45,7 +45,7 @@ repository you need to change.
 4. **Reuse the evidence.** People and agents resolve the same Context Refs from
    the same graph version across Viewer, HTTP, CLI, and MCP.
 
-![Repository to shared Flowpeek context](docs/assets/shared-context-workflow.svg)
+![Repository to shared Flopeek context](docs/assets/shared-context-workflow.svg)
 
 The design is deliberately evidence-aware: static parser facts, deterministic
 inference, human verification, agent declarations, and opt-in runtime
@@ -59,7 +59,7 @@ runtime order, business intent, or successful behavior.
 Flow Lens reduces a repository graph to one bounded static path, with technical
 steps, source locations, parser coverage, and a versioned Context Ref.
 
-![Flowpeek Viewer showing a bounded POST checkout Flow Lens](docs/assets/screenshots/flow-lens.png)
+![Flopeek Viewer showing a bounded POST checkout Flow Lens](docs/assets/screenshots/flow-lens.png)
 
 ### Understand what changed
 
@@ -67,14 +67,14 @@ Before/current comparison identifies added, removed, and changed static
 relationships between adjacent graph versions. It is change-orientation
 evidence, not runtime history.
 
-![Flowpeek before and current static flow comparison](docs/assets/screenshots/flow-comparison.png)
+![Flopeek before and current static flow comparison](docs/assets/screenshots/flow-comparison.png)
 
 ### Inspect proof together with its limits
 
 The proof panel shows pinned benchmark evidence and current-repository facts
 alongside the exact scope and limitations of each result.
 
-![Flowpeek product proof panel with bounded evidence](docs/assets/screenshots/product-proof.png)
+![Flopeek product proof panel with bounded evidence](docs/assets/screenshots/product-proof.png)
 
 <details>
 <summary>Historical beta-candidate verification snapshot (not a public npm release)</summary>
@@ -117,14 +117,14 @@ public beta release.
 
 ## Run the change-context loop
 
-Flowpeek is **not available from npm yet**. Its package metadata is prepared
+Flopeek is **not available from npm yet**. Its package metadata is prepared
 for a future beta, but the standard publication path remains owner-gated. The
-default `main` branch is the current public Flowpeek Core, so start from a
+default `main` branch is the current public Flopeek Core, so start from a
 source checkout:
 
 ```powershell
-git clone https://github.com/badsleepyday/flowpeek.git
-cd flowpeek
+git clone https://github.com/badsleepyday/flopeek.git
+cd flopeek
 npm install
 npm run showcase
 ```
@@ -151,7 +151,7 @@ limits of this demonstration.
 
 ### Bring the same context to an agent
 
-An agent starts with `get_agent_bootstrap`, resolves a flow or node, reads only the source it needs with its normal workspace tools, refreshes Flowpeek after edits, and checks changed or stale context.
+An agent starts with `get_agent_bootstrap`, resolves a flow or node, reads only the source it needs with its normal workspace tools, refreshes Flopeek after edits, and checks changed or stale context.
 
 ```text
 get_agent_bootstrap
@@ -164,30 +164,30 @@ get_agent_bootstrap
   → get_changed_contexts
 ```
 
-Flowpeek MCP exposes no arbitrary shell, deployment, credential, or repository-source write operation.
+Flopeek MCP exposes no arbitrary shell, deployment, credential, or repository-source write operation.
 
 ## Use it on a repository
 
 Start with a TypeScript/Node repository if you want the closest fit to the
-checkout showcase and the shortest local setup. Flowpeek also has explicitly
+checkout showcase and the shortest local setup. Flopeek also has explicitly
 bounded parser support beyond that starting point; check the
 [support matrix](SUPPORT.md) before treating a missing relationship as absent.
 
-From the Flowpeek checkout:
+From the Flopeek checkout:
 
 ```powershell
-npm exec -- flowpeek discover D:\path\to\repository --max-files 5000 --budget-ms 10000
-npm exec -- flowpeek scan D:\path\to\repository
-npm exec -- flowpeek scan D:\path\to\repository --max-files 5000 --max-bytes 250000000 --budget-ms 60000
-npm exec -- flowpeek scan D:\path\to\repository --package apps\api
-npm exec -- flowpeek scan D:\path\to\repository --no-cache
-npm exec -- flowpeek view D:\path\to\repository --level domain --format json
-npm exec -- flowpeek serve D:\path\to\repository --max-files 5000 --max-bytes 250000000 --budget-ms 60000
-npm exec -- flowpeek doctor D:\path\to\repository --platform all
+npm exec -- flopeek discover D:\path\to\repository --max-files 5000 --budget-ms 10000
+npm exec -- flopeek scan D:\path\to\repository
+npm exec -- flopeek scan D:\path\to\repository --max-files 5000 --max-bytes 250000000 --budget-ms 60000
+npm exec -- flopeek scan D:\path\to\repository --package apps\api
+npm exec -- flopeek scan D:\path\to\repository --no-cache
+npm exec -- flopeek view D:\path\to\repository --level domain --format json
+npm exec -- flopeek serve D:\path\to\repository --max-files 5000 --max-bytes 250000000 --budget-ms 60000
+npm exec -- flopeek doctor D:\path\to\repository --platform all
 ```
 
 The local Viewer and MCP expose the same scan freshness. If a bounded refresh
-does not complete, Flowpeek keeps the last complete graph and labels it
+does not complete, Flopeek keeps the last complete graph and labels it
 `stale-unverified` instead of serving a partial reconstruction.
 
 ### Focus one package first
@@ -196,52 +196,52 @@ For a large monorepo, select a concrete package directory before asking for a
 technical map:
 
 ```powershell
-npm exec -- flowpeek discover D:\path\to\repository --package apps\api --format json
-npm exec -- flowpeek serve D:\path\to\repository --package apps\api
-npm exec -- flowpeek mcp D:\path\to\repository --package apps\api
+npm exec -- flopeek discover D:\path\to\repository --package apps\api --format json
+npm exec -- flopeek serve D:\path\to\repository --package apps\api
+npm exec -- flopeek mcp D:\path\to\repository --package apps\api
 ```
 
 The path must be inside the repository and contain its own regular
-`package.json`. Flowpeek labels the map as **Package: apps/api** for both people
+`package.json`. Flopeek labels the map as **Package: apps/api** for both people
 and agents. It is a static source subtree, not proof of workspace membership,
 dependency ownership, build activation, or runtime topology. To keep that
 boundary safe, package scans are ephemeral sessions: they do not overwrite the
 repository-wide cache and cannot join `serve --global` yet.
 
-The selected subtree still obeys the repository's `.flowpeek/config.json`
+The selected subtree still obeys the repository's `.flopeek/config.json`
 source, test, fixture, and exclusion rules; `--package` does not silently
 override them.
 
 Install project-local MCP configuration for a supported host:
 
 ```powershell
-npm exec -- flowpeek install D:\path\to\repository --platform codex
-npm exec -- flowpeek install D:\path\to\repository --platform claude
-npm exec -- flowpeek install D:\path\to\repository --platform cursor
-npm exec -- flowpeek install D:\path\to\repository --platform gemini
+npm exec -- flopeek install D:\path\to\repository --platform codex
+npm exec -- flopeek install D:\path\to\repository --platform claude
+npm exec -- flopeek install D:\path\to\repository --platform cursor
+npm exec -- flopeek install D:\path\to\repository --platform gemini
 ```
 
-Flowpeek preserves unrelated host settings and refuses conflicting managed entries. ChatGPT web cannot connect to a local stdio MCP server through this installer.
+Flopeek preserves unrelated host settings and refuses conflicting managed entries. ChatGPT web cannot connect to a local stdio MCP server through this installer.
 
-[Read the user guide](docs/using-flowpeek.md) · [Read the agent guide](docs/agent-integration.md) · [Check language/framework support](SUPPORT.md)
+[Read the user guide](docs/using-flopeek.md) · [Read the agent guide](docs/agent-integration.md) · [Check language/framework support](SUPPORT.md)
 
 ## Why use a graph instead of search alone?
 
-Literal search is excellent when you already know the identifier. Flowpeek becomes useful when you also need relationship order, reusable context identity, change impact, or a shared human/agent view.
+Literal search is excellent when you already know the identifier. Flopeek becomes useful when you also need relationship order, reusable context identity, change impact, or a shared human/agent view.
 
 ![Orientation capability comparison](docs/assets/orientation-capabilities.svg)
 
-The checked orientation suite contains three small source-pinned TypeScript/Python fixtures. Both conditions find all 10 targets and 3 tests. Only Flowpeek produces the expected 14 ordered static steps and detects all 3 stale Context Refs. Oracle files are excluded from direct retrieval.
+The checked orientation suite contains three small source-pinned TypeScript/Python fixtures. Both conditions find all 10 targets and 3 tests. Only Flopeek produces the expected 14 ordered static steps and detects all 3 stale Context Refs. Oracle files are excluded from direct retrieval.
 
-This benchmark does **not** prove developer productivity, AI patch quality, runtime order, or token savings. On these tiny fixtures, literal retrieval is faster and its returned text is smaller. Flowpeek pays a cold graph-build cost to provide capabilities that literal retrieval does not model.
+This benchmark does **not** prove developer productivity, AI patch quality, runtime order, or token savings. On these tiny fixtures, literal retrieval is faster and its returned text is smaller. Flopeek pays a cold graph-build cost to provide capabilities that literal retrieval does not model.
 
 [Inspect the complete benchmark and raw evidence](BENCHMARKS.md)
 
 ## Reuse work on large repositories
 
-Flowpeek retains parser facts and reparses changed files. Relationship assembly remains graph-wide, but supported unchanged files do not need a full parser pass.
+Flopeek retains parser facts and reparses changed files. Relationship assembly remains graph-wide, but supported unchanged files do not need a full parser pass.
 
-Before scanning an unfamiliar workspace, `flowpeek discover` can report
+Before scanning an unfamiliar workspace, `flopeek discover` can report
 candidate source, scope, static manifests, adapter demand, and declared resource
 bounds without parsing source. A bounded CLI scan returns no partial graph and
 does not replace the last complete cache. CLI, Viewer/HTTP/SSE, and MCP share
@@ -263,12 +263,12 @@ The chart reports one host-specific comparison for one supported unchanged file 
 Run the public proof contract:
 
 ```powershell
-npm exec -- flowpeek proof D:\path\to\repository --iterations 3
+npm exec -- flopeek proof D:\path\to\repository --iterations 3
 npm run test:real-corpus
 npm run evaluate:orientation
 ```
 
-## What Flowpeek does not claim
+## What Flopeek does not claim
 
 - A static edge is not proof that code executed.
 - A generated technical flow is not a verified business process.
@@ -278,7 +278,7 @@ npm run evaluate:orientation
 - A tagged release identifies a public preview or stable source snapshot; it
   does not turn static evidence into runtime proof.
 
-Dynamic dispatch, dependency-injection containers, reflection, callbacks, macros, runtime module loading, and unsupported framework wiring may be absent from the static graph. Flowpeek exposes parser coverage and limitations so a developer or agent knows when to inspect source directly.
+Dynamic dispatch, dependency-injection containers, reflection, callbacks, macros, runtime module loading, and unsupported framework wiring may be absent from the static graph. Flopeek exposes parser coverage and limitations so a developer or agent knows when to inspect source directly.
 
 ## Documentation
 
@@ -286,7 +286,7 @@ Start at the [documentation index](docs/README.md).
 
 | Goal | Document |
 | --- | --- |
-| Use Flowpeek day to day | [User guide](docs/using-flowpeek.md) |
+| Use Flopeek day to day | [User guide](docs/using-flopeek.md) |
 | Run the complete demo | [Showcase walkthrough](docs/showcase-walkthrough.md) |
 | Connect a coding agent | [Agent integration](docs/agent-integration.md) |
 | Check exact support | [Support matrix](SUPPORT.md) |
@@ -306,5 +306,5 @@ npm run audit:package
 npm run verify:clean-room
 ```
 
-Flowpeek currently requires Node.js 20 or later. The source repository is
+Flopeek currently requires Node.js 20 or later. The source repository is
 public; npm registry publishing remains a separate release decision.

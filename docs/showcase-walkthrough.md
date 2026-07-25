@@ -1,8 +1,8 @@
-# Flowpeek checkout showcase
+# Flopeek checkout showcase
 
 ## Purpose
 
-The checkout showcase is a safe, guided product demonstration. It proves that the current Flowpeek build can expose one shared static context through the local viewer, HTTP API, and MCP; retain a live adjacent graph delta; resolve an older Context Ref as stale; and display a before/current Flow Lens comparison.
+The checkout showcase is a safe, guided product demonstration. It proves that the current Flopeek build can expose one shared static context through the local viewer, HTTP API, and MCP; retain a live adjacent graph delta; resolve an older Context Ref as stale; and display a before/current Flow Lens comparison.
 
 It is not independent benchmark evidence, a human study, an AI-agent outcome study, runtime verification, business-intent verification, or a claim that unsupported behavior is absent.
 
@@ -15,13 +15,13 @@ npm run showcase
 
 The command:
 
-1. validates `examples/commerce-showcase/flowpeek-showcase.json`;
+1. validates `examples/commerce-showcase/flopeek-showcase.json`;
 2. copies the example into a uniquely marked operating-system temporary directory;
-3. starts the ordinary loopback Flowpeek server with port fallback;
+3. starts the ordinary loopback Flopeek server with port fallback;
 4. opens a deep link to `POST /api/checkout`;
 5. leaves the target application unexecuted.
 
-The original example remains unchanged and receives no `.flowpeek` cache. Closing the showcase process removes the temporary workspace unless `--keep-workspace` was supplied.
+The original example remains unchanged and receives no `.flopeek` cache. Closing the showcase process removes the temporary workspace unless `--keep-workspace` was supplied.
 
 ## Inspect the baseline
 
@@ -37,7 +37,7 @@ POST /api/checkout
   -> publishOrderCreated / Prisma client (within the bounded projection)
 ```
 
-The fan-out is static relationship evidence, not an assertion of runtime ordering. `src/checkout/discount.ts` deliberately contains a computed dynamic import. Flowpeek does not resolve that target; the missing edge does not prove that the runtime discount behavior is absent.
+The fan-out is static relationship evidence, not an assertion of runtime ordering. `src/checkout/discount.ts` deliberately contains a computed dynamic import. Flopeek does not resolve that target; the missing edge does not prove that the runtime discount behavior is absent.
 
 Use **Copy Flow Context Card** in the inspector. The copied packet includes the project ID, graph version, exact Flow Context Ref, displayed static steps, transition evidence, truncation, directly related test evidence, and limitations without source-file bodies.
 
@@ -46,10 +46,10 @@ Use **Copy Flow Context Card** in the inspector. The copied packet includes the 
 Open another terminal and run the exact command printed by the showcase process or copied from the blue viewer guide:
 
 ```powershell
-flowpeek showcase apply "<temporary-workspace>"
+flopeek showcase apply "<temporary-workspace>"
 ```
 
-This command is accepted only when `<temporary-workspace>` contains a valid `flowpeek-showcase-workspace/v1` marker and the declared source has either its baseline or changed hash. It refuses an arbitrary directory and refuses to overwrite diverged source.
+This command is accepted only when `<temporary-workspace>` contains a valid `flopeek-showcase-workspace/v1` marker and the declared source has either its baseline or changed hash. It refuses an arbitrary directory and refuses to overwrite diverged source.
 
 The change replaces the direct `authorizePayment -> saveOrder` relationship with:
 
@@ -70,7 +70,7 @@ The two sides are bounded snapshots. They are not reconstructed runtime history.
 
 ## Inspect impact and related tests
 
-The affected payment source maps to `test/checkout.test.ts` through direct stored parser relationships. This is a candidate for repository-owned verification, not proof that the test covers every checkout behavior. Flowpeek does not run the example test or install its declared integrations.
+The affected payment source maps to `test/checkout.test.ts` through direct stored parser relationships. This is a candidate for repository-owned verification, not proof that the test covers every checkout behavior. Flopeek does not run the example test or install its declared integrations.
 
 For an agent host configured against the temporary workspace, the equivalent safe sequence is:
 
@@ -91,8 +91,8 @@ Viewer, HTTP, and MCP must report the same project ID, graph version, primary fl
 ## Reset or inspect status
 
 ```powershell
-flowpeek showcase status "<temporary-workspace>"
-flowpeek showcase reset "<temporary-workspace>"
+flopeek showcase status "<temporary-workspace>"
+flopeek showcase reset "<temporary-workspace>"
 ```
 
 `status` reports `baseline`, `changed`, or `diverged` by comparing only the declared source file with the two committed hashes. It is not Git cleanliness or runtime status. `reset` has the same marker and divergence protections as `apply`.
@@ -100,7 +100,7 @@ flowpeek showcase reset "<temporary-workspace>"
 Use this only when the workspace must remain after the server closes:
 
 ```powershell
-flowpeek showcase --keep-workspace
+flopeek showcase --keep-workspace
 ```
 
 The retained path is printed explicitly. It can be deleted after inspection because it is a generated temporary copy.

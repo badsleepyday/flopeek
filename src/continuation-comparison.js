@@ -4,7 +4,7 @@ const { getContinuationCheckpoint } = require("./continuation-checkpoint");
 const { getPlannedOverlay } = require("./planned-overlay");
 const { listPlanReconciliations } = require("./plan-reconciliation");
 
-const CONTINUATION_COMPARISON_SCHEMA = "flowpeek-continuation-comparison/v1";
+const CONTINUATION_COMPARISON_SCHEMA = "flopeek-continuation-comparison/v1";
 const PLAN_STATUSES = new Set([
   "planned-only",
   "reconciled",
@@ -75,7 +75,7 @@ function compareContinuation(root, graph, options = {}) {
       current: { graphVersion: graph.state.graphVersion, sourceFingerprint: graph.state.sourceFingerprint },
       plans: [],
       diagnostics: [...(checkpointResult.diagnostics || []), ...(overlayResult.diagnostics || [])],
-      limitation: "Retained checkpoint or planned-overlay evidence is unavailable. Flowpeek does not infer missing implementation, reconstruct omitted historical state, or use similarity matching.",
+      limitation: "Retained checkpoint or planned-overlay evidence is unavailable. Flopeek does not infer missing implementation, reconstruct omitted historical state, or use similarity matching.",
     };
   }
   const checkpoint = checkpointResult.checkpoint;
@@ -141,7 +141,7 @@ function compareContinuation(root, graph, options = {}) {
     plans,
     summary: { statusCounts, reconciliationAvailability: reconciliationResult.status },
     diagnostics: reconciliationResult.diagnostics || [],
-    limitation: "This deterministic comparison uses retained checkpoint/overlay metadata and current Context Ref resolution plus append-only reconciliation records. Missing or unavailable retained evidence is unknown or unavailable, never evidence that an implementation is absent. Flowpeek uses no AI, similarity, or automatic materialization heuristic here.",
+    limitation: "This deterministic comparison uses retained checkpoint/overlay metadata and current Context Ref resolution plus append-only reconciliation records. Missing or unavailable retained evidence is unknown or unavailable, never evidence that an implementation is absent. Flopeek uses no AI, similarity, or automatic materialization heuristic here.",
   };
 }
 

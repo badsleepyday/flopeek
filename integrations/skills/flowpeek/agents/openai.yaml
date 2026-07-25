@@ -1,4 +1,0 @@
-interface:
-  display_name: "Flowpeek"
-  short_description: "Ground repository work in Flowpeek evidence"
-  default_prompt: "Use $flowpeek to orient this repository task with current evidence."

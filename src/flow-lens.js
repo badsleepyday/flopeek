@@ -2,7 +2,7 @@ const { createContextRef } = require("./context-card");
 const { DEFAULT_FLOW_LENS_MAX_STEPS, MAX_FLOW_LENS_STEPS, validateFlowLensMaxSteps } = require("./flow-lens-options");
 const { inferFlowEntry } = require("./flow-entry");
 
-const FLOW_LENS_SCHEMA = "flowpeek-flow-lens/v1";
+const FLOW_LENS_SCHEMA = "flopeek-flow-lens/v1";
 const FLOW_TRAVERSAL_STEP_BOUND = MAX_FLOW_LENS_STEPS;
 
 function nodeSummary(node) {
@@ -190,7 +190,7 @@ function createFlowProjection(graph, flow, options = {}) {
     ...(entry.limitations || []),
   ];
   if (truncation.displayTruncated) limitations.push(`The lens displays the first ${steps.length} of ${sourceSteps.length} traversed steps; use raw dependencies to inspect omitted continuation.`);
-  if (truncation.sourceTraversalMayBeTruncated) limitations.push(`The source traversal reached Flowpeek's ${FLOW_TRAVERSAL_STEP_BOUND}-step bound; further static continuation may be omitted.`);
+  if (truncation.sourceTraversalMayBeTruncated) limitations.push(`The source traversal reached Flopeek's ${FLOW_TRAVERSAL_STEP_BOUND}-step bound; further static continuation may be omitted.`);
   if (missingTransitions.length) limitations.push("Some displayed steps have no adjacent-depth parser edge in the retained traversal; they are shown as static members, not a proven transition.");
   if (entry.kind === "http-request" && !exactHandler) limitations.push("The endpoint could not be bound to one exact exported HTTP handler symbol, so this is a lower-confidence file-level fallback rather than handler-specific evidence.");
   if (entry.kind === "http-request" && handlerEvidence.siblingHandlerContamination) limitations.push("Sibling HTTP handler symbols were retained in this traversal. Semantic confidence is reduced until the containment path is removed or inspected.");

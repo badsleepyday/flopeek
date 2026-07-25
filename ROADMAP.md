@@ -1,17 +1,17 @@
-# Flowpeek Agile delivery roadmap
+# Flopeek Agile delivery roadmap
 
-> **For contributors choosing the next iteration.** This is not a feature manual or release promise. Current user workflows live in the [user guide](docs/using-flowpeek.md); current support lives in [SUPPORT.md](SUPPORT.md).
+> **For contributors choosing the next iteration.** This is not a feature manual or release promise. Current user workflows live in the [user guide](docs/using-flopeek.md); current support lives in [SUPPORT.md](SUPPORT.md).
 
 ## Document authority
 
-This is the **single prioritized roadmap for building Flowpeek**.
+This is the **single prioritized roadmap for building Flopeek**.
 
 - [PRODUCT.md](PRODUCT.md) defines the product contract.
 - [ARCHITECTURE.md](ARCHITECTURE.md) defines current and target technical design.
 - [SUPPORT.md](SUPPORT.md) defines current analysis support.
 - This document defines delivery order, user stories, acceptance criteria, dependencies, and status.
 
-This is not a second product specification and is not an SDLC plan for repositories scanned by Flowpeek. Flowpeek itself is delivered using the Agile process described here. SDLC methods inside Flowpeek are a product epic in this roadmap.
+This is not a second product specification and is not an SDLC plan for repositories scanned by Flopeek. Flopeek itself is delivered using the Agile process described here. SDLC methods inside Flopeek are a product epic in this roadmap.
 
 ## Status legend
 
@@ -127,7 +127,7 @@ Adding another parser is lower priority than correcting a misleading default flo
 ### Next
 
 - Add read-only branch divergence after the checkpoint, Plan Ref, Continue-mode, manual reconciliation, and baseline/plan/current comparison contracts.
-- Run opt-in human/agent handoff studies on real legacy repositories using the consent-ready observation protocol, and retain independently reviewed outcome evidence outside Flowpeek's local cache.
+- Run opt-in human/agent handoff studies on real legacy repositories using the consent-ready observation protocol, and retain independently reviewed outcome evidence outside Flopeek's local cache.
 - Add consented runtime/test evidence adapters only after a separate privacy, sanitization, retention, and command-authority review; automatic collection remains out of scope.
 - Validate concept taxonomy and aliases with opted-in human handoff studies before broadening the vocabulary.
 - Continue extracting remaining scanner responsibilities behind adapter and service contracts; deterministic Next.js/SvelteKit file-system route and source-classification derivation are now isolated and regression tested.
@@ -186,11 +186,11 @@ At the Epic baseline, discovery recognized tests primarily from filenames, route
 
 ### Story 1.1 — Repository scope configuration
 
-As a developer, I want Flowpeek to distinguish application, test, fixture, generated, and excluded source so that the default flow describes the real application.
+As a developer, I want Flopeek to distinguish application, test, fixture, generated, and excluded source so that the default flow describes the real application.
 
 #### Delivery
 
-- [x] Add versioned `.flowpeek/config.json`.
+- [x] Add versioned `.flopeek/config.json`.
 - [x] Support `sourceRoots`, `testRoots`, `fixtureRoots`, and `exclude`.
 - [x] Preserve current safe ignored-directory defaults.
 - [x] Define deterministic configuration precedence.
@@ -198,7 +198,7 @@ As a developer, I want Flowpeek to distinguish application, test, fixture, gener
 
 #### Acceptance criteria
 
-- Flowpeek scanning its own repository does not present endpoints from `test/fixtures` as default application flows.
+- Flopeek scanning its own repository does not present endpoints from `test/fixtures` as default application flows.
 - Tests remain available for `tested_by` and impact evidence.
 - A user can explicitly include tests/fixtures in a diagnostic scope.
 - Invalid configuration produces a clear error and does not corrupt the cache.
@@ -257,7 +257,7 @@ Viewer and MCP clients can identify the same graph state, compare adjacent state
 
 ### Story 2.1 — Project identity
 
-As a local user, I want Flowpeek to recognize the configured project across process restarts.
+As a local user, I want Flopeek to recognize the configured project across process restarts.
 
 #### Delivery
 
@@ -335,7 +335,7 @@ Dependency: Epic 2 identity contract.
 
 ### Outcome
 
-Flowpeek turns technical evidence into bounded, readable, resolvable context without claiming business or runtime truth.
+Flopeek turns technical evidence into bounded, readable, resolvable context without claiming business or runtime truth.
 
 ### Story 3.1 — Context reference
 
@@ -437,7 +437,7 @@ Dependency: Epics 2–3.
 
 ### Story 4.2 — Stale-context protocol
 
-As a coding agent, I want Flowpeek to reject or warn about stale context before I recommend or verify a change.
+As a coding agent, I want Flopeek to reject or warn about stale context before I recommend or verify a change.
 
 #### Acceptance criteria
 
@@ -448,7 +448,7 @@ As a coding agent, I want Flowpeek to reject or warn about stale context before 
 
 ### Story 4.3 — Agent evidence trace
 
-As a reviewer, I want to know which Flowpeek contexts and test outcomes an agent used without storing private reasoning.
+As a reviewer, I want to know which Flopeek contexts and test outcomes an agent used without storing private reasoning.
 
 #### Delivery
 
@@ -500,7 +500,7 @@ Dependency: Context Cards and verified feedback storage.
 
 ### Outcome
 
-Flowpeek suggests useful technical roles, groupings, and names while preserving evidence and abstaining when uncertain.
+Flopeek suggests useful technical roles, groupings, and names while preserving evidence and abstaining when uncertain.
 
 ### Story 6.1 — Deterministic feature model
 
@@ -537,7 +537,7 @@ Flowpeek suggests useful technical roles, groupings, and names while preserving 
 
 Semantic suggestions measurably outperform deterministic naming on held-out verified data, explain their basis, and safely return unknown.
 
-## Epic 7 — Flowpeek SDLC workflow engine
+## Epic 7 — Flopeek SDLC workflow engine
 
 Status: `partial` — the local Delivery Graph and evidence-gated workflow
 foundation are current; versioned continuation, editable Viewer workflow,
@@ -549,7 +549,7 @@ Dependency: Context Cards, graph identity, and evidence trace.
 
 ### Outcome
 
-Flowpeek supports Agile, Waterfall, and custom methods as templates over one evidence-gated workflow engine.
+Flopeek supports Agile, Waterfall, and custom methods as templates over one evidence-gated workflow engine.
 
 ### Story 7.1 — Delivery Graph and Work record
 
@@ -600,7 +600,7 @@ The lower-cost-model execution contract and acceptance order are maintained in
 - [x] Compare retained baseline, plan, and current context with explicit partial/unavailable outcomes.
 - [x] Detect local branch/source divergence without network, checkout, merge, rebase, or ref mutation.
 - [x] Provide one bounded continuation packet shared by HTTP and MCP.
-- [ ] Complete Flowpeek-on-Flowpeek dogfooding, broad surface parity, documentation, and packaging verification.
+- [ ] Complete Flopeek-on-Flopeek dogfooding, broad surface parity, documentation, and packaging verification.
 
 ### Epic exit criteria
 
@@ -645,15 +645,15 @@ Priority: P1 before public recommendation; otherwise can proceed alongside later
 - [ ] Remove `private: true` only when publication is authorized.
 - [ ] Add package `files` allowlist.
 - [ ] Exclude tests, corpus, and GitHub workflows from runtime package unless intentionally shipped.
-- [ ] Add `flowpeek --version`.
-- [ ] Add `flowpeek doctor` for Node, Git, Go, .NET, adapter, and cache diagnostics.
+- [ ] Add `flopeek --version`.
+- [ ] Add `flopeek doctor` for Node, Git, Go, .NET, adapter, and cache diagnostics.
 - [ ] Auto-select the next available loopback port or clearly report collision.
 - [ ] Add changelog and release automation.
 - [ ] Test clean-room install, MCP launch, scan, viewer, and uninstall.
 
 ### Exit criteria
 
-A new user can install Flowpeek from the selected release channel, scan a repository, connect MCP, and open the viewer using only published documentation.
+A new user can install Flopeek from the selected release channel, scan a repository, connect MCP, and open the viewer using only published documentation.
 
 ## Proposed first six iterations
 
@@ -661,11 +661,11 @@ These are sequence proposals, not fixed dates.
 
 ### Iteration 1 — Correct application scope
 
-Goal: Flowpeek's own default flow no longer comes from test fixtures.
+Goal: Flopeek's own default flow no longer comes from test fixtures.
 
 Status: `completed`.
 
-Evidence: `npm.cmd test` passed 56 tests, including configuration defaults, schema/type rejection, source/test/fixture/generated/excluded classification, test relationships, diagnostic flows, CLI/API/viewer/MCP scope metadata, cache preservation, incremental reclassification, and watcher reload. The fixture corpus passed 16/16 audited relationships. Flowpeek self-scan produced no default fixture entries while diagnostic flows retained `GET /api/health`, `GET /payments/{payment_id}`, and `POST /orders` from `test/fixtures`.
+Evidence: `npm.cmd test` passed 56 tests, including configuration defaults, schema/type rejection, source/test/fixture/generated/excluded classification, test relationships, diagnostic flows, CLI/API/viewer/MCP scope metadata, cache preservation, incremental reclassification, and watcher reload. The fixture corpus passed 16/16 audited relationships. Flopeek self-scan produced no default fixture entries while diagnostic flows retained `GET /api/health`, `GET /payments/{payment_id}`, and `POST /orders` from `test/fixtures`.
 
 - Repository config schema.
 - Test/fixture classification.
@@ -692,7 +692,7 @@ Goal: every material refresh has an explicit before/after identity.
 
 Status: `completed`.
 
-Evidence: schema v5 separates file format from monotonic `graphVersion`; material fingerprints include deterministic static evidence plus source content/revision and exclude transient refresh metadata. Restart and no-op scans retain the version, while a topology-neutral source edit advances it and produces `sourceChanged: true`, `topologyChanged: false`. `.flowpeek/state.json` and 40 retained `.flowpeek/deltas/<from>-<to>.json` records persist identity and adjacent changes. The API, SSE, viewer badge/change tray, CLI `delta`, and MCP `get_graph_delta` / `refresh_graph` share this state. ADR-002 specifies recovery and non-claims.
+Evidence: schema v5 separates file format from monotonic `graphVersion`; material fingerprints include deterministic static evidence plus source content/revision and exclude transient refresh metadata. Restart and no-op scans retain the version, while a topology-neutral source edit advances it and produces `sourceChanged: true`, `topologyChanged: false`. `.flopeek/state.json` and 40 retained `.flopeek/deltas/<from>-<to>.json` records persist identity and adjacent changes. The API, SSE, viewer badge/change tray, CLI `delta`, and MCP `get_graph_delta` / `refresh_graph` share this state. ADR-002 specifies recovery and non-claims.
 
 - Graph version.
 - Delta schema.
@@ -718,7 +718,7 @@ Goal: one HTTP request flow is readable, evidence-rich, and bounded.
 
 Status: `completed`.
 
-Evidence: `flowpeek-flow-lens/v1` derives a default 12-step projection from one existing HTTP/request flow without changing the scanner's stored facts. Each step has a technical role, current node Context Ref, and a deterministic parser-edge evidence reference when an adjacent-depth transition exists. The lens surfaces bounded fan-out, alternative predecessors, missing evidence, source-traversal limits, and supported static persistence/queue/external boundaries. Viewer flow buttons open the lens and every displayed node drills into raw dependencies; `/api/flow-lens` and MCP `get_flow_projection` share the same graph-service result. Flow-level verification was explicitly `null` in this iteration; later iterations added Context Cards and lifecycle metadata.
+Evidence: `flopeek-flow-lens/v1` derives a default 12-step projection from one existing HTTP/request flow without changing the scanner's stored facts. Each step has a technical role, current node Context Ref, and a deterministic parser-edge evidence reference when an adjacent-depth transition exists. The lens surfaces bounded fan-out, alternative predecessors, missing evidence, source-traversal limits, and supported static persistence/queue/external boundaries. Viewer flow buttons open the lens and every displayed node drills into raw dependencies; `/api/flow-lens` and MCP `get_flow_projection` share the same graph-service result. Flow-level verification was explicitly `null` in this iteration; later iterations added Context Cards and lifecycle metadata.
 
 - Step roles.
 - Evidence refs.
@@ -732,7 +732,7 @@ Goal: edit a flow and show the same affected Context Card to a person and agent.
 
 Status: `completed`.
 
-Evidence: `flowpeek-changed-contexts/v1` projects each retained adjacent delta into bounded node and Flow Lens contexts with explicit status, availability, Context Refs, Lens IDs, and changed static step IDs. SSE carries this exact projection; the local viewer preserves an open Flow Lens, shows affected items in the change tray, and marks affected displayed steps. MCP `get_changed_contexts` and `refresh_graph.changedContexts` return the same graph-service result. An end-to-end test edits a static HTTP flow and verifies matching SSE, HTTP, Flow Lens, stale-reference evidence, and server-side refresh-to-context timing. The timing begins after watcher debounce and excludes browser transport/rendering.
+Evidence: `flopeek-changed-contexts/v1` projects each retained adjacent delta into bounded node and Flow Lens contexts with explicit status, availability, Context Refs, Lens IDs, and changed static step IDs. SSE carries this exact projection; the local viewer preserves an open Flow Lens, shows affected items in the change tray, and marks affected displayed steps. MCP `get_changed_contexts` and `refresh_graph.changedContexts` return the same graph-service result. An end-to-end test edits a static HTTP flow and verifies matching SSE, HTTP, Flow Lens, stale-reference evidence, and server-side refresh-to-context timing. The timing begins after watcher debounce and excludes browser transport/rendering.
 
 - [x] Live change tray.
 - [x] Focus preservation.
@@ -746,7 +746,7 @@ Goal: let a person and agent inspect a captured affected flow before and after o
 
 Status: `completed`.
 
-Evidence: `flowpeek-flow-comparison/v1` retains bounded before/current Flow Lens snapshots only for captured affected flows in an adjacent delta. It deterministically identifies added/removed steps, static transition, displayed metadata and depth changes, plus source-only evidence changes. The local viewer exposes the same comparison from the live tray and open Flow Lens; old steps are read-only and current steps drill into current raw evidence. `/api/flow-comparison` and MCP `get_flow_comparison` use the graph-service result shared with `get_changed_contexts`. Tests cover source-only, static-step addition, HTTP/SSE parity, and MCP refresh/query behavior. The capability explicitly excludes arbitrary historical reconstruction, source contents, runtime order, and business-process proof.
+Evidence: `flopeek-flow-comparison/v1` retains bounded before/current Flow Lens snapshots only for captured affected flows in an adjacent delta. It deterministically identifies added/removed steps, static transition, displayed metadata and depth changes, plus source-only evidence changes. The local viewer exposes the same comparison from the live tray and open Flow Lens; old steps are read-only and current steps drill into current raw evidence. `/api/flow-comparison` and MCP `get_flow_comparison` use the graph-service result shared with `get_changed_contexts`. Tests cover source-only, static-step addition, HTTP/SSE parity, and MCP refresh/query behavior. The capability explicitly excludes arbitrary historical reconstruction, source contents, runtime order, and business-process proof.
 
 - [x] Bounded retained snapshots in adjacent deltas.
 - [x] Deterministic static comparison classification.
@@ -760,7 +760,7 @@ Goal: let a person or agent copy one bounded HTTP/request flow as a versioned Co
 
 Status: `completed`.
 
-Evidence: `flowpeek-context/v1` now supports `kind: flow` with `fp://local/<project>/flow/<flow-id>@<version>`. The card packages one current `flowpeek-flow-lens/v1` projection, direct related-test evidence, truncation, limitations, unresolved questions, verification state, and safe actions without source-file contents. JSON and Markdown packets are available from the open viewer, `/api/flow-context-card`, and MCP `get_flow_context_card`. The shared resolver returns current or stale current cards, historical removal evidence with an already-captured bounded Lens snapshot when available, and explicit unresolved results; it does not infer flow successors or reconstruct a full old card. Contract tests cover viewer/API, MCP, current, stale, historical, unresolved, packet bounds, and source-content exclusion.
+Evidence: `flopeek-context/v1` now supports `kind: flow` with `fp://local/<project>/flow/<flow-id>@<version>`. The card packages one current `flopeek-flow-lens/v1` projection, direct related-test evidence, truncation, limitations, unresolved questions, verification state, and safe actions without source-file contents. JSON and Markdown packets are available from the open viewer, `/api/flow-context-card`, and MCP `get_flow_context_card`. The shared resolver returns current or stale current cards, historical removal evidence with an already-captured bounded Lens snapshot when available, and explicit unresolved results; it does not infer flow successors or reconstruct a full old card. Contract tests cover viewer/API, MCP, current, stale, historical, unresolved, packet bounds, and source-content exclusion.
 
 - [x] Versioned flow Context Ref and `kind: flow` card.
 - [x] Bounded Flow Lens and related-test evidence.
@@ -775,7 +775,7 @@ Goal: let a person attach attributable, versioned confirmation to a bounded flow
 
 Status: `completed`.
 
-Evidence: `flowpeek-flow-verifications/v1` stores immutable local records in `.flowpeek/flow-verifications.json`. A record contains a verified title, description, owner, risk, questions, verifier, timestamp, source graph version, technical fingerprint, participating source paths, and a supersession link. The resolver exposes `current`, `compatible`, `stale`, `detached`, `indeterminate`, `unverified`, and `unavailable` outcomes; compatibility requires a complete retained adjacent-delta chain with no participating path or flow change. The Flow Lens, Flow Context Card, JSON/Markdown Context Packet, HTTP API, and read-only MCP `get_flow_verification` return the same resolution. The viewer creates replacement records rather than overwriting history. Tests cover immutable supersession, source-content exclusion, compatible unrelated changes, stale participating-source changes, detached flows, invalid-store preservation, local API, and MCP read access.
+Evidence: `flopeek-flow-verifications/v1` stores immutable local records in `.flopeek/flow-verifications.json`. A record contains a verified title, description, owner, risk, questions, verifier, timestamp, source graph version, technical fingerprint, participating source paths, and a supersession link. The resolver exposes `current`, `compatible`, `stale`, `detached`, `indeterminate`, `unverified`, and `unavailable` outcomes; compatibility requires a complete retained adjacent-delta chain with no participating path or flow change. The Flow Lens, Flow Context Card, JSON/Markdown Context Packet, HTTP API, and read-only MCP `get_flow_verification` return the same resolution. The viewer creates replacement records rather than overwriting history. Tests cover immutable supersession, source-content exclusion, compatible unrelated changes, stale participating-source changes, detached flows, invalid-store preservation, local API, and MCP read access.
 
 - [x] Immutable local record store and atomic writes.
 - [x] Version/fingerprint/delta-based lifecycle resolution.
@@ -790,7 +790,7 @@ Goal: make proven static adapter support a versioned, declarative contract and p
 
 Status: `completed`.
 
-Evidence: `flowpeek-adapter-capabilities/v1` is a validated, deterministically sorted registry exposed identically by graph analysis, `/api/capabilities`, and read-only agent context. `SUPPORT.md` has a generated registry block with write and non-mutating drift-check commands. Explicit fast, unit, adapter, contract, viewer, fixture, complete, and external-corpus lanes preserve existing parser behavior without putting network cloning in ordinary pull-request checks. The local fast lane passed 7 tests in 5.36 seconds; the complete suite passed 75 tests, and the fixture gate retained 16/16 expected relationships at 100% precision and recall.
+Evidence: `flopeek-adapter-capabilities/v1` is a validated, deterministically sorted registry exposed identically by graph analysis, `/api/capabilities`, and read-only agent context. `SUPPORT.md` has a generated registry block with write and non-mutating drift-check commands. Explicit fast, unit, adapter, contract, viewer, fixture, complete, and external-corpus lanes preserve existing parser behavior without putting network cloning in ordinary pull-request checks. The local fast lane passed 7 tests in 5.36 seconds; the complete suite passed 75 tests, and the fixture gate retained 16/16 expected relationships at 100% precision and recall.
 
 - [x] Versioned, validated declarative adapter registry.
 - [x] Shared graph/API/agent-context registry exposure and repository-coverage separation.
@@ -804,7 +804,7 @@ Goal: turn bounded static HTTP/request evidence into explainable candidate title
 
 Status: `completed`.
 
-Implemented evidence: `flowpeek-semantic-flow-suggestion/v1` produces deterministic `suggested` or `abstained` outcomes with confidence, reasons, and direct node/edge evidence references. Flow Lens, `/api/flow-suggestion`, Flow Context Cards, Markdown packets, viewer drafts, and agent context share the same result. `benchmarks/semantic-flow-suggestions.json` is a committed contract corpus; it measures deterministic output stability, not business-purpose correctness. The external repository runner now reports repository/scope progress, enforces a per-repository child-process timeout, and preserves structured partial results without calling them a pass.
+Implemented evidence: `flopeek-semantic-flow-suggestion/v1` produces deterministic `suggested` or `abstained` outcomes with confidence, reasons, and direct node/edge evidence references. Flow Lens, `/api/flow-suggestion`, Flow Context Cards, Markdown packets, viewer drafts, and agent context share the same result. `benchmarks/semantic-flow-suggestions.json` is a committed contract corpus; it measures deterministic output stability, not business-purpose correctness. The external repository runner now reports repository/scope progress, enforces a per-repository child-process timeout, and preserves structured partial results without calling them a pass.
 
 - [x] Versioned deterministic suggestion schema and validation.
 - [x] Candidate title, technical purpose, role, grouping, confidence, reasons, and evidence references.
@@ -818,11 +818,11 @@ Implemented evidence: `flowpeek-semantic-flow-suggestion/v1` produces determinis
 
 ### Iteration 12 — Agent Evidence Trace
 
-Goal: let reviewers and later agents see which versioned Flowpeek context, declared action, changed paths, and verification outcome an agent used without storing private reasoning or granting source-write capability.
+Goal: let reviewers and later agents see which versioned Flopeek context, declared action, changed paths, and verification outcome an agent used without storing private reasoning or granting source-write capability.
 
 Status: `completed` for the append/query foundation; opt-in viewer history and an outcome benchmark remain Epic 4 follow-up work.
 
-Implemented evidence: `flowpeek-agent-evidence-trace/v1` records append-only `agent-declared` metadata in `.flowpeek/agent-evidence-traces.json`. Caller operation IDs make retries idempotent and conflicting reuse fails without overwrite. Context Refs must belong to the current project and resolve as current, stale, or retained historical evidence. Paths are normalized repository-relative values; absolute/traversal paths are rejected. HTTP and MCP share graph-service operations, while agent context advertises the policy and a bounded recent summary window. The MCP append tool cannot write repository source, execute commands, or create human verification; it never requests or automatically captures private reasoning/source contents, and its contract prohibits callers from placing them in outcome summaries.
+Implemented evidence: `flopeek-agent-evidence-trace/v1` records append-only `agent-declared` metadata in `.flopeek/agent-evidence-traces.json`. Caller operation IDs make retries idempotent and conflicting reuse fails without overwrite. Context Refs must belong to the current project and resolve as current, stale, or retained historical evidence. Paths are normalized repository-relative values; absolute/traversal paths are rejected. HTTP and MCP share graph-service operations, while agent context advertises the policy and a bounded recent summary window. The MCP append tool cannot write repository source, execute commands, or create human verification; it never requests or automatically captures private reasoning/source contents, and its contract prohibits callers from placing them in outcome summaries.
 
 - [x] Versioned append-only record, store, result, list, and policy schemas.
 - [x] Context Ref, evidence/recording graph versions, operation ID, action, changed paths, verification result, actor, and timestamp.
@@ -853,9 +853,9 @@ These iterations are grouped here to keep one roadmap from duplicating their det
 
 Status: `completed` for the local hub foundation; cross-project graph edges remain intentionally absent.
 
-- [x] `flowpeek serve <project> -g --workspace <id>` starts or joins one user-facing hub port.
+- [x] `flopeek serve <project> -g --workspace <id>` starts or joins one user-facing hub port.
 - [x] A later activation command adds/selects a project without stopping the running hub or another process.
-- [x] Every project retains an independent `projectId`, graph version, watcher, and `.flowpeek` tree.
+- [x] Every project retains an independent `projectId`, graph version, watcher, and `.flopeek` tree.
 - [x] The viewer exposes a project selector and routes all ordinary API/SSE traffic through the active project.
 - [x] Machine-local workspace definitions restore activated project roots and are excluded from portable handoff exports.
 - [x] Port fallback is deterministic; `--strict-port` preserves explicit collision failure, and machine-local live registration lets later commands rejoin the same workspace ID on its fallback port.
@@ -869,7 +869,7 @@ Status: `completed` for bounded metadata and human control; no model is embedded
 - [x] Provider candidates can prefill a human-editable review or verification draft but never replace parser facts or verification.
 - [x] The review queue distinguishes deterministic suggestion, agent proposal, human edit, rejection, and verification.
 - [x] Verification requests require expected graph version and Flow Context Ref; stale drafts fail with a conflict.
-- [x] `get_verified_semantic_memory` exposes current/compatible human verification from `.flowpeek/flow-verifications.json` and excludes stale records by default.
+- [x] `get_verified_semantic_memory` exposes current/compatible human verification from `.flopeek/flow-verifications.json` and excludes stale records by default.
 - [x] The memory contract states that no model weights are stored and a memory hit cannot auto-verify another flow.
 
 ### Iteration 24 — Honest contract visibility and test-run adapter journal
@@ -907,12 +907,12 @@ Status: `completed` for the repository-local review protocol; real multi-provide
 
 - [x] Add optional explicit-invocation skills for Azka, Bono, Cuna, and Dana.
 - [x] Add Elda as the next four-letter alphabetical release and stability reviewer.
-- [x] Route reviewer domains and preserve Flowpeek evidence-class boundaries in `AGENTS.md`.
+- [x] Route reviewer domains and preserve Flopeek evidence-class boundaries in `AGENTS.md`.
 - [x] Define provider/model/run provenance without pretending persona names prove provider independence.
-- [x] Define a strict portable `flowpeek-independent-review/v1` JSON Schema.
+- [x] Define a strict portable `flopeek-independent-review/v1` JSON Schema.
 - [x] Define alpha, beta, stable, and ineligible release gates.
 - [x] Validate every skill with the official skill validator.
-- [ ] Capture a real four-distinct-provider quorum against one current Flowpeek release candidate.
+- [ ] Capture a real four-distinct-provider quorum against one current Flopeek release candidate.
 
 ### Iteration 27 — Discovery, R&D, and paired QA roles
 
@@ -923,19 +923,19 @@ Status: `completed` for portable role contracts; execution evidence remains task
 - [x] Add Gama for primary-source research and reproducible R&D experiments.
 - [x] Add Hadi for automated QA evidence and Iris for observable manual QA evidence.
 - [x] Require Hadi/Iris subject parity and agreement when both QA domains are material.
-- [x] Keep ideation/research separate from approval through `flowpeek-specialist-work-product/v1`.
+- [x] Keep ideation/research separate from approval through `flopeek-specialist-work-product/v1`.
 - [x] Extend independent review artifacts for automated and manual QA provenance.
 
 ### Iteration 28 — Standalone portable team baseline
 
-Status: `completed` for the local standalone repository and Flowpeek adoption contract; remote publication and multi-project adoption evidence remain separate release work.
+Status: `completed` for the local standalone repository and Flopeek adoption contract; remote publication and multi-project adoption evidence remain separate release work.
 
 - [x] Extract project-agnostic role domains, evidence rules, release gates, and artifact schemas into `portable-sdlc-agent-team`.
 - [x] Add a dependency-free cross-platform installer with idempotent AGENTS routing and non-destructive project-context ownership.
 - [x] Generate deterministic draft onboarding from repository identity, conventional documents, and declared commands without inventing business purpose.
 - [x] Distinguish project-local role promotion from cross-project upstream role proposals.
-- [x] Keep Flowpeek skills as specialized adapters and record the portable-to-project role mapping in `.agent-team/upstream.json`.
-- [x] Add standalone installer/contract tests and Flowpeek adoption-contract coverage.
+- [x] Keep Flopeek skills as specialized adapters and record the portable-to-project role mapping in `.agent-team/upstream.json`.
+- [x] Add standalone installer/contract tests and Flopeek adoption-contract coverage.
 - [ ] Publish the standalone repository to a remote host and replace clone placeholders with its canonical URL.
 - [ ] Validate adoption in at least two unrelated projects before promoting any new cross-project role.
 
@@ -943,14 +943,14 @@ Status: `completed` for the local standalone repository and Flowpeek adoption co
 
 Status: `completed` for the project-native vertical slice; independently labeled live-repository accuracy remains unavailable by design.
 
-- [x] Add `flowpeek-trust-analytics/v1` as a read-only aggregation of parser coverage, explicitly cataloged and bounded static transition evidence, related-test availability, graph/cache freshness, human verification, runtime observations, test runs, semantic feedback, and agent-declared traces.
+- [x] Add `flopeek-trust-analytics/v1` as a read-only aggregation of parser coverage, explicitly cataloged and bounded static transition evidence, related-test availability, graph/cache freshness, human verification, runtime observations, test runs, semantic feedback, and agent-declared traces.
 - [x] Keep every evidence class independent and return `overallScore: null` instead of inventing a project truth score.
 - [x] Mark live-repository precision and recall unavailable unless independently labeled ground truth exists for that repository.
 - [x] Expose contract-equivalent output through graph service, loopback HTTP, read-only MCP, and the lightweight local viewer.
-- [x] Keep portable reviewer roles outside Flowpeek runtime and prohibit role/persona names from becoming product evidence.
+- [x] Keep portable reviewer roles outside Flopeek runtime and prohibit role/persona names from becoming product evidence.
 - [x] Add unit, HTTP, viewer-contract, and MCP quality gates for schema parity and anti-overclaiming behavior.
-- [x] Add `flowpeek-product-proof/v1` with validated 92-relationship audit evidence, four pinned monorepo performance rows, current-repository facts, capability showcase, reproduction commands, and explicit non-claims.
-- [x] Expose **Why Flowpeek** through the lightweight viewer, read-only HTTP/MCP, and an explicit `flowpeek proof` or trusted-loopback local benchmark action.
+- [x] Add `flopeek-product-proof/v1` with validated 92-relationship audit evidence, four pinned monorepo performance rows, current-repository facts, capability showcase, reproduction commands, and explicit non-claims.
+- [x] Expose **Why Flopeek** through the lightweight viewer, read-only HTTP/MCP, and an explicit `flopeek proof` or trusted-loopback local benchmark action.
 - [x] Make README and BENCHMARKS the public evidence path: outcome first, methodology and limitations adjacent, raw machine-readable evidence checked in.
 - [ ] Add exportable time-series snapshots only after retention, comparison semantics, and stale-evidence rules are specified.
 - [ ] Add release-readiness policies as explicit evidence requirements; do not derive them from a weighted analytics score.
@@ -959,13 +959,13 @@ Status: `completed` for the project-native vertical slice; independently labeled
 
 Status: `completed` for project-local Codex, Claude Code, Cursor, and Gemini CLI integration; remote ChatGPT integration and package publication remain separate work.
 
-- [x] Add `flowpeek-agent-bootstrap/v1` as the provider-independent current graph identity, readiness, coverage, workflow, and evidence-policy contract.
-- [x] Expose the same bootstrap through `flowpeek bootstrap`, `GET /api/agent-bootstrap`, and read-only MCP `get_agent_bootstrap`.
+- [x] Add `flopeek-agent-bootstrap/v1` as the provider-independent current graph identity, readiness, coverage, workflow, and evidence-policy contract.
+- [x] Expose the same bootstrap through `flopeek bootstrap`, `GET /api/agent-bootstrap`, and read-only MCP `get_agent_bootstrap`.
 - [x] Add a versioned platform registry with explicit project-local skill and MCP config paths plus a truthful `remote-only` ChatGPT web boundary.
-- [x] Add `flowpeek install`, `uninstall`, and `doctor` with JSON output, explicit platform selection, PATH-only detection, dry-run, strict diagnostics, and meaningful failure status.
-- [x] Generate and validate one canonical portable Flowpeek tool-usage skill that requires graph-first orientation, source fallback, post-edit refresh, repository-owned verification, and explicit evidence limits.
-- [x] Preflight all writes; preserve unrelated host configuration; reject malformed, unmanaged, or modified Flowpeek content; make reinstall idempotent and uninstall ownership-aware.
-- [x] Keep the external developer-role ecosystem outside Flowpeek product/runtime and prohibit provider proposals from becoming parser facts or human verification.
+- [x] Add `flopeek install`, `uninstall`, and `doctor` with JSON output, explicit platform selection, PATH-only detection, dry-run, strict diagnostics, and meaningful failure status.
+- [x] Generate and validate one canonical portable Flopeek tool-usage skill that requires graph-first orientation, source fallback, post-edit refresh, repository-owned verification, and explicit evidence limits.
+- [x] Preflight all writes; preserve unrelated host configuration; reject malformed, unmanaged, or modified Flopeek content; make reinstall idempotent and uninstall ownership-aware.
+- [x] Keep the external developer-role ecosystem outside Flopeek product/runtime and prohibit provider proposals from becoming parser facts or human verification.
 - [x] Add unit, contract, HTTP, MCP, and official skill-validator coverage.
 
 Acceptance evidence: a supported host can be configured from a repository with one command; the installed MCP process remains scoped to that repository; every host receives the same bootstrap contract; repeated install is a no-op; conflicts produce no partial skill copy; and uninstall preserves unrelated configuration.
@@ -974,18 +974,18 @@ Acceptance evidence: a supported host can be configured from a repository with o
 
 Status: `completed` for the initial deterministic retrieval suite. Consented human and AI-provider outcome studies remain explicitly `not-run` and require separate future work.
 
-Goal: prove whether Flowpeek reduces the time, files, and context required for a person or agent to understand and safely plan a change in an unfamiliar repository.
+Goal: prove whether Flopeek reduces the time, files, and context required for a person or agent to understand and safely plan a change in an unfamiliar repository.
 
 - [x] Create `benchmarks/orientation-cases.json` with line-ending-normalized tree pins, task prompts, expected target paths, ordered flow steps, related tests, and stale-ref probes.
-- [x] Create separate `benchmarks/orientation-baseline.json` and `benchmarks/orientation-flowpeek.json` raw per-case outputs; never merge unlike evidence into one score.
-- [x] Implement `src/orientation-benchmark.js` and `flowpeek evaluate orientation <repository> --cases <file>` with baseline, Flowpeek, and combined conditions.
+- [x] Create separate `benchmarks/orientation-baseline.json` and `benchmarks/orientation-flopeek.json` raw per-case outputs; never merge unlike evidence into one score.
+- [x] Implement `src/orientation-benchmark.js` and `flopeek evaluate orientation <repository> --cases <file>` with baseline, Flopeek, and combined conditions.
 - [x] Measure correct target retrieval, ordered flow-step recall/precision when available, cold/warm time to useful context, files inspected, disclosed estimated context tokens, related-test recall, unsupported-claim availability, and stale-context detection.
 - [x] Start with `legacy-handoff`, a TypeScript order fixture, and a Python payment fixture.
 - [x] Keep deterministic retrieval, consented human study, and AI-agent study as three independently reported evidence classes; the latter two remain `not-run`.
 - [x] Add `test/unit/orientation-benchmark.test.js` and `docs/orientation-benchmark-protocol.md` with scoring, omission, failure, reproducibility, privacy, and non-claim rules.
 - [x] Publish raw per-case output and denominators; do not convert fixture accuracy, host timing, unavailable baseline capabilities, or an agent declaration into universal product effectiveness.
 
-Current checked-in evidence: both conditions retrieve 10/10 declared target paths and 3/3 related tests. Flowpeek additionally retrieves 14/14 ordered static steps and detects 3/3 stale Context Refs while exposing 13 context files and an estimated 1,158 tokens versus 16 files and 1,304 estimated tokens for the lexical baseline. Current preparation plus retrieval is 1,457.100 ms for Flowpeek versus 72.237 ms for the lexical condition on the captured host. The prior Flowpeek sample was 4,544.429 ms; repeated synchronous Git metadata commands and eager non-participating parser initialization were removed, producing a host-specific 67.94% reduction. Separate stale-ref validation is 3,416.186 ms and process startup/module load remains unavailable. No universal speed claim is made. Baseline flow order and stale refs are unavailable, not scored as failures. Human and provider studies were not run.
+Current checked-in evidence: both conditions retrieve 10/10 declared target paths and 3/3 related tests. Flopeek additionally retrieves 14/14 ordered static steps and detects 3/3 stale Context Refs while exposing 13 context files and an estimated 1,158 tokens versus 16 files and 1,304 estimated tokens for the lexical baseline. Current preparation plus retrieval is 1,457.100 ms for Flopeek versus 72.237 ms for the lexical condition on the captured host. The prior Flopeek sample was 4,544.429 ms; repeated synchronous Git metadata commands and eager non-participating parser initialization were removed, producing a host-specific 67.94% reduction. Separate stale-ref validation is 3,416.186 ms and process startup/module load remains unavailable. No universal speed claim is made. Baseline flow order and stale refs are unavailable, not scored as failures. Human and provider studies were not run.
 
 After this iteration: build a showcase repository, then an agent comparison harness, public-alpha clean-room packaging, a real consented user study, and an evidence-based release-readiness page.
 
@@ -993,10 +993,10 @@ After this iteration: build a showcase repository, then an agent comparison harn
 
 Status: `completed` for the local demonstration contract. This iteration is not independent benchmark evidence, a human study, an AI-provider outcome study, runtime verification, or a release gate.
 
-Goal: let a prospective user reproduce Flowpeek's strongest current workflow from a clean clone with one command while keeping evidence boundaries and the source-read-only agent surface explicit.
+Goal: let a prospective user reproduce Flopeek's strongest current workflow from a clean clone with one command while keeping evidence boundaries and the source-read-only agent surface explicit.
 
 - [x] Add a realistic supported TypeScript checkout repository with a declared primary flow, direct related test evidence, and one deliberate unsupported computed dynamic import.
-- [x] Add `flowpeek showcase` and `npm run showcase` to validate the manifest, copy the example into a marked temporary workspace, start the normal loopback server with port fallback, and deep-link the primary Flow Lens.
+- [x] Add `flopeek showcase` and `npm run showcase` to validate the manifest, copy the example into a marked temporary workspace, start the normal loopback server with port fallback, and deep-link the primary Flow Lens.
 - [x] Add bounded `apply`, `reset`, and `status` actions that accept only a marked showcase workspace and manifest-declared source, remain idempotent at baseline/changed hashes, and refuse diverged content.
 - [x] Keep the explicit demonstration mutation in the CLI; do not add arbitrary source writes or shell execution to Viewer, HTTP, or MCP.
 - [x] Add an English viewer guide with copyable commands, automatic initial flow focus, and explicit no-target-execution and static-evidence boundaries.
@@ -1004,31 +1004,31 @@ Goal: let a prospective user reproduce Flowpeek's strongest current workflow fro
 - [x] Add a complete walkthrough covering baseline inspection, Context Card copy, live change, changed contexts, before/current comparison, stale Context Ref, impact, reset, agent workflow, and limitations.
 - [x] Add end-to-end coverage for original-example immutability, temporary-copy confinement, Viewer/HTTP/real stdio MCP parity, graph-version advancement, retained comparison, stale resolution, related-test impact, cleanup, and no target execution.
 
-Acceptance evidence: `npm run test:showcase` passes; the committed example receives no `.flowpeek` directory; Viewer, HTTP, and MCP share graph identity and Context Ref at one version; the declared change adds the risk-review step and advances the graph; the prior ref resolves stale; and reset restores the baseline source.
+Acceptance evidence: `npm run test:showcase` passes; the committed example receives no `.flopeek` directory; Viewer, HTTP, and MCP share graph identity and Context Ref at one version; the declared change adds the risk-review step and advances the graph; the prior ref resolves stale; and reset restores the baseline source.
 
-After this iteration: build Iteration 33, an agent comparison harness that separately measures provider task outcomes with and without Flowpeek. Then pursue public-alpha clean-room packaging, a consented human study, and an evidence-based release-readiness page.
+After this iteration: build Iteration 33, an agent comparison harness that separately measures provider task outcomes with and without Flopeek. Then pursue public-alpha clean-room packaging, a consented human study, and an evidence-based release-readiness page.
 
 ### Iteration 33 — Agent Comparison Harness and Cold-Path Optimization
 
 Status: `completed` for the provider-neutral evaluator and deterministic performance optimization. The checked provider study remains explicitly `not-run`.
 
-Goal: make the cold-orientation cost explainable and materially lower, then provide a trustworthy contract for comparing equivalent supplied provider outcomes with and without Flowpeek.
+Goal: make the cold-orientation cost explainable and materially lower, then provide a trustworthy contract for comparing equivalent supplied provider outcomes with and without Flopeek.
 
 - [x] Profile initial static scans into scope/identity, source analysis, resolver context, and graph assembly without adding transient timing to graph evidence.
 - [x] Replace repeated synchronous Git metadata commands with one porcelain-v2 status command plus static Git directory, shallow state, and origin-remote reads.
 - [x] Load Python, PHP, Java, and Rust parsers only when a participating file requires them; retain all existing adapter contracts and tests.
 - [x] Upgrade orientation evidence to v2 and count repository preparation once, case retrieval once per case, stale-ref validation separately, and process startup/module load as explicitly unavailable.
 - [x] Refresh checked orientation evidence through an explicit maintenance command and publish the prior/current host-specific comparison without turning it into a universal speed claim.
-- [x] Add `flowpeek-agent-comparison-runs/v1` and `flowpeek-agent-comparison-report/v1` schemas, a privacy-reviewed empty template, and an explicit `not-run` checked report.
-- [x] Add `flowpeek evaluate agent-comparison` for operator-supplied paired provider/model sessions using the same pinned case, distinct sessions, uncontaminated conditions, and source-safe metadata.
+- [x] Add `flopeek-agent-comparison-runs/v1` and `flopeek-agent-comparison-report/v1` schemas, a privacy-reviewed empty template, and an explicit `not-run` checked report.
+- [x] Add `flopeek evaluate agent-comparison` for operator-supplied paired provider/model sessions using the same pinned case, distinct sessions, uncontaminated conditions, and source-safe metadata.
 - [x] Score targets, ordered flow steps when supplied, related tests, stale refs, duration, bounded context, separately reviewed unsupported claims, verification, and optional comparable cost.
-- [x] Reject unknown/source-body fields, absolute paths, reused sessions, incomplete pairs, provider/model mismatch, unsupported Flowpeek tools, missing consent, and evidence-free reviewed claims or verification outcomes.
+- [x] Reject unknown/source-body fields, absolute paths, reused sessions, incomplete pairs, provider/model mismatch, unsupported Flopeek tools, missing consent, and evidence-free reviewed claims or verification outcomes.
 - [x] Keep provider execution external and explicit. The harness invokes no provider or target application and never upgrades provider outcomes into parser facts, human verification, or independent provider quorum.
 - [x] Add focused CLI, schema, profiling, adapter-regression, public-proof, and contract tests plus English protocols and canonical documentation.
 
-Acceptance evidence: the checked Flowpeek preparation-plus-retrieval sample decreases from 4,544.429 ms to 1,457.100 ms on the same bounded host/fixture class; all 14/14 expected flow steps, 10/10 targets, 3/3 related tests, and 3/3 stale refs remain; the checked agent comparison output is exactly `not-run`; synthetic paired records demonstrate deterministic scoring and privacy redaction; and no provider or target process is started by the evaluator.
+Acceptance evidence: the checked Flopeek preparation-plus-retrieval sample decreases from 4,544.429 ms to 1,457.100 ms on the same bounded host/fixture class; all 14/14 expected flow steps, 10/10 targets, 3/3 related tests, and 3/3 stale refs remain; the checked agent comparison output is exactly `not-run`; synthetic paired records demonstrate deterministic scoring and privacy redaction; and no provider or target process is started by the evaluator.
 
-After this iteration: run a real privacy-reviewed paired provider cohort outside Flowpeek, then pursue public-alpha clean-room packaging, a consented human study, and an evidence-based release-readiness page.
+After this iteration: run a real privacy-reviewed paired provider cohort outside Flopeek, then pursue public-alpha clean-room packaging, a consented human study, and an evidence-based release-readiness page.
 
 ### Iteration 34 — Public Alpha Clean-Room Packaging
 
@@ -1037,10 +1037,10 @@ Status: `completed` for a public-Core candidate tarball and local clean-room con
 Goal: prove that the exact bounded npm artifact can be installed and used from an empty temporary project without relying on the source checkout, leaking repository-only artifacts, executing target code, or claiming publication/release authority.
 
 - [x] Add explicit repository/homepage/issue metadata and a package `files` allowlist while retaining `private: true`.
-- [x] Add `flowpeek-package-policy/v1` with required runtime paths, bounded entry/size limits, and rejection of governance, cache, Git, credential, log, source-map, key, certificate, and undeclared content.
-- [x] Add `flowpeek --version`, `flowpeek version`, and `flowpeek -v` without scanning a repository.
+- [x] Add `flopeek-package-policy/v1` with required runtime paths, bounded entry/size limits, and rejection of governance, cache, Git, credential, log, source-map, key, certificate, and undeclared content.
+- [x] Add `flopeek --version`, `flopeek version`, and `flopeek -v` without scanning a repository.
 - [x] Add inventory-only `npm run audit:package` and focused package-policy tests.
-- [x] Add `flowpeek-clean-room-package-report/v1` and a Windows-safe verifier that packs to a temporary directory, installs with lifecycle scripts disabled, and resolves the installed local binary.
+- [x] Add `flopeek-clean-room-package-report/v1` and a Windows-safe verifier that packs to a temporary directory, installs with lifecycle scripts disabled, and resolves the installed local binary.
 - [x] Verify help, non-strict doctor, `scan --no-cache`, MCP `tools/list`, and `get_agent_bootstrap` against a copied fixture without running its application or tests.
 - [x] Fingerprint non-cache fixture content before and after, retain only bounded observations, reject source/log/path/credential leakage from the report, and require complete temporary-state cleanup.
 - [x] Keep the checked clean-room evidence outside the package allowlist to avoid a recursive tarball hash.
@@ -1049,13 +1049,13 @@ Goal: prove that the exact bounded npm artifact can be installed and used from a
 
 Acceptance evidence: `npm run test:package`, `npm run audit:package`, `npm run verify:clean-room`, and the full repository test suite pass; the final tarball contains only allowlisted files within the committed bounds; the installed version matches `package.json`; the copied showcase scans without graph-cache persistence; MCP exposes required context tools; non-cache fixture content remains unchanged; the temporary workspace is removed; and publication remains unattempted/unapproved.
 
-After this iteration: obtain a genuinely uncontaminated privacy-reviewed provider cohort outside Flowpeek, then run a consented human orientation study and build an evidence-based release-readiness page. Licensing and npm publication require explicit owner decisions.
+After this iteration: obtain a genuinely uncontaminated privacy-reviewed provider cohort outside Flopeek, then run a consented human orientation study and build an evidence-based release-readiness page. Licensing and npm publication require explicit owner decisions.
 
 ### Iteration 35 — Developer-facing product experience
 
 Status: `completed` for the local Viewer, public documentation, and checked documentation assets. Human outcome studies and external provider comparisons remain separate future evidence.
 
-Goal: let a developer understand Flowpeek's value, open a useful technical flow, and share the same bounded context with an agent without first reading internal implementation notes.
+Goal: let a developer understand Flopeek's value, open a useful technical flow, and share the same bounded context with an agent without first reading internal implementation notes.
 
 - [x] Exclude repository-declared oracle files from literal orientation retrieval and disclose every exclusion in the report.
 - [x] Reframe the README and public guide around developer tasks, evidence boundaries, and copyable commands.
@@ -1070,7 +1070,7 @@ After this iteration: run paired, consented developer and provider studies that 
 
 ### Iteration 36 — Public Core and private overlay boundary
 
-Status: `completed` for the repository-model migration. `badsleepyday/flowpeek` is the public canonical Core on `main`; the private overlay is separate and consumes pinned public Core tags. The former private-development-to-public snapshot model has been retired.
+Status: `completed` for the repository-model migration. `badsleepyday/flopeek` is the public canonical Core on `main`; the private overlay is separate and consumes pinned public Core tags. The former private-development-to-public snapshot model has been retired.
 
 Goal: preserve one public Core source of truth while keeping commercial and confidential work in a separate private overlay without copying Core implementation or tests.
 
@@ -1088,18 +1088,18 @@ After this iteration: complete the remaining observable stability gate, choose t
 
 Status: `completed` for anonymous read-only scan evidence, targeted product remediation, and advisory role reviews. It is not an independent precision/recall audit, a runtime validation, a provider quorum, or a release approval.
 
-Goal: validate Flowpeek against private repository shapes without retaining target code or paths, then resolve evidence-backed safety, meaning, and human-navigation defects before a broader release decision.
+Goal: validate Flopeek against private repository shapes without retaining target code or paths, then resolve evidence-backed safety, meaning, and human-navigation defects before a broader release decision.
 
 - [x] Scan completed target aliases in memory with target execution, graph-cache persistence, and project-identity persistence disabled.
-- [x] Retain only anonymous aggregate coverage, graph size, endpoint count, duration, and explicit timeout status in `flowpeek-private-dogfood-summary/v1`.
-- [x] Correct `--no-cache` so CLI scan and impact do not create `.flowpeek/project.json`; add a regression test.
+- [x] Retain only anonymous aggregate coverage, graph size, endpoint count, duration, and explicit timeout status in `flopeek-private-dogfood-summary/v1`.
+- [x] Correct `--no-cache` so CLI scan and impact do not create `.flopeek/project.json`; add a regression test.
 - [x] Restrict HTTP/request Flow Lenses to extracted endpoint facts; controller and route-like nodes without endpoint evidence remain technical-map nodes.
 - [x] Give zero-Flow-Lens Viewer states a bounded explanation plus Feature overview and Find code actions.
 - [x] Reconcile product, architecture, support, user-guide, package, generated-documentation, and benchmark artifacts; keep private source, machine paths, revisions, Context Refs, logs, and credentials out of checked evidence.
 - [x] Collect advisory UI/UX, implementation, system-flow, and documentation reviews. All runs came from one provider family, so the provider quorum is explicitly incomplete.
 - [x] Record the broad-workspace initial-scan budget overrun as an open scale finding rather than treating it as accuracy evidence.
 
-Acceptance evidence: [`benchmarks/private-dogfood-summary.json`](benchmarks/private-dogfood-summary.json) records five completed anonymous scans and one explicit 60-second budget overrun; endpoint-free scans retain technical graphs while exposing zero HTTP/request Flow Lenses; the multi-repository sample exposes matching endpoint/Flow-Lens counts; `scan --no-cache` leaves no Flowpeek metadata in its temporary regression fixture; `npm run test:docs`, package/public policy checks, and the scanner suite pass.
+Acceptance evidence: [`benchmarks/private-dogfood-summary.json`](benchmarks/private-dogfood-summary.json) records five completed anonymous scans and one explicit 60-second budget overrun; endpoint-free scans retain technical graphs while exposing zero HTTP/request Flow Lenses; the multi-repository sample exposes matching endpoint/Flow-Lens counts; `scan --no-cache` leaves no Flopeek metadata in its temporary regression fixture; `npm run test:docs`, package/public policy checks, and the scanner suite pass.
 
 After this iteration: add a user-configurable initial-scan time budget and workspace discovery strategy, then run a consented human orientation study and an actually independent multi-provider cohort. Do not claim either outcome from this dogfooding evidence.
 
@@ -1112,13 +1112,13 @@ large-monorepo package validation remain.
 Goal: make large-repository startup explicit and bounded without ever presenting
 an incomplete graph as complete or replacing the last complete cache.
 
-- [x] Add a read-only `flowpeek-repository-discovery/v1` contract for candidate
+- [x] Add a read-only `flopeek-repository-discovery/v1` contract for candidate
   source, bytes, scope, static manifests, package names, adapter demand,
   diagnostics, declared limits, and an opaque source/resolver-control inventory
   fingerprint.
-- [x] Add `flowpeek discover` with time, file, and byte bounds, summary/JSON
+- [x] Add `flopeek discover` with time, file, and byte bounds, summary/JSON
   output, exit code `2` for bounded discovery, and no metadata write.
-- [x] Add `flowpeek-bounded-scan-result/v1` for complete,
+- [x] Add `flopeek-bounded-scan-result/v1` for complete,
   partial-by-budget, cancelled, and failed terminal outcomes.
 - [x] Analyze only the discovered source plan, re-inventory after analysis, and
   discard the graph when its fingerprint changed.
@@ -1149,7 +1149,7 @@ an incomplete graph as complete or replacing the last complete cache.
 - [ ] Validate package selection and per-package progress on consented large
   monorepositories; manifest inventory alone is not workspace topology.
 
-Current dogfood observation: Flowpeek-on-Flowpeek discovery completed with 132
+Current dogfood observation: Flopeek-on-Flopeek discovery completed with 132
 candidate files and a bounded no-cache scan produced a complete 1,257-node,
 4,484-edge graph with a matching shared-plan verification within the declared
 local limits. These are development
@@ -1172,7 +1172,7 @@ Status: `complete` — the versioned entry contract covers narrow literal packag
 Goal: project technical flows from supported non-HTTP entry facts without
 renaming static topology as runtime, business, or successful execution truth.
 
-- [x] Define `flowpeek-static-flow-entry/v1` and retain it in Flow Lens, Context Packet, comparison, and delta evidence.
+- [x] Define `flopeek-static-flow-entry/v1` and retain it in Flow Lens, Context Packet, comparison, and delta evidence.
 - [x] Add deterministic command entry points from literal `package.json` scripts with exactly one supported direct runner and one repository-local scanned source target; do not execute the manifest or runner.
 - [x] Add framework command declarations without executing configuration.
 - [x] Add scheduled entry points only for adapters with direct syntax evidence: module-scope default-import node-cron `schedule()` with a safe literal cron expression and one exact local top-level function target.
@@ -1240,16 +1240,16 @@ surface contracts, tests, non-goals, and suggested commit messages are in
 
 Status: `in progress`. This gate takes priority over new product breadth. Its
 purpose is to make the existing surfaces dependable enough for repeated
-Flowpeek-on-Flowpeek and supported-language dogfooding; it does not widen any
+Flopeek-on-Flopeek and supported-language dogfooding; it does not widen any
 language, runtime, business-flow, or release claim.
 
 | Gate | Status | Required outcome |
 | --- | --- | --- |
 | S1 Production module loading | `done` | The history/continuity circular dependency is removed and production CLI/MCP loading is covered. |
 | S2 Entry-point regression coverage | `done` | Production CLI and real stdio MCP cover history, Git snapshot comparison, and Git Context continuity import order. |
-| S3 Cache hygiene | `done` | Cache retention is inspectable and explicitly prunable; cache-disabled fixture scans do not create new Flowpeek metadata. Existing user-owned metadata is preserved. |
+| S3 Cache hygiene | `done` | Cache retention is inspectable and explicitly prunable; cache-disabled fixture scans do not create new Flopeek metadata. Existing user-owned metadata is preserved. |
 | S4 Delivery-document synchronization | `done` | Gate B reconciled roadmap, checkpoint, support claims, and executable E46–E53 evidence at the current dirty baseline; manual Viewer/browser evidence remains separately open in S5. |
-| S5 C11 observable stabilization | `partial` | The [six-job public Core matrix](https://github.com/badsleepyday/flowpeek/actions/runs/30161751505) passed on Ubuntu, Windows, and macOS with Node 20 and 22. A single-host browser-assisted checkout observation against `beccef32af9b0a978d4463a90806aeb66a8f1a28` exercised keyboard Flow Lens recovery, v1-to-v2 comparison, and v2 stale resolution after reset to v3. Human readability/accessibility, 200%-zoom, touch/cross-browser/cross-device, and explicitly scoped independent-provider evidence remain required. |
+| S5 C11 observable stabilization | `partial` | The [six-job public Core matrix](https://github.com/badsleepyday/flopeek/actions/runs/30161751505) passed on Ubuntu, Windows, and macOS with Node 20 and 22. A single-host browser-assisted checkout observation against `beccef32af9b0a978d4463a90806aeb66a8f1a28` exercised keyboard Flow Lens recovery, v1-to-v2 comparison, and v2 stale resolution after reset to v3. Human readability/accessibility, 200%-zoom, touch/cross-browser/cross-device, and explicitly scoped independent-provider evidence remain required. |
 | S6 Supported-language dogfooding proof | `done` | A digest-pinned TypeScript, Python, and PHP fixture cohort audits declared static relations, semantic levels, MCP Context Ref retrieval, disposable refresh, and stale resolution without executing targets. It is not production-repository or runtime evidence. |
 
 The mechanical implementation contract is
@@ -1261,7 +1261,7 @@ the projection and live-renderer foundations are stable.
 | --- | --- | --- |
 | E46 Production surface recovery | `done` | Git history and continuity now load through real CLI and stdio MCP without the former circular module dependency. |
 | E47 Cache hygiene and retention observability | `done` | Local cache size and registered derived-artifact retention are inspectable; dry-run-first pruning is explicitly scoped before storage migration. |
-| E48 Bounded view-projection contract | `done` | `flowpeek-view-projection/v2` removes silent graph slicing and establishes shared identity, bounds, and omissions. |
+| E48 Bounded view-projection contract | `done` | `flopeek-view-projection/v2` removes silent graph slicing and establishes shared identity, bounds, and omissions. |
 | E49 Stable live renderer | `done` | Compatible live refreshes reconcile Cytoscape elements in place and preserve viewport and unchanged-node positions. |
 | E50 Bounded semantic zoom v1 | `done` | Deterministic Domain, Feature, Component, and Symbol navigation is available across Viewer, CLI, and MCP; composite derived ids retain every selected ancestor and root files do not become fabricated domains. |
 | E51 Flow-first product navigation | `done` | A supported bounded Flow Lens is the primary Viewer journey; Project Home remains explicit and is the no-flow fallback. |
@@ -1277,7 +1277,7 @@ declared static cohort.
 
 | Metric | Initial measurement intent |
 | --- | --- |
-| Time to first correct critical flow | Compare unassisted repository orientation with Flowpeek. |
+| Time to first correct critical flow | Compare unassisted repository orientation with Flopeek. |
 | Evidence-backed flow-step rate | Every displayed transition should cite stored evidence. |
 | Live update latency | Measure save-to-affected-context response, not only parser time. |
 | Context staleness detection | Count stale refs caught before agent planning/verification. |

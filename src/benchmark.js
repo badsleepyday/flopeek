@@ -56,7 +56,7 @@ function benchmarkRepository(inputRoot, { iterations = 3 } = {}) {
   const incrementalMedianMs = median(incrementalRuns);
   const fullMedianMs = median(fullRuns);
   return {
-    benchmark: "flowpeek-incremental-scan/v1",
+    benchmark: "flopeek-incremental-scan/v1",
     project: { ...initial.value.project, git: benchmarkGitMetadata(scanner.root, initial.value.project.git) },
     iterations,
     selectedPath: candidate.path,

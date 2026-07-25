@@ -22,5 +22,5 @@ jobs:
       - run: npm ci
       - run: >-
           npm run test:real-corpus --
-          --clone-directory "$RUNNER_TEMP/flowpeek-real-corpus"
+          --clone-directory "$RUNNER_TEMP/flopeek-real-corpus"
           --format summary

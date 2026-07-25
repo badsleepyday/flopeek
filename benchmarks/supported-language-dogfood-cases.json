@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "flowpeek-supported-language-dogfood-cases/v1",
+  "schemaVersion": "flopeek-supported-language-dogfood-cases/v1",
   "cases": [
     {
       "id": "typescript-order-flow",
@@ -7,7 +7,7 @@
       "fixture": "typescript-order-flow",
       "sourceDigest": "2de8708076d76ed64a1df768bb3ecb2057a84ceb0b2991fd6c05fdf8b7b177a4",
       "mutationPath": "src/orders/orders.service.ts",
-      "mutation": "\n// disposable Flowpeek dogfood source-only edit\n"
+      "mutation": "\n// disposable Flopeek dogfood source-only edit\n"
     },
     {
       "id": "python-payment-flow",
@@ -15,7 +15,7 @@
       "fixture": "python-payment-flow",
       "sourceDigest": "c4a249bc8b9ff3eaa249f133d66bf5198d0ce9cb9b03db13e237e8d8762b0eb6",
       "mutationPath": "src/payments/service.py",
-      "mutation": "\n# disposable Flowpeek dogfood source-only edit\n"
+      "mutation": "\n# disposable Flopeek dogfood source-only edit\n"
     },
     {
       "id": "php-package-flow",
@@ -23,7 +23,7 @@
       "fixture": "php-package-flow",
       "sourceDigest": "8d6462b33a4d43e4eeabfdc4f8b5a2b53a676e041295438cb8e18f1b3f6264b5",
       "mutationPath": "src/checkout.php",
-      "mutation": "\n// disposable Flowpeek dogfood source-only edit\n"
+      "mutation": "\n// disposable Flopeek dogfood source-only edit\n"
     }
   ]
 }

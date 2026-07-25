@@ -3,7 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const NPM_PUBLICATION_APPROVAL_SCHEMA = "flowpeek-npm-publication-approval/v1";
+const NPM_PUBLICATION_APPROVAL_SCHEMA = "flopeek-npm-publication-approval/v1";
 
 function exactKeys(value, expected, field) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${field} must be an object.`);

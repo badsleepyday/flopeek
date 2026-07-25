@@ -119,7 +119,7 @@ async function main() {
   const flowId = argument("--flow-id");
   const fromVersion = Number(argument("--from-version"));
   const toVersion = Number(argument("--to-version"));
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-doc-browser-"));
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-doc-browser-"));
   const activePortFile = path.join(profile, "DevToolsActivePort");
   fs.mkdirSync(path.dirname(output), { recursive: true });
   const child = spawn(browserPath(), [

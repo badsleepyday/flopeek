@@ -13,7 +13,7 @@ function read(relativePath) {
 }
 
 function markdownFiles(directory = ROOT) {
-  const ignored = new Set([".git", ".flowpeek", "node_modules"]);
+  const ignored = new Set([".git", ".flopeek", "node_modules"]);
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     if (ignored.has(entry.name)) return [];
     const absolutePath = path.join(directory, entry.name);
@@ -42,7 +42,7 @@ test("README user paths and screenshots are present and portable", () => {
   const readme = read("README.md");
   for (const relativePath of [
     "docs/README.md",
-    "docs/using-flowpeek.md",
+    "docs/using-flopeek.md",
     "docs/assets/shared-context-workflow.svg",
     "docs/assets/orientation-capabilities.svg",
     "docs/assets/incremental-performance.svg",
@@ -63,7 +63,7 @@ test("README leads with one reproducible change-context loop", () => {
   assert.match(readme, /Copy its versioned Context Ref/);
   assert.match(readme, /Compare before\/current evidence/);
   assert.match(readme, /## Run the change-context loop/);
-  assert.match(readme, /Flowpeek is \*\*not available from npm yet\*\*/);
+  assert.match(readme, /Flopeek is \*\*not available from npm yet\*\*/);
   assert.match(readme, /docs\/showcase-walkthrough\.md/);
   assert.equal(readme.includes("## What you get"), false);
 });
@@ -71,16 +71,16 @@ test("README leads with one reproducible change-context loop", () => {
 test("public product identity keeps the brand and release boundary explicit", () => {
   const identity = read("docs/product-identity.md");
   const packageJson = JSON.parse(read("package.json"));
-  assert.match(identity, /\*\*Flowpeek\*\*/);
+  assert.match(identity, /\*\*Flopeek\*\*/);
   assert.match(identity, /Versioned change context for developers and coding agents\./);
   assert.match(identity, /does \*\*not\*\* claim trademark clearance/);
-  assert.equal(packageJson.name, "flowpeek");
+  assert.equal(packageJson.name, "flopeek");
   assert.equal(packageJson.description, "Versioned change context for developers and coding agents.");
 });
 
 test("bounded scan documentation states the shared complete-result-only contract", () => {
   const readme = read("README.md");
-  const guide = read("docs/using-flowpeek.md");
+  const guide = read("docs/using-flopeek.md");
   assert.equal(readme.includes("cancellation parity remain planned"), false);
   assert.ok(readme.includes("CLI, Viewer/HTTP/SSE, and MCP share"));
   assert.equal(guide.includes("This behavior is currently CLI-only."), false);
@@ -112,7 +112,7 @@ test("Viewer QA guidance preserves current S5 evidence boundaries", () => {
   assert.ok(guide.includes("v2 Flow Context Ref as `stale`"));
   assert.ok(guide.includes("390 px"));
   assert.ok(guide.includes("screen reader"));
-  assert.ok(guide.includes("flowpeek-independent-review/v1"));
+  assert.ok(guide.includes("flopeek-independent-review/v1"));
   assert.equal(guide.includes("dirty\ndevelopment tree"), false);
   assert.equal(guide.includes("full suite (296/296)"), false);
 });

@@ -37,7 +37,7 @@ test("Viewer exposes cancellation only for a bounded running scan and states the
   assert.match(index, /id="cancel-scan"/);
   assert.match(app, /state\.events\.addEventListener\("scan-status"/);
   assert.match(app, /status === "running" && outcome\?\.mode === "bounded-full-analysis"/);
-  assert.match(app, /Scan did not complete\. Flowpeek kept the last complete graph and marks it source-unverified\./);
+  assert.match(app, /Scan did not complete\. Flopeek kept the last complete graph and marks it source-unverified\./);
   assert.match(app, /request\("\/api\/scan\/cancel"/);
 });
 

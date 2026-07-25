@@ -1,8 +1,8 @@
 {
-  "schemaVersion": "flowpeek-orientation-benchmark/v2",
+  "schemaVersion": "flopeek-orientation-benchmark/v2",
   "generatedAt": "2026-07-15T09:33:29.121Z",
   "runEnvironment": {
-    "flowpeekVersion": "0.2.0",
+    "flopeekVersion": "0.2.0",
     "nodeVersion": "24.18.0",
     "platform": "win32",
     "architecture": "x64",
@@ -12,12 +12,12 @@
     "timingPolicy": "host-specific-non-gating"
   },
   "suite": {
-    "id": "flowpeek-initial-orientation-suite",
-    "casesSchemaVersion": "flowpeek-orientation-cases/v1",
+    "id": "flopeek-initial-orientation-suite",
+    "casesSchemaVersion": "flopeek-orientation-cases/v1",
     "repositoryCount": 3,
     "caseCount": 3
   },
-  "condition": "flowpeek",
+  "condition": "flopeek",
   "evidenceClass": "deterministic-retrieval",
   "repositories": [
     {
@@ -131,7 +131,7 @@
               ],
               "estimatedCharacters": 1119,
               "estimatedTokens": 280,
-              "tokenizerId": "flowpeek-char4-estimator/v1"
+              "tokenizerId": "flopeek-char4-estimator/v1"
             },
             "timing": {
               "preparationMilliseconds": 404.614,
@@ -269,7 +269,7 @@
               ],
               "estimatedCharacters": 1333,
               "estimatedTokens": 334,
-              "tokenizerId": "flowpeek-char4-estimator/v1"
+              "tokenizerId": "flopeek-char4-estimator/v1"
             },
             "timing": {
               "preparationMilliseconds": 335.287,
@@ -404,7 +404,7 @@
               ],
               "estimatedCharacters": 2173,
               "estimatedTokens": 544,
-              "tokenizerId": "flowpeek-char4-estimator/v1"
+              "tokenizerId": "flopeek-char4-estimator/v1"
             },
             "timing": {
               "preparationMilliseconds": 363.542,
@@ -451,7 +451,7 @@
       "filesInspected": 13,
       "estimatedCharacters": 4625,
       "estimatedTokens": 1158,
-      "tokenizerId": "flowpeek-char4-estimator/v1"
+      "tokenizerId": "flopeek-char4-estimator/v1"
     },
     "staleContextDetection": {
       "status": "measured",
@@ -519,7 +519,7 @@
     "This is a deterministic retrieval benchmark, not a human productivity study or an AI-agent task-outcome study.",
     "Direct-repository uses plain case-insensitive substring retrieval and does not produce or score relationship order.",
     "Repository-declared benchmark oracle files are excluded from direct retrieval and disclosed per repository.",
-    "Flowpeek results are static parser and graph projections; they do not prove runtime order, business intent, successful behavior, or complete coverage.",
+    "Flopeek results are static parser and graph projections; they do not prove runtime order, business intent, successful behavior, or complete coverage.",
     "Timing is host-specific and non-gating. Repository preparation, bounded case retrieval, separate stale-ref validation, and unavailable process startup/module load are disclosed independently.",
     "Repository preparation is counted once per repository even when that repository contains multiple cases.",
     "Files inspected means unique paths exposed in the bounded result. Repository files processed is reported separately per case.",

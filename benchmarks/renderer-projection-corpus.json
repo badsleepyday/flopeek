@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "flowpeek-renderer-projection-corpus/v1",
+  "schemaVersion": "flopeek-renderer-projection-corpus/v1",
   "purpose": "Deterministic static fixture definitions for bounded Canvas/WebGL Viewer evaluation. This corpus is not a runtime benchmark result or a default-renderer decision.",
   "projection": {
     "mode": "overview",

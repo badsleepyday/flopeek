@@ -5,8 +5,8 @@ const { createDurableBrief, sourceBasis } = require("./durable-brief");
 const { readLatestGraphDelta } = require("./graph-state");
 const { listHandoffWorkspaces } = require("./handoff-workspace");
 
-const PROJECT_HOME_SCHEMA = "flowpeek-project-home/v1";
-const CONCEPT_INDEX_SCHEMA = "flowpeek-concept-index/v1";
+const PROJECT_HOME_SCHEMA = "flopeek-project-home/v1";
+const CONCEPT_INDEX_SCHEMA = "flopeek-concept-index/v1";
 const CONCEPT_TERMS = Object.freeze({
   authentication: ["auth", "authentication", "login", "logout", "session", "signin", "signout", "me"],
   payments: ["payment", "payments", "pay", "settlement", "settle", "ledger", "transaction", "invoice"],

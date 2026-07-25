@@ -18,15 +18,15 @@ function checkpoint(root, graph, id = "checkpoint.divergence") {
   createContinuationCheckpoint(root, graph, { operationId: `${id}.operation`, id, expectedGraphVersion: graph.state.graphVersion, selectedContextRefs: [createContextRef(graph.project.projectId, "flow", graph.flows[0].id, graph.state.graphVersion)], createdBy: "test", createdByKind: "human" });
 }
 function repository() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-divergence-"));
-  git(root, ["init"]); git(root, ["config", "user.email", "test@example.invalid"]); git(root, ["config", "user.name", "Flowpeek test"]);
-  write(root, ".gitignore", ".flowpeek/\n"); write(root, "package.json", JSON.stringify({ name: "divergence" })); write(root, "src/app/api/orders/route.ts", "export async function GET() { return { ok: true }; }\n"); commit(root, "baseline");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-divergence-"));
+  git(root, ["init"]); git(root, ["config", "user.email", "test@example.invalid"]); git(root, ["config", "user.name", "Flopeek test"]);
+  write(root, ".gitignore", ".flopeek/\n"); write(root, "package.json", JSON.stringify({ name: "divergence" })); write(root, "src/app/api/orders/route.ts", "export async function GET() { return { ok: true }; }\n"); commit(root, "baseline");
   return root;
 }
 
 test("read-only divergence reports exact, dirty, ahead, behind, diverged, missing revision, and non-Git states", () => {
   const root = repository();
-  const nonGit = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-divergence-non-git-"));
+  const nonGit = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-divergence-non-git-"));
   try {
     const baseline = scanRepository(root, { persistIdentity: true }); checkpoint(root, baseline);
     assert.equal(getCheckpointDivergence(root, baseline, "checkpoint.divergence").status, "exact");
@@ -48,7 +48,7 @@ test("read-only divergence reports exact, dirty, ahead, behind, diverged, missin
     const behind = scanRepository(root, { persistIdentity: true });
     assert.equal(getCheckpointDivergence(root, behind, "checkpoint.ahead").status, "behind");
 
-    const noCommitRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-divergence-empty-git-")); git(noCommitRoot, ["init"]); write(noCommitRoot, "package.json", JSON.stringify({ name: "empty" })); write(noCommitRoot, "src/app/api/a/route.ts", "export function GET() {}\n");
+    const noCommitRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-divergence-empty-git-")); git(noCommitRoot, ["init"]); write(noCommitRoot, "package.json", JSON.stringify({ name: "empty" })); write(noCommitRoot, "src/app/api/a/route.ts", "export function GET() {}\n");
     const noCommitGraph = scanRepository(noCommitRoot, { persistIdentity: true }); checkpoint(noCommitRoot, noCommitGraph, "checkpoint.empty");
     assert.equal(getCheckpointDivergence(noCommitRoot, noCommitGraph, "checkpoint.empty").status, "commit-unavailable"); fs.rmSync(noCommitRoot, { recursive: true, force: true });
     write(nonGit, "package.json", JSON.stringify({ name: "non-git" })); write(nonGit, "src/app/api/a/route.ts", "export function GET() {}\n"); const nonGitGraph = scanRepository(nonGit, { persistIdentity: true }); checkpoint(nonGit, nonGitGraph, "checkpoint.non-git");

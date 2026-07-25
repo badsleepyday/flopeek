@@ -14,7 +14,7 @@ const { scanRepository, writeGraphCache } = require("../../src/scanner");
 const SOURCE = path.join(__dirname, "..", "fixtures", "typescript-order-flow");
 
 function fixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowpeek-scan-coordinator-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-scan-coordinator-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.cpSync(SOURCE, root, { recursive: true });
   return root;
@@ -41,8 +41,8 @@ function git(root, args) {
 
 function commitInitialRepository(root) {
   git(root, ["init"]);
-  git(root, ["config", "user.email", "flowpeek-test@example.invalid"]);
-  git(root, ["config", "user.name", "Flowpeek Test"]);
+  git(root, ["config", "user.email", "flopeek-test@example.invalid"]);
+  git(root, ["config", "user.name", "Flopeek Test"]);
   git(root, ["add", "."]);
   git(root, ["commit", "-m", "initial"]);
 }
@@ -62,7 +62,7 @@ test("bounded cache-disabled coordinator preserves one session identity and adva
     },
   });
   const first = await coordinator.refresh(null, "initial");
-  assert.equal(first.outcome.schemaVersion, "flowpeek-scan-outcome/v1");
+  assert.equal(first.outcome.schemaVersion, "flopeek-scan-outcome/v1");
   assert.equal(first.outcome.status, "complete");
   assert.equal(first.graph.state.graphVersion, 1);
   const node = first.graph.nodes.find((candidate) => candidate.label === "Orders Service");
@@ -78,7 +78,7 @@ test("bounded cache-disabled coordinator preserves one session identity and adva
   assert.ok(phases.includes("analysis-started"));
   assert.equal(phases.filter((phase) => phase === "terminal").length, 2);
   assert.equal(progressEvents.some((event) => event.phase === "terminal" && event.outcome.status === "running"), false);
-  assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false);
+  assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
 });
 
 test("package-scoped coordinator always uses an ephemeral bounded session and exposes the selected subtree", async (t) => {
@@ -86,7 +86,7 @@ test("package-scoped coordinator always uses an ephemeral bounded session and ex
   addScopedPackages(root);
   const durable = scanRepository(root);
   writeGraphCache(root, durable, { reason: "package-scope-durable-baseline" });
-  const cachePath = path.join(root, ".flowpeek", "graph.json");
+  const cachePath = path.join(root, ".flopeek", "graph.json");
   const cacheBefore = fs.readFileSync(cachePath);
   const coordinator = createScanCoordinator(root, { cache: true, packagePath: "apps/api" });
   const result = await coordinator.refresh(null, "package-initial");
@@ -110,7 +110,7 @@ test("bounded coordinator serves the last complete cache without promoting an in
   const root = fixture(t);
   const baseline = scanRepository(root);
   writeGraphCache(root, baseline, { reason: "coordinator-baseline" });
-  const cachePath = path.join(root, ".flowpeek", "graph.json");
+  const cachePath = path.join(root, ".flopeek", "graph.json");
   const cacheBefore = fs.readFileSync(cachePath);
 
   const coordinator = createScanCoordinator(root, { cache: true, maxFiles: 1 });
@@ -151,14 +151,14 @@ test("scan outcome separates scoped source freshness from attached Git HEAD fres
 
 test("bounded coordinator rejects a cached fallback from an obsolete configured project identity", async (t) => {
   const root = fixture(t);
-  fs.mkdirSync(path.join(root, ".flowpeek"), { recursive: true });
-  fs.writeFileSync(path.join(root, ".flowpeek", "config.json"), JSON.stringify({
+  fs.mkdirSync(path.join(root, ".flopeek"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".flopeek", "config.json"), JSON.stringify({
     schemaVersion: 1,
     projectId: "project:alpha",
   }));
   const baseline = scanRepository(root);
   writeGraphCache(root, baseline, { reason: "project-alpha-baseline" });
-  fs.writeFileSync(path.join(root, ".flowpeek", "config.json"), JSON.stringify({
+  fs.writeFileSync(path.join(root, ".flopeek", "config.json"), JSON.stringify({
     schemaVersion: 1,
     projectId: "project:bravo",
   }));
@@ -212,7 +212,7 @@ test("bounded coordinator publishes queryable running state and accepts cancella
   const result = await coordinator.refresh(null, "cancel-test");
   assert.equal(runningOutcome.status, "running");
   assert.equal(runningOutcome.progress.phase, "analysis-started");
-  assert.equal((await concurrentRefresh).error?.code, "FLOWPEEK_SCAN_IN_PROGRESS");
+  assert.equal((await concurrentRefresh).error?.code, "FLOPEEK_SCAN_IN_PROGRESS");
   assert.equal(cancellation.accepted, true);
   assert.equal(result.outcome.status, "cancelled");
   assert.equal(result.outcome.cachePromotion.performed, false);

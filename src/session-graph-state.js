@@ -2,7 +2,7 @@
 
 const { createGraphDelta, materialFingerprint } = require("./graph-state");
 
-const SESSION_GRAPH_STATE_SCHEMA = "flowpeek-session-graph-state/v1";
+const SESSION_GRAPH_STATE_SCHEMA = "flopeek-session-graph-state/v1";
 
 function advanceSessionGraph(graph, previousGraph = null, options = {}) {
   const fingerprint = materialFingerprint(graph);
@@ -37,7 +37,7 @@ function advanceSessionGraph(graph, previousGraph = null, options = {}) {
       sourceChanged: delta.sourceChanged,
       topologyChanged: delta.topologyChanged,
     } : null,
-    limitation: "Session graph versions and deltas exist only in this Flowpeek process. They are not durable history and cannot be resolved by another scanner session.",
+    limitation: "Session graph versions and deltas exist only in this Flopeek process. They are not durable history and cannot be resolved by another scanner session.",
   };
   graph.analysis.latestDelta = delta;
   return graph;

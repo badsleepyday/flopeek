@@ -6,9 +6,9 @@ const crypto = require("node:crypto");
 const { adapterForPath, getAdapterRegistry } = require("./adapter-registry");
 const { classifyRepositoryPath, readRepositoryScope, scopeSummary } = require("./scope");
 
-const DISCOVERY_SCHEMA = "flowpeek-repository-discovery/v1";
+const DISCOVERY_SCHEMA = "flopeek-repository-discovery/v1";
 const IGNORED_DIRECTORIES = new Set([
-  ".flowpeek", ".git", ".next", ".nuxt", ".project-flow", ".turbo",
+  ".flopeek", ".flowpeek", ".git", ".next", ".nuxt", ".project-flow", ".turbo",
   "build", "coverage", "dist", "node_modules", "out", "target", "vendor",
 ]);
 const EXACT_MANIFESTS = new Map([
@@ -164,7 +164,7 @@ function selectionControlDirectories(root, selection) {
 
 function verificationResult(valid, expectedFingerprint, actualFingerprint, reason, diagnostics = []) {
   return {
-    schemaVersion: "flowpeek-analysis-plan-verification/v1",
+    schemaVersion: "flopeek-analysis-plan-verification/v1",
     valid,
     expectedFingerprint,
     actualFingerprint,
@@ -267,7 +267,7 @@ function verifyAnalysisPlan(inputRoot, analysisPlan) {
       actualFiles.push({ path: relativePath, size: stat.size, mtimeMs: stat.mtimeMs });
     }
   }
-  addControlFile(path.join(root, ".flowpeek", "config.json"), ".flowpeek/config.json");
+  addControlFile(path.join(root, ".flopeek", "config.json"), ".flopeek/config.json");
   actualFiles.sort((left, right) => left.path.localeCompare(right.path));
   const actualFingerprint = fingerprintEntries(actualFiles, [...actualControlFiles.values()]);
   if (actualFingerprint !== analysisPlan.fingerprint) {
@@ -323,7 +323,7 @@ function discoverRepository(inputRoot, options = {}) {
     }
   };
 
-  addControlFile(path.join(root, ".flowpeek", "config.json"), ".flowpeek/config.json");
+  addControlFile(path.join(root, ".flopeek", "config.json"), ".flopeek/config.json");
 
   const collectControlFiles = (directoryPath) => {
     const absoluteDirectory = directoryPath === "." ? root : resolvePlanPath(root, directoryPath);
