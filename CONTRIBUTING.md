@@ -12,8 +12,8 @@ proposals are different evidence classes.
    infer runtime execution or business intent from static topology.
 3. Keep repository/UI copy in English and state unsupported forms explicitly.
 4. Run the smallest relevant test first, then `npm test` for behavior changes.
-5. For package or public-snapshot changes, also run `npm run test:package` and
-   `npm run test:public-repository`.
+5. For package or release changes, also run `npm run test:package` and
+   `npm run test:public-source`.
 
 ## Parser and graph changes
 

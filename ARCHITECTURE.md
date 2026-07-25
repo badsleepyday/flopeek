@@ -61,9 +61,9 @@ Status: `current`
 - CLI binary name: `flowpeek`.
 - Source is currently distributed directly; there is no build step.
 - `package.json#files` and `packaging/package-policy.json` bound the candidate tarball to runtime modules, Viewer assets, the Flowpeek integration skill, showcase, and public benchmark data. Repository governance, tests, CI, caches, credentials, logs, and source maps are rejected by the package audit.
-- `scripts/verify-clean-room.js` packs and installs the exact private tarball into an operating-system temporary consumer with lifecycle scripts disabled, then checks the installed binary, bounded static scan, MCP bootstrap, fixture immutability, and cleanup.
-- The package remains private and is not yet a public-release package. Packaging evidence does not decide license, registry permission, or release stage.
-- `packaging/public-repository-policy.json` defines a separate public source-tree projection. `scripts/export-public-repository.js` reads only tracked files from a clean private revision, applies the public CI overlay, copies an allowlisted snapshot outside the source tree, and creates no Git history or remote operation. Internal agent governance and its private CI checks remain private; approved public CI and `.flowpeek/config.json` remain visible source-repository metadata.
+- `scripts/verify-clean-room.js` packs and installs the exact source tarball into an operating-system temporary consumer with lifecycle scripts disabled, then checks the installed binary, bounded static scan, MCP bootstrap, fixture immutability, and cleanup.
+- The source repository is public. npm registry publishing remains intentionally separate from a source tag or GitHub Release; packaging evidence does not decide registry permission or release stage.
+- `packaging/public-repository-policy.json` and `scripts/export-public-repository.js` remain compatibility tooling for auditing an allowlisted source projection. They have no authority to publish or overwrite this public repository. Public Core releases are created from immutable tags on `main`; private overlays consume those tagged Core versions.
 
 ### Main modules
 

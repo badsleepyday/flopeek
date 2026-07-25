@@ -28,7 +28,7 @@ Checkboxes describe repository implementation status. Prose alone never implies 
 
 ## Current product baseline
 
-Current package version: `0.2.0`.
+Current public preview package version: `0.2.1-beta.0`.
 
 | Capability | Status | Current evidence |
 | --- | --- | --- |

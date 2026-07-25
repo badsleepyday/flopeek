@@ -13,7 +13,8 @@ Flowpeek turns an existing repository into a focused, versioned technical map. O
 
 ## Try the full experience
 
-Flowpeek is not published to npm yet. Run the current source checkout:
+Flowpeek is not published to npm yet. The default `main` branch is the current
+public Flowpeek Core. Run it from a source checkout:
 
 ```powershell
 git clone https://github.com/badsleepyday/flowpeek.git
@@ -23,6 +24,10 @@ npm run showcase
 ```
 
 The showcase opens a safe temporary checkout flow. It does not execute the target application or change the committed example.
+
+Public preview and stable versions are immutable Git tags on `main`, not long-
+lived `alpha` or `beta` branches. See [RELEASING.md](RELEASING.md) for the
+release contract.
 
 ![A focused Flow Lens in the local Viewer](docs/assets/screenshots/flow-lens.png)
 
@@ -162,7 +167,7 @@ The chart reports one host-specific comparison for one supported unchanged file 
 | Real-repository relationship audit | 92/92 | 14 declared scopes in 5 pinned repositories |
 | Incremental parser reuse | 1.67×–54.53× | 4 pinned repositories on one benchmark host |
 | Orientation graph retrieval | 14/14 ordered steps; 3/3 stale refs | 3 small fixtures; no human or provider study |
-| Clean-room package | Strict allowlist; CLI, scan, and MCP bootstrap pass | One private Windows/Node observation; no publish |
+| Clean-room package | Strict allowlist; CLI, scan, and MCP bootstrap pass | One Windows/Node observation; no publish |
 
 Run the public proof contract:
 
@@ -179,7 +184,8 @@ npm run evaluate:orientation
 - Missing evidence is not proof that behavior or tests are absent.
 - Inventory-only files do not have inferred relationships.
 - The audited 92/92 slice is not universal repository accuracy.
-- The current private package is not an alpha, beta, or stable release.
+- A tagged release identifies a public preview or stable source snapshot; it
+  does not turn static evidence into runtime proof.
 
 Dynamic dispatch, dependency-injection containers, reflection, callbacks, macros, runtime module loading, and unsupported framework wiring may be absent from the static graph. Flowpeek exposes parser coverage and limitations so a developer or agent knows when to inspect source directly.
 
@@ -209,4 +215,5 @@ npm run audit:package
 npm run verify:clean-room
 ```
 
-Flowpeek currently requires Node.js 20 or later. The repository is private-package source until licensing, publishing, and release approval are completed.
+Flowpeek currently requires Node.js 20 or later. The source repository is
+public; npm registry publishing remains a separate release decision.
