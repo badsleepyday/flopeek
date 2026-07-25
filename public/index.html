@@ -105,15 +105,19 @@
         <div class="canvas-toolbar">
           <div class="view-heading"><strong id="view-title">Feature overview</strong><span id="graph-note" class="muted"></span></div>
           <div class="toolbar-actions">
-            <button id="open-primary-flow" title="Open the first supported static Flow Lens">Flow</button>
-            <button id="open-project-home" title="Open the evidence-backed project orientation page">Home</button>
-            <button id="open-product-proof" title="Open checked product evidence and boundaries">Proof</button>
-            <button id="open-delivery-ledger" title="Open local planned work and append-only delivery evidence">Work</button>
-            <label class="renderer-control" title="Canvas is the supported default. WebGL is an experimental dense-map preview.">Renderer <select id="renderer-mode" aria-label="Graph renderer"><option value="canvas">Canvas</option><option value="webgl">WebGL preview</option></select></label>
-            <button id="fit-graph" title="Fit the current bounded map in the canvas">Fit</button>
-            <button id="measure-renderer" title="Measure this bounded map locally in Canvas and WebGL preview">Measure renderer</button>
-            <button id="run-benchmark" title="Run a local full-versus-incremental scan comparison">Benchmark</button>
-            <button id="export-mermaid" title="Copy the current bounded map as Mermaid">Export</button>
+            <div class="toolbar-primary" aria-label="Primary views">
+              <button id="open-primary-flow" class="toolbar-emphasis" title="Open the first supported static Flow Lens">Open flow</button>
+              <button id="open-project-home" title="Open the evidence-backed project orientation page">Project</button>
+              <button id="open-product-proof" title="Open checked product evidence and boundaries">Evidence</button>
+              <button id="open-delivery-ledger" title="Open local planned work and append-only delivery evidence">Work</button>
+            </div>
+            <div class="toolbar-utilities" aria-label="Map tools">
+              <label class="renderer-control" title="Canvas is the supported default. WebGL is an experimental dense-map preview.">Renderer <select id="renderer-mode" aria-label="Graph renderer"><option value="canvas">Canvas</option><option value="webgl">WebGL preview</option></select></label>
+              <button id="fit-graph" title="Fit the current bounded map in the canvas">Fit view</button>
+              <button id="measure-renderer" title="Measure this bounded map locally in Canvas and WebGL preview">Measure</button>
+              <button id="run-benchmark" title="Run a local full-versus-incremental scan comparison">Scan test</button>
+              <button id="export-mermaid" title="Copy the current bounded map as Mermaid">Export</button>
+            </div>
           </div>
         </div>
         <div class="graph-stage">

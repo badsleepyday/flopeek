@@ -668,11 +668,11 @@ function viewRenderKey(view, continuation) {
 
 function focusRenderedView(cy, view, renderedNodeCount) {
   if (renderedNodeCount <= 20) {
-    cy.fit(undefined, 42);
+    cy.fit(undefined, 64);
     // A two-node projection otherwise expands to the renderer's maximum zoom,
     // turning a compact orientation map into two oversized cards. This limits
     // only the automatic fit; people can still zoom in deliberately.
-    cy.zoom(Math.min(cy.zoom(), 1.35));
+    cy.zoom(Math.min(cy.zoom(), 1.08));
     cy.center(cy.nodes());
     return;
   }
@@ -722,7 +722,7 @@ function renderGraph() {
     boxSelectionEnabled: false,
     renderer: state.renderer === "webgl" ? { name: "canvas", webgl: true } : { name: "canvas" },
     style: [
-      { selector: "node", style: { "background-color": "#ffffff", "border-width": 2, "border-color": "data(color)", "shape": "round-rectangle", "width": 208, "height": 72, "label": "data(label)", "color": "#172033", "font-family": "Inter, system-ui, sans-serif", "font-size": 13, "font-weight": 700, "text-wrap": "wrap", "text-max-width": 174, "text-valign": "center", "text-halign": "center", "padding": 8, "overlay-opacity": 0 } },
+      { selector: "node", style: { "background-color": "#ffffff", "border-width": 2, "border-color": "data(color)", "shape": "round-rectangle", "width": 188, "height": 66, "label": "data(label)", "color": "#172033", "font-family": "Inter, system-ui, sans-serif", "font-size": 12, "font-weight": 700, "text-wrap": "wrap", "text-max-width": 156, "text-valign": "center", "text-halign": "center", "padding": 8, "overlay-opacity": 0 } },
       { selector: "node[kind = 'summary']", style: { "background-color": "#f2f5ff", "border-color": "#3457d5", "border-style": "double", "border-width": 4 } },
       { selector: "node[analysisStatus = 'inventory-only']", style: { "border-style": "dotted", "border-width": 3, "background-color": "#f8fafc" } },
       { selector: "node[type = 'endpoint']", style: { "background-color": "#fbf4ff", "shape": "round-rectangle" } },
@@ -742,7 +742,7 @@ function renderGraph() {
       { selector: ".outgoing-edge", style: { "line-color": "#7046b5", "target-arrow-color": "#7046b5" } },
       { selector: ".dimmed", style: { "opacity": 0.09, "text-opacity": 0 } },
     ],
-    layout: { name: "dagre", rankDir: "LR", rankSep: 96, nodeSep: 52, edgeSep: 22, padding: 56, animate: false, fit: false },
+    layout: { name: "dagre", rankDir: "LR", rankSep: 78, nodeSep: 44, edgeSep: 20, padding: 52, animate: false, fit: false },
   };
   const recreate = !state.cy || state.cyRenderer !== state.renderer;
   const viewChanged = state.renderViewKey !== null && state.renderViewKey !== nextRenderViewKey;
@@ -866,7 +866,7 @@ async function measureRendererPair() {
     return summary;
   } finally {
     button.disabled = false;
-    button.textContent = "Measure renderer";
+    button.textContent = "Measure";
   }
 }
 

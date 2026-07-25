@@ -54,6 +54,6 @@ test("a changed compact projection receives a bounded automatic fit instead of i
     getElementById: () => ({ length: 0 }),
   };
   focusRenderedView(cy, { focusId: null }, 2);
-  assert.deepEqual(calls, ["fit", "zoom:1.35", "center"]);
-  assert.equal(cy.zoomValue, 1.35);
+  assert.deepEqual(calls, ["fit", "zoom:1.08", "center"]);
+  assert.equal(cy.zoomValue, 1.08);
 });
