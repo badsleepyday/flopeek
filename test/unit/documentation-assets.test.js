@@ -113,6 +113,10 @@ test("Viewer QA guidance preserves current S5 evidence boundaries", () => {
   assert.ok(guide.includes("390 px"));
   assert.ok(guide.includes("screen reader"));
   assert.ok(guide.includes("flopeek-independent-review/v1"));
+  assert.ok(guide.includes("S5 is `partial`"));
+  assert.ok(guide.includes("Chrome on Windows, Linux, Android, and iPhone"));
+  assert.ok(guide.includes("physical macOS device was available"));
+  assert.ok(guide.includes("not turn the reported platforms into reproducible accessibility"));
   assert.equal(guide.includes("dirty\ndevelopment tree"), false);
   assert.equal(guide.includes("full suite (296/296)"), false);
 });
