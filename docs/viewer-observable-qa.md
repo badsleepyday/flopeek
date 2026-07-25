@@ -27,17 +27,23 @@ screen-reader, browser zoom, or human readability observation.
 
 ## Current S5 evidence status
 
-The current public Core evidence baseline is commit `da8a4a289420a4a83dac93e7e72da9057d03ad98`.
-Its [six-job CI matrix](https://github.com/badsleepyday/flowpeek/actions/runs/30156956932)
+The current product-code evidence target is commit
+`beccef32af9b0a978d4463a90806aeb66a8f1a28`.
+Its [six-job CI matrix](https://github.com/badsleepyday/flowpeek/actions/runs/30161751505)
 passed on Ubuntu, Windows, and macOS with Node 20 and 22, including the
 repository-owned Viewer, package, and clean-room MCP checks.
 
-One engineering observation on a single host also opened the checkout showcase,
-advanced its static graph from v1 to v2, inspected the before/current Flow Lens
-comparison, recovered the current Flow Lens with the keyboard, and confirmed no
-global page overflow at a narrow viewport. It is a reproducible local
-observation, not a human-readability, assistive-technology, cross-browser, or
-cross-device result.
+On 2026-07-25, one browser-assisted engineering observation on a single host
+ran the checkout showcase against that target. It activated the detected Flow
+Lens with the keyboard after clearing focus, applied the declared disposable
+source change, inspected the v1-to-v2 before/current comparison, reset the
+workspace to v3, and resolved the v2 Flow Context Ref as `stale`. At a 390 px
+wide viewport, the document had no global horizontal overflow. The target
+application was not executed.
+
+This is a reproducible local engineering observation, not a human-readability,
+assistive-technology, 200%-zoom, touch, cross-browser, cross-device, or
+independent-provider result.
 
 This is deliberately **not** a cross-browser or accessibility certification.
 Screen readers, 200% zoom, touch interaction, other browsers, and other
