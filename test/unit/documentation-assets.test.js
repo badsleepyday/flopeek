@@ -25,6 +25,11 @@ function markdownFiles(directory = ROOT) {
 test("public documentation charts match checked benchmark evidence", () => {
   const result = spawnSync(process.execPath, ["scripts/generate-doc-assets.js", "--check"], { cwd: ROOT, encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr || result.stdout);
+  const attributes = read(".gitattributes");
+  assert.match(attributes, /^docs\/assets\/\*\.svg text eol=lf$/mu);
+  for (const name of ["orientation-capabilities.svg", "incremental-performance.svg", "shared-context-workflow.svg"]) {
+    assert.equal(read(`docs/assets/${name}`).includes("\r"), false, `${name} must use LF line endings`);
+  }
   const capabilities = read("docs/assets/orientation-capabilities.svg");
   assert.match(capabilities, /14\/14/);
   assert.match(capabilities, /Versioned stale refs/);

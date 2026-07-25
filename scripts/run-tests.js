@@ -49,6 +49,7 @@ for (const name of ["full", "fast", "contracts"]) lanes[name].unshift("test/cont
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/child-process-cleanup.test.js");
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/monorepo-package-benchmark.test.js");
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/framework-command-flow.test.js");
+for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/public-core-ci.test.js");
 for (const name of ["full", "fast", "contracts"]) lanes[name].unshift("test/contracts/flowpeek-skill-contract.test.js");
 lanes["public-source"] = lanes.full.filter((file) => !["test/contracts/agent-skills-contract.test.js", "test/unit/fixture-cache-hygiene.test.js"].includes(file));
 if (!lanes[lane]) throw new Error(`Unknown test lane: ${lane}`);
