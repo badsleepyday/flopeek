@@ -40,7 +40,9 @@ test("checked clean-room evidence preserves package, source, cleanup, and public
   assert.equal(report.schemaVersion, "flowpeek-clean-room-package-report/v1");
   assert.equal(report.status, "passed");
   assert.equal(report.packageAudit.status, "passed");
-  assert.equal(report.packageAudit.package.private, true);
+  assert.equal(report.packageAudit.package.private, false);
+  assert.equal(report.packageAudit.policy.publicationState, "prepared");
+  assert.equal(report.packageAudit.policy.distTag, "beta");
   assert.equal(report.environment.lifecycleScriptsDuringInstall, false);
   assert.equal(report.smoke.version.matched, true);
   assert.ok(report.smoke.scan.applicationFlows > 0);

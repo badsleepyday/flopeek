@@ -1,7 +1,7 @@
 {
   "name": "flowpeek",
   "version": "0.2.1-beta.0",
-  "private": true,
+  "private": false,
   "license": "Apache-2.0",
   "description": "Versioned change context for developers and coding agents.",
   "keywords": [
@@ -22,6 +22,10 @@
   "type": "commonjs",
   "bin": {
     "flowpeek": "src/cli.js"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "beta"
   },
   "files": [
     "ARCHITECTURE.md",
@@ -76,6 +80,7 @@
     "update:orientation-evidence": "node scripts/update-orientation-evidence.js",
     "audit:package": "node scripts/verify-package.js",
     "verify:clean-room": "node scripts/verify-clean-room.js",
+    "verify:npm-publication": "node scripts/verify-npm-publication.js",
     "update:clean-room-evidence": "node scripts/verify-clean-room.js --output packaging/evidence/clean-room-current.json",
     "evaluate:agent-comparison": "node src/cli.js evaluate agent-comparison . --cases benchmarks/orientation-cases.json --runs benchmarks/agent-comparison-runs.template.json",
     "showcase": "node src/cli.js showcase",
@@ -91,7 +96,8 @@
     "check:support": "node scripts/generate-support.js --check",
     "benchmark": "node src/cli.js benchmark .",
     "test:real-corpus": "node src/real-repository-corpus.js",
-    "qa:viewer-cancellation": "node scripts/viewer-cancellation-fixture.js"
+    "qa:viewer-cancellation": "node scripts/viewer-cancellation-fixture.js",
+    "prepublishOnly": "npm run verify:npm-publication"
   },
   "engines": {
     "node": ">=20"

@@ -376,14 +376,14 @@ MCP currently exposes no source write, file content, shell, deployment, credenti
 - `flowpeek --version`, `flowpeek version`, and `flowpeek -v` return the installed package version without scanning a repository.
 - `npm run audit:package` validates the npm dry-run inventory against `packaging/package-policy.json`.
 - `npm run verify:clean-room` packs and installs the exact tarball into a temporary private consumer with lifecycle scripts disabled, then exercises the local binary, help, doctor, one copied-fixture static scan, and MCP bootstrap.
-- The current package remains `private: true`. Apache-2.0 source licensing is present, but no npm publication, package-name availability, alpha/beta/stable classification, upgrade path, or universal operating-system result is supported by this iteration.
+- The package carries public beta metadata and an exact `prepublishOnly` approval gate. Apache-2.0 source licensing is present, but no npm publication, package-name availability, alpha/beta/stable classification, upgrade path, or universal operating-system result is supported by this iteration.
 - Clean-room scan and MCP startup may write Flowpeek cache metadata only inside the disposable fixture copy. They do not execute the target application or its tests and must leave non-cache fixture content unchanged.
 
 ## Public Core and private overlay support
 
 - The public `main` branch is the canonical Flowpeek Core source. It is the branch users clone, review, test, and extend.
 - Alpha, beta, release-candidate, and stable Core releases are immutable tags on commits already present on public `main`. The tagged-release workflow verifies the source and package before it creates a GitHub Release.
-- The npm package remains `private: true` in this iteration. That prevents registry publication only; it does not make the public Core repository a snapshot, a mirror, or a secondary source of truth.
+- The npm package has prepared public beta metadata, but its standard publish path remains blocked until the exact owner approval record is changed. That does not make the public Core repository a snapshot, a mirror, or a secondary source of truth.
 - Commercial and confidential work belongs in a separate private overlay repository that pins an immutable public Core tag. The overlay must not copy `src/`, `public/`, or the Core test suite, and Core defects found privately must be safely reproduced and fixed through public Core first.
 - The former private-development-to-public snapshot exporter has been retired. Public Core release readiness is evaluated from the public repository, its tagged commit, package policy, CI, and the explicit owner release decision.
 

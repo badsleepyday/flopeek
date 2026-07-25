@@ -6,7 +6,10 @@ Iteration 34 tests the exact npm tarball that a prospective user would install. 
 
 > Can the current Flowpeek package be packed, installed into an empty temporary project, and used for its basic CLI and MCP contracts without relying on the source checkout or executing the target application?
 
-This protocol does not publish the package and is not a release approval. `package.json` remains `private: true`; no license or registry permission is inferred.
+This protocol does not publish the package and is not a release approval. The
+package carries public beta metadata, but its `prepublishOnly` gate rejects an
+ordinary `npm publish` until the exact owner approval record is changed. No
+license, registry permission, or package-name ownership is inferred.
 
 ## Package boundary
 
@@ -20,7 +23,7 @@ This protocol does not publish the package and is not a release approval. `packa
 - approved public Markdown and generated documentation assets under the root and `docs/`;
 - npm-always-included `README.md` and `package.json`.
 
-The audit rejects repository governance, `.git`, `.github`, `.flowpeek`, `.agents`, `.agent-team`, `node_modules`, environment/credential filenames, logs, source maps, key/certificate suffixes, missing runtime files, an unexpected binary path, a changed package identity, an exceeded entry/size bound, or removal of the private release boundary.
+The audit rejects repository governance, `.git`, `.github`, `.flowpeek`, `.agents`, `.agent-team`, `node_modules`, environment/credential filenames, logs, source maps, key/certificate suffixes, missing runtime files, an unexpected binary path, a changed package identity, an exceeded entry/size bound, or removal of the prepared-publication metadata and explicit prepublish approval gate.
 
 Run the inventory-only audit:
 

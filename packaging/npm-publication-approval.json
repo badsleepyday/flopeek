@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "flowpeek-npm-publication-approval/v1",
+  "status": "not-approved",
+  "packageName": "flowpeek",
+  "version": "0.2.1-beta.0",
+  "distTag": "beta"
+}

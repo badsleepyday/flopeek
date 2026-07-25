@@ -1,8 +1,12 @@
 {
-  "schemaVersion": "flowpeek-package-policy/v1",
+  "schemaVersion": "flowpeek-package-policy/v2",
   "package": {
     "name": "flowpeek",
-    "privateUntilReleaseApproval": true,
+    "publication": {
+      "state": "prepared",
+      "distTag": "beta",
+      "approvalFile": "packaging/npm-publication-approval.json"
+    },
     "bin": "src/cli.js",
     "minimumNodeMajor": 20
   },

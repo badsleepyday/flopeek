@@ -20,11 +20,13 @@ test("package policy accepts only the bounded runtime artifact", () => {
   assert.equal(report.checks.allowlist, true);
   assert.equal(report.checks.releaseBoundary, true);
   assert.equal(report.policy.releasePublishingApproved, false);
+  assert.equal(report.policy.publicationState, "prepared");
+  assert.equal(report.policy.distTag, "beta");
 });
 
 test("package policy rejects repository governance, cache, secrets, maps, omissions, and release drift", () => {
   const unsafe = result([...POLICY.requiredPaths.filter((item) => item !== "src/mcp.js"), ".github/workflows/ci.yml", ".flowpeek/graph.json", "benchmarks/private-provider-cohort.json", "src/.env.production", "src/secrets.local.json", "src/private.pem", "public/app.js.map"]);
-  const publishable = { ...PACKAGE, private: false };
+  const publishable = { ...PACKAGE, private: true };
   const report = auditPackageFiles(unsafe, POLICY, publishable);
   assert.equal(report.status, "failed");
   assert.ok(report.errors.some((item) => item.code === "outside-allowlist"));
@@ -33,7 +35,14 @@ test("package policy rejects repository governance, cache, secrets, maps, omissi
   assert.ok(report.errors.some((item) => item.code === "denied-basename-prefix"));
   assert.ok(report.errors.some((item) => item.code === "denied-suffix"));
   assert.ok(report.errors.some((item) => item.code === "missing-required-path"));
-  assert.ok(report.errors.some((item) => item.code === "release-approval-boundary"));
+  assert.ok(report.errors.some((item) => item.code === "release-publication-metadata"));
+});
+
+test("npm publication requires an explicit matching owner approval", () => {
+  const { assertNpmPublicationApproved, loadNpmPublicationApproval } = require("../../src/npm-publication-approval");
+  const approval = loadNpmPublicationApproval(path.join(ROOT, "packaging", "npm-publication-approval.json"));
+  assert.equal(approval.status, "not-approved");
+  assert.throws(() => assertNpmPublicationApproved(ROOT), /npm publication is not approved/);
 });
 
 test("current npm dry-run package passes the committed allowlist", () => {
