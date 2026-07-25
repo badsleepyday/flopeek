@@ -1,15 +1,107 @@
 # Flowpeek
 
-> See the technical flow before you edit the code.
+> Turn an unfamiliar repository into a bounded, versioned technical map before
+> you edit the code.
 
-Flowpeek turns an existing repository into a focused, versioned technical map. Open it in a lightweight local Viewer or give the same context to a coding agent through MCP.
+**Flowpeek is local-first code intelligence for developers and coding agents.**
+It parses supported repository structure into a deterministic local graph, then
+turns that graph into small, evidence-backed views: where a technical flow
+enters, which symbols and static relationships it touches, which tests are
+directly related, what changed, and what context another person or agent can
+reuse.
 
-- **Local-first:** source stays on your machine.
-- **AI-optional:** parsing and graph generation are deterministic.
-- **Agent-ready:** Viewer, HTTP, and MCP resolve the same graph version.
-- **Evidence-aware:** static flow, tests, human notes, agent declarations, and runtime observations stay separate.
+Large repositories make both people and coding agents repeatedly search,
+reconstruct call paths, and carry oversized source excerpts between tasks.
+Flowpeek keeps one versioned graph on the machine and lets every supported
+surface ask bounded questions of that same state.
+
+## What Flowpeek gives you
+
+| When you need to... | Flowpeek gives you... |
+| --- | --- |
+| Orient inside an unfamiliar repository | A Project Home with typed inventory, parser coverage, packages, entry points, and evidence boundaries |
+| Follow one technical path | A Flow Lens: a bounded static projection with source locations, step roles, related tests, and a versioned Context Ref |
+| Understand a change | Adjacent graph deltas, affected contexts, and before/current Flow Lens comparison without presenting static edges as runtime history |
+| Hand work to another developer or agent | Resolvable `fp://local/...@version` Context Refs and relevance-ranked Context Packets instead of unbounded source dumps |
+| Inspect or automate from another surface | The same graph version through the local Viewer, HTTP API, CLI, and Model Context Protocol (MCP) tools |
+
+## How it works
+
+1. **Scan locally.** Supported parsers extract repository facts without running
+   the target application.
+2. **Build a versioned graph.** Nodes, relationships, parser coverage, and
+   freshness are stored as reproducible local evidence.
+3. **Focus the question.** Flow Lens, impact, comparison, and Context Packets
+   return bounded views instead of the entire codebase.
+4. **Reuse the evidence.** People and agents resolve the same Context Refs from
+   the same graph version across Viewer, HTTP, CLI, and MCP.
 
 ![Repository to shared Flowpeek context](docs/assets/shared-context-workflow.svg)
+
+The design is deliberately evidence-aware: static parser facts, deterministic
+inference, human verification, agent declarations, and opt-in runtime
+observations remain separate. A static relationship is not a claim about
+runtime order, business intent, or successful behavior.
+
+## See the product
+
+### Focus one technical flow
+
+Flow Lens reduces a repository graph to one bounded static path, with technical
+steps, source locations, parser coverage, and a versioned Context Ref.
+
+![Flowpeek Viewer showing a bounded POST checkout Flow Lens](docs/assets/screenshots/flow-lens.png)
+
+### Understand what changed
+
+Before/current comparison identifies added, removed, and changed static
+relationships between adjacent graph versions. It is change-orientation
+evidence, not runtime history.
+
+![Flowpeek before and current static flow comparison](docs/assets/screenshots/flow-comparison.png)
+
+### Inspect proof together with its limits
+
+The proof panel shows pinned benchmark evidence and current-repository facts
+alongside the exact scope and limitations of each result.
+
+![Flowpeek product proof panel with bounded evidence](docs/assets/screenshots/product-proof.png)
+
+## Historical beta-candidate snapshot
+
+This snapshot describes the candidate validated on July 25, 2026 before public
+Core became authoritative in tagged commits on public `main`. These are
+repository and test facts for that revision—not live telemetry, runtime
+coverage, or universal accuracy claims.
+
+| Metric | Validated result |
+| --- | ---: |
+| Full repository test suite | **318 passed / 0 failed** |
+| Source files scanned | **196** |
+| Structurally parsed files | **196** |
+| Parse failures | **0** |
+| Static graph nodes | **1,787** |
+| Static graph edges | **6,479** |
+| Tests represented in the graph | **84** |
+| MCP tools exposed by clean-room install | **62** |
+| Package audit | **Passed — 178 files** |
+| GitHub Actions | **Node 20 passed · Node 22 passed** |
+
+### Development included in this beta channel
+
+| Product area | Current capability |
+| --- | --- |
+| Repository orientation | Bounded repository discovery, package-scoped scans, explicit resource limits, and typed inventory anchors |
+| Technical flows | Supported HTTP/request, package-script, `node-cron`, Django, Click, Typer, and Flask CLI entry evidence |
+| Change understanding | Graph deltas, affected contexts, before/current Flow Lens comparison, and Git Context Ref continuity |
+| Human/agent handoff | Versioned Context Refs, Context Packets, and relevance-ranked bounded MCP context |
+| Delivery context | Work records, evidence-gated workflows, timelines, immutable checkpoints, planned overlays, and reconciliation |
+| Viewer | Semantic zoom, keyboard Flow Lens navigation, narrow layouts, Canvas default, and experimental bounded WebGL preview |
+| Stability | Last-complete-graph fallback, scan cancellation, cache freshness, helper cleanup, and deterministic cancellation coverage |
+| Packaging | Strict allowlist, clean-room installation verification, and public-repository structural audit |
+
+The historical beta candidate does not mean the npm package was published as a
+public beta release.
 
 ## Try the full experience
 
@@ -28,9 +120,6 @@ The showcase opens a safe temporary checkout flow. It does not execute the targe
 Public preview and stable versions are immutable Git tags on `main`, not long-
 lived `alpha` or `beta` branches. See [RELEASING.md](RELEASING.md) for the
 release contract.
-
-![A focused Flow Lens in the local Viewer](docs/assets/screenshots/flow-lens.png)
-
 Follow one live change:
 
 1. Copy the **apply** command shown by the Viewer.
@@ -58,8 +147,6 @@ semantic zoom, Flow Lens, direct dependencies, live change tray, Context Cards,
 proof reports, a read-only local Work ledger, and a focused source inspector—not
 another IDE or project tracker. Semantic summary nodes are derived from static
 source facts; they are not files, runtime services, or execution steps.
-
-![Before and current static flow comparison](docs/assets/screenshots/flow-comparison.png)
 
 ### Agent view
 
@@ -159,8 +246,6 @@ the same progress, cancellation, and `stale-unverified` outcome contract.
 The chart reports one host-specific comparison for one supported unchanged file per pinned checkout. It is not a universal speed guarantee.
 
 ### Bounded proof snapshot
-
-![Bounded product proof in the local Viewer](docs/assets/screenshots/product-proof.png)
 
 | Evidence | Checked result | Boundary |
 | --- | ---: | --- |
