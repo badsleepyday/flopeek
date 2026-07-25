@@ -84,6 +84,16 @@ test("documentation screenshots are real PNG captures with a useful viewport", (
   }
 });
 
+test("Viewer QA guidance preserves current S5 evidence boundaries", () => {
+  const guide = read("docs/viewer-observable-qa.md");
+  assert.ok(guide.includes("7d15b3731bae5a66792aac6ac80829c1fa1a9534"));
+  assert.ok(guide.includes("six-job CI matrix"));
+  assert.ok(guide.includes("screen reader"));
+  assert.ok(guide.includes("flowpeek-independent-review/v1"));
+  assert.equal(guide.includes("dirty\ndevelopment tree"), false);
+  assert.equal(guide.includes("full suite (296/296)"), false);
+});
+
 test("all local Markdown links resolve inside the repository", () => {
   const linkPattern = /\]\(([^)\s]+)(?:\s+"[^"]*")?\)/gu;
   const missing = [];

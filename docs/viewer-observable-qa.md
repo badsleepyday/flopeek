@@ -25,23 +25,29 @@ node --test test/unit/viewer-observable-qa.test.js
 This is an automated delivered-asset contract. It does not substitute for a
 screen-reader, browser zoom, or human readability observation.
 
-## Current local repair evidence
+## Current S5 evidence status
 
-Gate C recorded one isolated local Chromium observation on the dirty
-development tree at graph version 637. It verified a visible default Flow Lens,
-a readable domain-level projection, non-overlapping controls at 800px, and
-keyboard opening of a detected static flow. The paired machine-checkable result
-is the focused Viewer suite (9/9) and the full suite (296/296). Review artifacts
-are stored in `.agent-team/reviews/iteration-47/`.
+The current public Core baseline is commit `7d15b3731bae5a66792aac6ac80829c1fa1a9534`.
+Its [six-job CI matrix](https://github.com/badsleepyday/flowpeek/actions/runs/30156326025)
+passed on Ubuntu, Windows, and macOS with Node 20 and 22, including the
+repository-owned Viewer, package, and clean-room MCP checks.
+
+One engineering observation on a single host also opened the checkout showcase,
+advanced its static graph from v1 to v2, inspected the before/current Flow Lens
+comparison, recovered the current Flow Lens with the keyboard, and confirmed no
+global page overflow at a narrow viewport. It is a reproducible local
+observation, not a human-readability, assistive-technology, cross-browser, or
+cross-device result.
 
 This is deliberately **not** a cross-browser or accessibility certification.
 Screen readers, 200% zoom, touch interaction, other browsers, and other
-platforms remain unknown until directly observed and recorded.
+platforms remain `unknown` until directly observed and recorded.
 
 ## Manual session checklist
 
-Use the same commit, local repository, graph version, and browser build when
-recording a manual review.
+Use one immutable candidate commit, local repository, graph version, browser
+build, operating system, viewport, and assistive-technology setup when
+recording a manual review. Do not mix observations from different revisions.
 
 1. Tab from **Find code** to a detected static flow, open it with the keyboard,
    and return through the visible controls.
@@ -53,10 +59,17 @@ recording a manual review.
    the last complete evidence projection remains identifiable and recoverable.
 5. Change semantic level, select a node, refresh, and confirm that retained
    focus and viewport behavior match the Viewer status.
+6. With a screen reader, complete the same flow-opening and recovery journey;
+   record any missing name, order, state change, or recovery path as `failed`
+   or `unknown` rather than inferring support from the DOM.
 
 Record each outcome as `passed`, `failed`, or `unknown`, with the graph version
-and a screenshot or reproducible observation. Missing manual evidence remains
-`unknown`; it must not be reported as a release-ready accessibility result.
+and a screenshot or reproducible observation. Store a schema-valid
+[`flowpeek-independent-review/v1`](schemas/flowpeek-independent-review.schema.json)
+artifact with the actual reviewer, provider/model/run identity, and evidence
+references. Missing manual evidence remains `unknown`; it must not be reported
+as a release-ready accessibility result. A provider name or reviewer persona
+does not prove a distinct-provider quorum.
 
 # Bounded cancellation fixture
 
