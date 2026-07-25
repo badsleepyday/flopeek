@@ -86,7 +86,7 @@ test("documentation screenshots are real PNG captures with a useful viewport", (
 
 test("Viewer QA guidance preserves current S5 evidence boundaries", () => {
   const guide = read("docs/viewer-observable-qa.md");
-  assert.ok(guide.includes("7d15b3731bae5a66792aac6ac80829c1fa1a9534"));
+  assert.ok(guide.includes("da8a4a289420a4a83dac93e7e72da9057d03ad98"));
   assert.ok(guide.includes("six-job CI matrix"));
   assert.ok(guide.includes("screen reader"));
   assert.ok(guide.includes("flowpeek-independent-review/v1"));
