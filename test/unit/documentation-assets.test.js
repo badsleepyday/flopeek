@@ -57,6 +57,17 @@ test("README user paths and screenshots are present and portable", () => {
   assert.equal(readme.includes("AppData\\Local\\Temp"), false);
 });
 
+test("README leads with one reproducible change-context loop", () => {
+  const readme = read("README.md");
+  assert.match(readme, /## The five-minute change-context loop/);
+  assert.match(readme, /Copy its versioned Context Ref/);
+  assert.match(readme, /Compare before\/current evidence/);
+  assert.match(readme, /## Run the change-context loop/);
+  assert.match(readme, /Flowpeek is \*\*not available from npm yet\*\*/);
+  assert.match(readme, /docs\/showcase-walkthrough\.md/);
+  assert.equal(readme.includes("## What you get"), false);
+});
+
 test("public product identity keeps the brand and release boundary explicit", () => {
   const identity = read("docs/product-identity.md");
   const packageJson = JSON.parse(read("package.json"));

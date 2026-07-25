@@ -6,8 +6,8 @@ Choose the shortest path for what you need now.
 
 | Goal | Start here |
 | --- | --- |
+| See one source change in five minutes | [Checkout showcase](showcase-walkthrough.md) |
 | Scan a repository and read its map | [User guide](using-flowpeek.md) |
-| See the product in five minutes | [Checkout showcase](showcase-walkthrough.md) |
 | Connect Codex, Claude Code, Cursor, or Gemini CLI | [Agent integration](agent-integration.md) |
 | Know what a parser can and cannot prove | [Support matrix](../SUPPORT.md) |
 | Resolve human descriptions and verification | [Human review](human-review-and-verification.md) |
