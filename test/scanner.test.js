@@ -1760,9 +1760,11 @@ test("serve watches a new source file and publishes a graph update without manua
     const eventResponse = await fetch(`${baseUrl}/api/events`);
     assert.equal(eventResponse.status, 200);
     reader = eventResponse.body.getReader();
+    const events = createSseEventReader(reader);
+    await events.next((event) => event.event === "ready");
     write(root, "src/new.service.ts", "export class NewService { static ready() { return true; } }");
 
-    const event = await readSseEvent(reader, (candidate) => candidate.event === "graph");
+    const event = await events.next((candidate) => candidate.event === "graph");
     const update = JSON.parse(event.data);
     assert.equal(update.reason, "filesystem");
     assert.deepEqual(update.addedFileIds, ["file:src/new.service.ts"]);
@@ -1811,9 +1813,11 @@ test("serve exposes the same affected Flow Lens context through SSE and HTTP", a
     const initialRef = initialLens.flow.entryContextRef;
     const eventResponse = await fetch(`${baseUrl}/api/events`);
     reader = eventResponse.body.getReader();
+    const events = createSseEventReader(reader);
+    await events.next((event) => event.event === "ready");
 
     write(root, "src/orders.service.ts", "export function submitOrder() { return false; }");
-    const event = await readSseEvent(reader, (candidate) => candidate.event === "graph");
+    const event = await events.next((candidate) => candidate.event === "graph");
     const update = JSON.parse(event.data);
     assert.equal(update.graphState.graphVersion, 2);
     assert.equal(update.changedContexts.available, true);
@@ -1853,10 +1857,12 @@ test("serve reports a labeled batch of new source nodes for the live viewer", as
     app = await startServer({ root, port: 0 });
     const eventResponse = await fetch(`http://127.0.0.1:${app.port}/api/events`);
     reader = eventResponse.body.getReader();
+    const events = createSseEventReader(reader);
+    await events.next((event) => event.event === "ready");
     write(root, "src/invoices.service.ts", "export class InvoicesService {}");
     write(root, "src/payments.service.ts", "export class PaymentsService {}");
 
-    const event = await readSseEvent(reader, (candidate) => candidate.event === "graph");
+    const event = await events.next((candidate) => candidate.event === "graph");
     const update = JSON.parse(event.data);
     assert.equal(update.reason, "filesystem");
     assert.equal(update.addedFileCount, 2);
@@ -3071,8 +3077,10 @@ test("serve watches repository scope configuration changes", async () => {
     const baseUrl = `http://127.0.0.1:${app.port}`;
     const eventResponse = await fetch(`${baseUrl}/api/events`);
     reader = eventResponse.body.getReader();
+    const events = createSseEventReader(reader);
+    await events.next((event) => event.event === "ready");
     write(root, ".flowpeek/config.json", JSON.stringify({ schemaVersion: 1, flowEntries: { fixtures: true } }));
-    const event = await readSseEvent(reader, (candidate) => candidate.event === "graph");
+    const event = await events.next((candidate) => candidate.event === "graph");
     const update = JSON.parse(event.data);
     assert.equal(update.reason, "filesystem");
     const graph = await (await fetch(`${baseUrl}/api/graph`)).json();
