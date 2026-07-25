@@ -27,8 +27,8 @@ screen-reader, browser zoom, or human readability observation.
 
 ## Current S5 evidence status
 
-The current public Core baseline is commit `7d15b3731bae5a66792aac6ac80829c1fa1a9534`.
-Its [six-job CI matrix](https://github.com/badsleepyday/flowpeek/actions/runs/30156326025)
+The current public Core evidence baseline is commit `da8a4a289420a4a83dac93e7e72da9057d03ad98`.
+Its [six-job CI matrix](https://github.com/badsleepyday/flowpeek/actions/runs/30156956932)
 passed on Ubuntu, Windows, and macOS with Node 20 and 22, including the
 repository-owned Viewer, package, and clean-room MCP checks.
 
