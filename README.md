@@ -1,31 +1,47 @@
 # Flowpeek
 
-> Understand the technical flow before you edit the code.
+> Turn an unfamiliar repository into a bounded, versioned technical map before
+> you edit the code.
 
-**Flowpeek is a local-first technical flow explorer for existing source
-repositories.** It turns deterministic parser and repository facts into small,
-versioned maps that developers and coding agents can inspect from the same local
-graph.
+**Flowpeek is local-first code intelligence for developers and coding agents.**
+It parses supported repository structure into a deterministic local graph, then
+turns that graph into small, evidence-backed views: where a technical flow
+enters, which symbols and static relationships it touches, which tests are
+directly related, what changed, and what context another person or agent can
+reuse.
 
-Use Flowpeek to answer concrete repository questions:
+Large repositories make both people and coding agents repeatedly search,
+reconstruct call paths, and carry oversized source excerpts between tasks.
+Flowpeek keeps one versioned graph on the machine and lets every supported
+surface ask bounded questions of that same state.
 
-- Where does this technical flow enter?
-- Which source files, symbols, and static relationships are involved?
-- Which tests are directly related by supported parser evidence?
-- What changed between graph versions or Git snapshots?
-- What exact, bounded context can another developer or coding agent reuse?
+## What Flowpeek gives you
 
-The same evidence is available in a lightweight local Viewer, through HTTP, and
-through Model Context Protocol (MCP) tools. Flowpeek does not turn static
-relationships into claims about runtime order, business intent, or successful
-execution.
+| When you need to... | Flowpeek gives you... |
+| --- | --- |
+| Orient inside an unfamiliar repository | A Project Home with typed inventory, parser coverage, packages, entry points, and evidence boundaries |
+| Follow one technical path | A Flow Lens: a bounded static projection with source locations, step roles, related tests, and a versioned Context Ref |
+| Understand a change | Adjacent graph deltas, affected contexts, and before/current Flow Lens comparison without presenting static edges as runtime history |
+| Hand work to another developer or agent | Resolvable `fp://local/...@version` Context Refs and relevance-ranked Context Packets instead of unbounded source dumps |
+| Inspect or automate from another surface | The same graph version through the local Viewer, HTTP API, CLI, and Model Context Protocol (MCP) tools |
 
-- **Local-first:** source stays on your machine.
-- **AI-optional:** parsing and graph generation are deterministic.
-- **Agent-ready:** Viewer, HTTP, and MCP resolve the same graph version.
-- **Evidence-aware:** static flow, tests, human notes, agent declarations, and runtime observations stay separate.
+## How it works
+
+1. **Scan locally.** Supported parsers extract repository facts without running
+   the target application.
+2. **Build a versioned graph.** Nodes, relationships, parser coverage, and
+   freshness are stored as reproducible local evidence.
+3. **Focus the question.** Flow Lens, impact, comparison, and Context Packets
+   return bounded views instead of the entire codebase.
+4. **Reuse the evidence.** People and agents resolve the same Context Refs from
+   the same graph version across Viewer, HTTP, CLI, and MCP.
 
 ![Repository to shared Flowpeek context](docs/assets/shared-context-workflow.svg)
+
+The design is deliberately evidence-aware: static parser facts, deterministic
+inference, human verification, agent declarations, and opt-in runtime
+observations remain separate. A static relationship is not a claim about
+runtime order, business intent, or successful behavior.
 
 ## See the product
 
