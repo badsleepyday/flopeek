@@ -63,6 +63,9 @@ Status: `current`
 - `package.json#files` and `packaging/package-policy.json` bound the candidate tarball to runtime modules, Viewer assets, the Flopeek integration skill, showcase, and public benchmark data. Repository governance, tests, CI, caches, credentials, logs, and source maps are rejected by the package audit.
 - `scripts/verify-clean-room.js` packs and installs the exact source tarball into an operating-system temporary consumer with lifecycle scripts disabled, then checks the installed binary, bounded static scan, MCP bootstrap, fixture immutability, and cleanup.
 - The source repository is public. npm registry publishing remains intentionally separate from a source tag or GitHub Release; packaging evidence does not decide registry permission or release stage.
+- `main` is the only long-lived public source branch. CI validates short-lived
+  `<type>/<change-name>` SDLC branch names and rejects tool, vendor, account, or
+  agent identity prefixes before running the remaining source and package gates.
 - Public Core releases are created from immutable tags on `main` only after the
   source-owned GitHub release approval validates the exact tag/package identity,
   recorded release evidence, and—outside alpha—the published npm dist-tag. The
@@ -124,7 +127,7 @@ Status: `current`
 | `src/go-adapter.js` and `src/go-facts.go` | Optional Go compiler-parser bridge. |
 | `src/csharp-adapter.js` and `src/csharp-facts.cs` | Optional .NET/Roslyn structure bridge. |
 | `src/graph-service.js` | Viewer projections, search, node details, Context Cards, related tests, graph delta, impact analysis, and agent context. |
-| `src/server.js` | Loopback HTTP API, SSE, file watcher, refresh coordination, static viewer assets. |
+| `src/server.js` | Loopback HTTP API, SSE, recursive source watcher, dedicated cross-platform repository-config stat watcher, refresh coordination, static viewer assets. |
 | `src/mcp.js` | Source-read-only MCP graph/context tools over stdio plus bounded idempotent metadata appends for traces, semantic review/proposals, and explicit runner events; no shell or source-write surface. |
 
 ### Guided checkout showcase

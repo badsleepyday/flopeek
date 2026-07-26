@@ -213,12 +213,14 @@ This is deliberate: source structure comes from parser facts. Current semantic f
 - resolver-cache invalidation for relevant topology/config changes;
 - graph-wide relationship rebuild;
 - directory/metadata-free reconciliation fallback;
+- dedicated cross-platform stat watching for `.flopeek/config.json`;
 - SSE notification to an open viewer.
 - durable monotonic graph versions and bounded persisted adjacent deltas.
 
 ### Limits
 
-- watcher reliability depends on OS filesystem events;
+- general source watching depends on OS filesystem events; repository-scope
+  configuration has a dedicated stat-watcher fallback;
 - manual scan remains the reconciliation fallback;
 - current graph JSON is fully rewritten;
 - only the 40 newest adjacent deltas are retained; older or non-adjacent history is unavailable unless Git snapshots exist;
@@ -383,6 +385,7 @@ MCP currently exposes no source write, file content, shell, deployment, credenti
 ## Public Core and private overlay support
 
 - The public `main` branch is the canonical Flopeek Core source. It is the branch users clone, review, test, and extend.
+- Short-lived contribution branches must use an approved SDLC type such as `feature/`, `fix/`, `docs/`, `release/`, `hotfix/`, `chore/`, `test/`, or `ci/`. CI rejects tool, vendor, account, and agent identity prefixes, including `codex/` and `agent/`, and merged branches are deleted.
 - Alpha, beta, release-candidate, and stable Core releases are immutable tags on commits already present on public `main`. The tagged-release workflow fails closed until a source-owned owner approval records the exact tag/package, review evidence, and—outside alpha—the matching public npm dist-tag; it then verifies source and package before creating a GitHub Release. The record does not itself prove that an asserted provider identity is independent.
 - The source-owned approval matches `flopeek@0.2.1-beta.1`, and that exact package is published on npm under the `beta` channel. Registry publication does not by itself create a GitHub Release or change the public Core repository's role as canonical source.
 - Commercial and confidential work belongs in a separate private overlay repository that pins an immutable public Core tag. The overlay must not copy `src/`, `public/`, or the Core test suite, and Core defects found privately must be safely reproduced and fixed through public Core first.

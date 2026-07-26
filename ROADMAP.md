@@ -1075,12 +1075,13 @@ Status: `completed` for the repository-model migration. `badsleepyday/flopeek` i
 Goal: preserve one public Core source of truth while keeping commercial and confidential work in a separate private overlay without copying Core implementation or tests.
 
 - [x] Make public `main` the only long-lived Core source branch and release alpha, beta, release-candidate, and stable channels as immutable tags.
+- [x] Enforce typed short-lived SDLC branch names in CI, prohibit tool or agent identity prefixes, and delete contribution branches after merge.
 - [x] Create a tagged-release workflow that verifies public source and package evidence before creating the corresponding GitHub Release.
 - [x] Define the private overlay as a consumer of immutable public Core tags rather than a mirror, exporter source, or alternative Core branch.
 - [x] Retire private-development-to-public export scripts, policies, tests, and documentation from the public Core repository.
 - [x] Keep public Core release readiness separate from npm publication approval and from private-overlay work.
 
-Acceptance evidence: `RELEASING.md`, `ARCHITECTURE.md`, `SUPPORT.md`, and this roadmap identify public `main` as canonical; document-contract verification rejects the retired snapshot model; the public release workflow runs from `v*` tags; and the private overlay pins a public immutable tag without copying Core source.
+Acceptance evidence: `RELEASING.md`, `ARCHITECTURE.md`, `SUPPORT.md`, and this roadmap identify public `main` as canonical; CI rejects non-SDLC and tool-identity branch names; document-contract verification rejects the retired snapshot model; the public release workflow runs from `v*` tags; and the private overlay pins a public immutable tag without copying Core source.
 
 After this iteration: complete the remaining observable stability gate, choose the package and brand identity, then prepare a separately approved npm beta release from a tagged public Core commit.
 
