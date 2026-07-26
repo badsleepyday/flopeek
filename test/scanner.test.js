@@ -10,7 +10,7 @@ const { benchmarkRepository } = require("../src/benchmark");
 const { checkoutArguments, parseArguments: parseCorpusArguments, renameWithRetry, resolveCorpusRepositories, revisionMatches, scanRepositoryWithTimeout, scoreFocus, validateRealRepositoryCorpus } = require("../src/real-repository-corpus");
 const { compareGitSnapshots, createGitSnapshot } = require("../src/history");
 const { getChangeImpact, getChangedContexts, getContextCard, getFlowComparison, getFlowContextCard, getFlowProjection, getRelatedImplementations, projectView, resolveContextRef } = require("../src/graph-service");
-const { startServer } = require("../src/server");
+const { startServer, watchRepository } = require("../src/server");
 const { GraphCacheError, atomicWriteJson, readGraphCacheResult } = require("../src/graph-cache");
 const { GraphSchemaError, parseGraphCache } = require("../src/graph-schema");
 const { readGraphDelta, readGraphStateResult } = require("../src/graph-state");
@@ -3080,6 +3080,36 @@ test("local API exposes scope metadata and diagnostic fixture flows", async () =
     if (app) await new Promise((resolve) => app.server.close(resolve));
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("repository config watcher remains active when recursive directory watching is unavailable", () => {
+  let configListener = null;
+  let unwatched = null;
+  const fileSystem = {
+    watch() {
+      throw new Error("recursive watching unavailable");
+    },
+    watchFile(filename, options, listener) {
+      assert.equal(filename, path.join("/repository", ".flopeek", "config.json"));
+      assert.deepEqual(options, { interval: 200, persistent: false });
+      configListener = listener;
+    },
+    unwatchFile(filename, listener) {
+      unwatched = { filename, listener };
+    },
+  };
+  const changes = [];
+  const close = watchRepository("/repository", (changedPath) => changes.push(changedPath), fileSystem);
+  assert.equal(typeof configListener, "function");
+  configListener({ nlink: 0 }, { nlink: 0 });
+  assert.deepEqual(changes, []);
+  configListener({ nlink: 1 }, { nlink: 0 });
+  assert.deepEqual(changes, [".flopeek/config.json"]);
+  close();
+  assert.deepEqual(unwatched, {
+    filename: path.join("/repository", ".flopeek", "config.json"),
+    listener: configListener,
+  });
 });
 
 test("serve watches repository scope configuration changes", async () => {

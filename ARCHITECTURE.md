@@ -127,7 +127,7 @@ Status: `current`
 | `src/go-adapter.js` and `src/go-facts.go` | Optional Go compiler-parser bridge. |
 | `src/csharp-adapter.js` and `src/csharp-facts.cs` | Optional .NET/Roslyn structure bridge. |
 | `src/graph-service.js` | Viewer projections, search, node details, Context Cards, related tests, graph delta, impact analysis, and agent context. |
-| `src/server.js` | Loopback HTTP API, SSE, file watcher, refresh coordination, static viewer assets. |
+| `src/server.js` | Loopback HTTP API, SSE, recursive source watcher, dedicated cross-platform repository-config stat watcher, refresh coordination, static viewer assets. |
 | `src/mcp.js` | Source-read-only MCP graph/context tools over stdio plus bounded idempotent metadata appends for traces, semantic review/proposals, and explicit runner events; no shell or source-write surface. |
 
 ### Guided checkout showcase

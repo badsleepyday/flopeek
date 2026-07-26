@@ -100,17 +100,25 @@ function shouldRefreshForChange(filename) {
   return !normalized.split("/").some((segment) => WATCH_IGNORED_DIRECTORIES.has(segment));
 }
 
-function watchRepository(root, onChange) {
+function watchRepository(root, onChange, fileSystem = fs) {
+  const configPath = path.join(root, ".flopeek", "config.json");
+  const onConfigChange = (current, previous) => {
+    if (!current?.nlink && !previous?.nlink) return;
+    onChange(".flopeek/config.json");
+  };
+  fileSystem.watchFile(configPath, { interval: 200, persistent: false }, onConfigChange);
+  let watcher = null;
   try {
-    const watcher = fs.watch(root, { recursive: true }, (_eventType, filename) => {
+    watcher = fileSystem.watch(root, { recursive: true }, (_eventType, filename) => {
       const changedPath = filename ? String(filename) : null;
       if (shouldRefreshForChange(changedPath)) onChange(changedPath);
     });
     watcher.on("error", () => {});
-    return () => watcher.close();
-  } catch {
-    return () => {};
-  }
+  } catch {}
+  return () => {
+    watcher?.close();
+    fileSystem.unwatchFile(configPath, onConfigChange);
+  };
 }
 
 function writeSse(response, event, payload) {
@@ -771,4 +779,4 @@ async function startServer(options) {
   };
 }
 
-module.exports = { findNodes, listenOnAvailablePort, projectView, startServer };
+module.exports = { findNodes, listenOnAvailablePort, projectView, startServer, watchRepository };

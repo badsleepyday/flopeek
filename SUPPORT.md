@@ -213,12 +213,14 @@ This is deliberate: source structure comes from parser facts. Current semantic f
 - resolver-cache invalidation for relevant topology/config changes;
 - graph-wide relationship rebuild;
 - directory/metadata-free reconciliation fallback;
+- dedicated cross-platform stat watching for `.flopeek/config.json`;
 - SSE notification to an open viewer.
 - durable monotonic graph versions and bounded persisted adjacent deltas.
 
 ### Limits
 
-- watcher reliability depends on OS filesystem events;
+- general source watching depends on OS filesystem events; repository-scope
+  configuration has a dedicated stat-watcher fallback;
 - manual scan remains the reconciliation fallback;
 - current graph JSON is fully rewritten;
 - only the 40 newest adjacent deltas are retained; older or non-adjacent history is unavailable unless Git snapshots exist;
