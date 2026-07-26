@@ -7,23 +7,25 @@ Flopeek helps you answer four questions before changing an unfamiliar repository
 3. Which tests and neighboring components are directly related?
 4. Is the context I copied earlier still current?
 
-## Start locally
+## Install the public beta
 
-Flopeek is currently used from its source checkout:
+Install the explicit beta channel, then point Flopeek at the repository you
+want to inspect:
 
 ```powershell
-git clone https://github.com/badsleepyday/flopeek.git
-cd flopeek
-npm install
-npm exec -- flopeek serve D:\work\my-project
+npm install --global flopeek@beta
+flopeek serve D:\work\my-project
 ```
 
 The Viewer opens on loopback. If the preferred port is occupied, Flopeek advances to an available port without stopping the existing service. Use `--strict-port` when a fixed port is required.
 
 ```powershell
-npm exec -- flopeek serve D:\work\my-project --port 4780
-npm exec -- flopeek serve D:\work\my-project --port 4780 --strict-port
+flopeek serve D:\work\my-project --port 4780
+flopeek serve D:\work\my-project --port 4780 --strict-port
 ```
+
+The public `main` branch remains the canonical source checkout for contributors.
+Pin `@beta` explicitly until a stable npm release is published.
 
 ## Read the Viewer
 
@@ -114,10 +116,10 @@ only actual events.
 Use the CLI for compact read-only inventory:
 
 ```powershell
-npm exec -- flopeek work list D:\work\my-project
-npm exec -- flopeek work timeline D:\work\my-project --record task-id
-npm exec -- flopeek work workflows D:\work\my-project
-npm exec -- flopeek work dependencies D:\work\my-project --record task-id
+flopeek work list D:\work\my-project
+flopeek work timeline D:\work\my-project --record task-id
+flopeek work workflows D:\work\my-project
+flopeek work dependencies D:\work\my-project --record task-id
 ```
 
 Trusted local HTTP clients and MCP metadata tools can create Work records,
@@ -143,7 +145,7 @@ When a handoff needs bounded local Git context, resolve the exact Context Ref
 first, then inspect only commits reachable from the current attached branch:
 
 ```powershell
-npm exec -- flopeek git-evidence D:\work\my-project --context-ref "fp://local/..." --limit 12 --format json
+flopeek git-evidence D:\work\my-project --context-ref "fp://local/..." --limit 12 --format json
 ```
 
 This is path-touch evidence for the current Context Card paths. It does not
@@ -154,7 +156,7 @@ explicitly unavailable.
 To compare the exact static Context Ref across two pinned commits, use:
 
 ```powershell
-npm exec -- flopeek git-continuity D:\work\my-project --context-ref "fp://local/..." --from HEAD~1 --to HEAD --format json
+flopeek git-continuity D:\work\my-project --context-ref "fp://local/..." --from HEAD~1 --to HEAD --format json
 ```
 
 The result distinguishes an exact static node/flow identity from nodes found at
@@ -166,8 +168,8 @@ match, semantic-equivalence claim, or runtime proof.
 Install the project-local Flopeek skill and MCP entry:
 
 ```powershell
-npm exec -- flopeek install D:\work\my-project --platform codex
-npm exec -- flopeek doctor D:\work\my-project --platform codex
+flopeek install D:\work\my-project --platform codex
+flopeek doctor D:\work\my-project --platform codex
 ```
 
 Supported installer targets are `codex`, `claude`, `cursor`, and `gemini`. Existing unrelated configuration is preserved; unmanaged conflicts are refused.
@@ -195,7 +197,7 @@ opt-in **Find repeated static conventions** action. CLI and MCP use the same
 bounded projection:
 
 ```powershell
-npm exec -- flopeek related-implementations D:\work\my-project --context-ref "fp://local/..." --format summary
+flopeek related-implementations D:\work\my-project --context-ref "fp://local/..." --format summary
 ```
 
 `get_related_implementations` compares only same-extension source files and
@@ -229,7 +231,7 @@ Scope controls what is treated as application evidence. It does not make unsuppo
 Use discovery first when the repository is large or unfamiliar:
 
 ```powershell
-npm exec -- flopeek discover D:\work\my-project --max-files 5000 --max-bytes 250000000 --budget-ms 10000
+flopeek discover D:\work\my-project --max-files 5000 --max-bytes 250000000 --budget-ms 10000
 ```
 
 Discovery reads static inventory and configuration only. It does not parse
@@ -239,7 +241,7 @@ which declared limit was exceeded.
 Run a complete-result-only bounded scan with the same controls:
 
 ```powershell
-npm exec -- flopeek scan D:\work\my-project --max-files 5000 --max-bytes 250000000 --budget-ms 60000
+flopeek scan D:\work\my-project --max-files 5000 --max-bytes 250000000 --budget-ms 60000
 ```
 
 Flopeek writes the canonical graph cache only after the discovered source plan
@@ -256,10 +258,10 @@ When the repository is large, select a concrete package directory rather than
 asking the first graph to cover every package:
 
 ```powershell
-npm exec -- flopeek discover D:\work\my-project --package apps\api --format json
-npm exec -- flopeek scan D:\work\my-project --package apps\api
-npm exec -- flopeek serve D:\work\my-project --package apps\api
-npm exec -- flopeek mcp D:\work\my-project --package apps\api
+flopeek discover D:\work\my-project --package apps\api --format json
+flopeek scan D:\work\my-project --package apps\api
+flopeek serve D:\work\my-project --package apps\api
+flopeek mcp D:\work\my-project --package apps\api
 ```
 
 `--package` accepts only a repository-relative directory with its own regular
@@ -281,8 +283,8 @@ are per-project only; `serve --global --package ...` is intentionally refused.
 ## Use one Viewer for multiple projects
 
 ```powershell
-npm exec -- flopeek serve D:\work\orders -g --workspace commerce
-npm exec -- flopeek serve D:\work\payments -g --workspace commerce
+flopeek serve D:\work\orders -g --workspace commerce
+flopeek serve D:\work\payments -g --workspace commerce
 ```
 
 The hub keeps each project ID, graph, cache, watcher, and Context Ref isolated. Matching names do not create cross-project edges. A person may add an explicit version-bound contract reference between current flows.
@@ -301,12 +303,12 @@ The hub keeps each project ID, graph, cache, watcher, and Context Ref isolated. 
 ## Common checks
 
 ```powershell
-npm exec -- flopeek discover D:\work\my-project --max-files 5000 --budget-ms 10000
-npm exec -- flopeek scan D:\work\my-project --format json
-npm exec -- flopeek scan D:\work\my-project --format json --no-cache
-npm exec -- flopeek proof D:\work\my-project --iterations 3
-npm exec -- flopeek benchmark D:\work\my-project --iterations 5 --format json
-npm exec -- flopeek doctor D:\work\my-project --platform all --format json
+flopeek discover D:\work\my-project --max-files 5000 --budget-ms 10000
+flopeek scan D:\work\my-project --format json
+flopeek scan D:\work\my-project --format json --no-cache
+flopeek proof D:\work\my-project --iterations 3
+flopeek benchmark D:\work\my-project --iterations 5 --format json
+flopeek doctor D:\work\my-project --platform all --format json
 ```
 
 Use `--no-cache` for an inspection that must not create Flopeek cache or project-identity metadata in the target repository. It still reads supported source and any existing Flopeek configuration; it does not execute the target application.
@@ -324,7 +326,7 @@ Benchmark timing is host-specific. Run it when you need local evidence, not on e
 ## Remove an integration
 
 ```powershell
-npm exec -- flopeek uninstall D:\work\my-project --platform codex
+flopeek uninstall D:\work\my-project --platform codex
 ```
 
 Flopeek removes only its managed entry and generated skill. It preserves unrelated project configuration.
