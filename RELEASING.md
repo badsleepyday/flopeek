@@ -19,6 +19,25 @@ fix, and documentation branches are merged through pull requests and removed
 after merge. A temporary hotfix branch is allowed only when a tagged stable line
 needs a fix while `main` has moved ahead.
 
+## Branch naming and lifecycle
+
+Every short-lived branch uses `<type>/<change-name>`, where `<change-name>` is
+lowercase and may contain numbers, dots, underscores, or hyphens. Allowed SDLC
+types are:
+
+- `feature/` for product capability work;
+- `fix/` and `hotfix/` for defect remediation;
+- `docs/` for documentation-only work;
+- `release/` for release preparation;
+- `chore/`, `build/`, `ci/`, `deps/`, `test/`, `refactor/`, `perf/`, and
+  `security/` for their corresponding engineering work.
+
+Tool, vendor, account, or agent identity prefixes are prohibited. In particular,
+never create `codex/`, `agent/`, or personal-name branches. CI runs the
+repository-owned `scripts/verify-branch-name.js` validator and rejects names
+outside this contract. Delete the short-lived branch immediately after its pull
+request is merged or closed.
+
 ## Release procedure
 
 1. Merge the reviewed change to `main` after the required CI checks pass.

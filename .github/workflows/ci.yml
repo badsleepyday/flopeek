@@ -23,6 +23,7 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      - run: node scripts/verify-branch-name.js
       - run: npm run check:support
       - run: npm run check:docs
       - run: npm run test:public-source

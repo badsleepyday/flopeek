@@ -63,6 +63,9 @@ Status: `current`
 - `package.json#files` and `packaging/package-policy.json` bound the candidate tarball to runtime modules, Viewer assets, the Flopeek integration skill, showcase, and public benchmark data. Repository governance, tests, CI, caches, credentials, logs, and source maps are rejected by the package audit.
 - `scripts/verify-clean-room.js` packs and installs the exact source tarball into an operating-system temporary consumer with lifecycle scripts disabled, then checks the installed binary, bounded static scan, MCP bootstrap, fixture immutability, and cleanup.
 - The source repository is public. npm registry publishing remains intentionally separate from a source tag or GitHub Release; packaging evidence does not decide registry permission or release stage.
+- `main` is the only long-lived public source branch. CI validates short-lived
+  `<type>/<change-name>` SDLC branch names and rejects tool, vendor, account, or
+  agent identity prefixes before running the remaining source and package gates.
 - Public Core releases are created from immutable tags on `main` only after the
   source-owned GitHub release approval validates the exact tag/package identity,
   recorded release evidence, and—outside alpha—the published npm dist-tag. The
