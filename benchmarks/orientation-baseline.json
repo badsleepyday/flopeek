@@ -1,13 +1,13 @@
 {
   "schemaVersion": "flopeek-orientation-benchmark/v2",
-  "generatedAt": "2026-07-15T09:33:25.511Z",
+  "generatedAt": "2026-07-26T00:05:22.064Z",
   "runEnvironment": {
-    "flopeekVersion": "0.2.0",
-    "nodeVersion": "24.18.0",
+    "flopeekVersion": "0.2.1-beta.1",
+    "nodeVersion": "24.14.1",
     "platform": "win32",
     "architecture": "x64",
-    "logicalCpuCount": 12,
-    "cpuModel": "12th Gen Intel(R) Core(TM) i5-1235U",
+    "logicalCpuCount": 8,
+    "cpuModel": "12th Gen Intel(R) Core(TM) i7-1255U",
     "timingClock": "process.hrtime.bigint",
     "timingPolicy": "host-specific-non-gating"
   },
@@ -32,11 +32,11 @@
         "expectations.json"
       ],
       "timing": {
-        "preparationMilliseconds": 28.835,
+        "preparationMilliseconds": 3.421,
         "preparationPhases": [
           {
             "phase": "text-inventory",
-            "milliseconds": 28.835
+            "milliseconds": 3.421
           }
         ]
       },
@@ -112,16 +112,16 @@
                 "test/accounts.test.ts",
                 "src/legacy/helper.ts"
               ],
-              "estimatedCharacters": 896,
-              "estimatedTokens": 224,
+              "estimatedCharacters": 863,
+              "estimatedTokens": 216,
               "tokenizerId": "flopeek-char4-estimator/v1"
             },
             "timing": {
-              "preparationMilliseconds": 28.835,
-              "sharedRepositoryPreparationMilliseconds": 28.835,
-              "retrievalMilliseconds": 0.343,
-              "coldTimeToUsefulContextMilliseconds": 29.178,
-              "warmTimeToUsefulContextMilliseconds": 0.343,
+              "preparationMilliseconds": 3.421,
+              "sharedRepositoryPreparationMilliseconds": 3.421,
+              "retrievalMilliseconds": 0.455,
+              "coldTimeToUsefulContextMilliseconds": 3.876,
+              "warmTimeToUsefulContextMilliseconds": 0.455,
               "gating": false,
               "separateValidationMilliseconds": 0
             },
@@ -148,11 +148,11 @@
         "expectations.json"
       ],
       "timing": {
-        "preparationMilliseconds": 25.939,
+        "preparationMilliseconds": 2.032,
         "preparationPhases": [
           {
             "phase": "text-inventory",
-            "milliseconds": 25.939
+            "milliseconds": 2.032
           }
         ]
       },
@@ -232,16 +232,16 @@
                 "src/orders/orders.repository.ts",
                 "src/orders/validation.ts"
               ],
-              "estimatedCharacters": 646,
-              "estimatedTokens": 162,
+              "estimatedCharacters": 619,
+              "estimatedTokens": 155,
               "tokenizerId": "flopeek-char4-estimator/v1"
             },
             "timing": {
-              "preparationMilliseconds": 25.939,
-              "sharedRepositoryPreparationMilliseconds": 25.939,
-              "retrievalMilliseconds": 0.336,
-              "coldTimeToUsefulContextMilliseconds": 26.275,
-              "warmTimeToUsefulContextMilliseconds": 0.336,
+              "preparationMilliseconds": 2.032,
+              "sharedRepositoryPreparationMilliseconds": 2.032,
+              "retrievalMilliseconds": 0.105,
+              "coldTimeToUsefulContextMilliseconds": 2.137,
+              "warmTimeToUsefulContextMilliseconds": 0.105,
               "gating": false,
               "separateValidationMilliseconds": 0
             },
@@ -268,11 +268,11 @@
         "expectations.json"
       ],
       "timing": {
-        "preparationMilliseconds": 16.661,
+        "preparationMilliseconds": 1.062,
         "preparationPhases": [
           {
             "phase": "text-inventory",
-            "milliseconds": 16.661
+            "milliseconds": 1.062
           }
         ]
       },
@@ -349,16 +349,16 @@
                 "src/payments/service_test.py",
                 "src/payments/service.py"
               ],
-              "estimatedCharacters": 487,
-              "estimatedTokens": 122,
+              "estimatedCharacters": 467,
+              "estimatedTokens": 117,
               "tokenizerId": "flopeek-char4-estimator/v1"
             },
             "timing": {
-              "preparationMilliseconds": 16.661,
-              "sharedRepositoryPreparationMilliseconds": 16.661,
-              "retrievalMilliseconds": 0.098,
-              "coldTimeToUsefulContextMilliseconds": 16.759,
-              "warmTimeToUsefulContextMilliseconds": 0.098,
+              "preparationMilliseconds": 1.062,
+              "sharedRepositoryPreparationMilliseconds": 1.062,
+              "retrievalMilliseconds": 0.037,
+              "coldTimeToUsefulContextMilliseconds": 1.099,
+              "warmTimeToUsefulContextMilliseconds": 0.037,
               "gating": false,
               "separateValidationMilliseconds": 0
             },
@@ -394,8 +394,8 @@
     },
     "context": {
       "filesInspected": 13,
-      "estimatedCharacters": 2029,
-      "estimatedTokens": 508,
+      "estimatedCharacters": 1949,
+      "estimatedTokens": 488,
       "tokenizerId": "flopeek-char4-estimator/v1"
     },
     "staleContextDetection": {
@@ -410,18 +410,18 @@
         "milliseconds": null,
         "reason": "The in-process evaluator starts timing after its modules are loaded; CLI process startup is not folded into scan or retrieval timing."
       },
-      "repositoryPreparationMilliseconds": 71.435,
+      "repositoryPreparationMilliseconds": 6.515,
       "preparationPhases": [
         {
           "phase": "text-inventory",
-          "milliseconds": 71.435
+          "milliseconds": 6.515
         }
       ],
-      "caseRetrievalMilliseconds": 0.777,
-      "totalTimeToUsefulContextMilliseconds": 72.212,
+      "caseRetrievalMilliseconds": 0.597,
+      "totalTimeToUsefulContextMilliseconds": 7.112,
       "separateValidationMilliseconds": 0,
-      "coldTimeToUsefulContextMilliseconds": 72.212,
-      "warmTimeToUsefulContextMilliseconds": 0.777,
+      "coldTimeToUsefulContextMilliseconds": 7.112,
+      "warmTimeToUsefulContextMilliseconds": 0.597,
       "gating": false,
       "accounting": "Repository preparation is counted once per repository; case retrieval is counted once per case; stale-ref validation is reported separately and excluded from time to useful context."
     },

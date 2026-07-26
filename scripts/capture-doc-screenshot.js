@@ -114,9 +114,12 @@ async function main() {
   const click = argument("--click");
   const level = argument("--level");
   const keyboardFlow = process.argv.includes("--keyboard-flow");
-  const viewportWidth = Number(argument("--width") || 1600);
-  const viewportHeight = Number(argument("--height") || 1000);
+  const viewportWidth = Number(argument("--width") || 1200);
+  const viewportHeight = Number(argument("--height") || 750);
   const flowId = argument("--flow-id");
+  const expectedProject = argument("--expect-project");
+  const expectedFiles = Number(argument("--expect-files"));
+  const rootDisplay = argument("--root-display") || "D:\\work\\flopeek";
   const fromVersion = Number(argument("--from-version"));
   const toVersion = Number(argument("--to-version"));
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-doc-browser-"));
@@ -156,7 +159,14 @@ async function main() {
     await client.send("Page.navigate", { url });
     await loaded;
     await delay(1800);
-    await client.send("Runtime.evaluate", { expression: `(() => { const root = document.querySelector("#root-input"); if (root) root.value = "D:\\\\work\\\\example-project"; return true; })()` });
+    const identity = await client.send("Runtime.evaluate", {
+      expression: `(() => ({ project: document.querySelector("#viewer-project-title")?.textContent?.trim(), title: document.title, stats: document.querySelector("#stats")?.textContent || "" }))()`,
+      returnByValue: true,
+    });
+    const observedIdentity = identity.result?.value || {};
+    if (expectedProject && observedIdentity.project !== expectedProject) throw new Error(`Expected project header ${expectedProject}, received ${observedIdentity.project || "unavailable"}.`);
+    if (expectedProject && observedIdentity.title !== `${expectedProject} · Flopeek`) throw new Error(`Expected metadata-driven document title for ${expectedProject}.`);
+    if (Number.isSafeInteger(expectedFiles) && !observedIdentity.stats.includes(`${expectedFiles} files`)) throw new Error(`Expected current ${expectedFiles}-file statistic in the Viewer header.`);
     if (level) {
       const result = await client.send("Runtime.evaluate", {
         expression: `(() => { const select = document.querySelector("#level-filter"); if (!select) throw new Error("Level selector not found"); select.value = ${JSON.stringify(level)}; select.dispatchEvent(new Event("change", { bubbles: true })); return true; })()`,
@@ -191,6 +201,7 @@ async function main() {
       await delay(1800);
     }
     await client.send("Page.bringToFront");
+    await client.send("Runtime.evaluate", { expression: `(() => { const root = document.querySelector("#root-input"); if (root) root.value = ${JSON.stringify(rootDisplay)}; return true; })()` });
     await client.send("Runtime.evaluate", { expression: "document.documentElement.dataset.capture = 'true'; window.scrollTo(0, 1); document.body.getBoundingClientRect(); window.scrollTo(0, 0); document.body.getBoundingClientRect();" });
     await delay(600);
     const screenshot = await client.send("Page.captureScreenshot", { format: "png", fromSurface: true, captureBeyondViewport: false });

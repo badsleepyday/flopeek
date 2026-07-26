@@ -7,7 +7,7 @@ const { execFileSync } = require("node:child_process");
 const test = require("node:test");
 const { createRepositoryScanner, graphToMermaid, readGraphCache, saveDescription, scanRepository, writeGraphCache } = require("../src/scanner");
 const { benchmarkRepository } = require("../src/benchmark");
-const { parseArguments: parseCorpusArguments, renameWithRetry, resolveCorpusRepositories, revisionMatches, scanRepositoryWithTimeout, scoreFocus, validateRealRepositoryCorpus } = require("../src/real-repository-corpus");
+const { checkoutArguments, parseArguments: parseCorpusArguments, renameWithRetry, resolveCorpusRepositories, revisionMatches, scanRepositoryWithTimeout, scoreFocus, validateRealRepositoryCorpus } = require("../src/real-repository-corpus");
 const { compareGitSnapshots, createGitSnapshot } = require("../src/history");
 const { getChangeImpact, getChangedContexts, getContextCard, getFlowComparison, getFlowContextCard, getFlowProjection, getRelatedImplementations, projectView, resolveContextRef } = require("../src/graph-service");
 const { startServer } = require("../src/server");
@@ -1261,6 +1261,19 @@ test("real-repository corpus can prepare missing repositories through an explici
 test("real-repository corpus accepts a pinned abbreviated revision against its full SHA", () => {
   assert.equal(revisionMatches("0a68c77931ae2da1000000000000000000000000", "0a68c77"), true);
   assert.equal(revisionMatches("0a68c77931ae2da1000000000000000000000000", "f293848"), false);
+});
+
+test("real-repository corpus trusts only the temporary checkout for Windows Git", () => {
+  const root = String.raw`E:\benchmarks\pnpm.flopeek-clone-123`;
+  assert.deepEqual(checkoutArguments(root, "abc1234"), [
+    "-c",
+    `safe.directory=${root}`,
+    "-C",
+    root,
+    "checkout",
+    "--detach",
+    "abc1234",
+  ]);
 });
 
 test("real-repository corpus retries transient Windows checkout rename locks", () => {

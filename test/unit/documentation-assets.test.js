@@ -35,7 +35,9 @@ test("public documentation charts match checked benchmark evidence", () => {
   assert.match(capabilities, /Versioned stale refs/);
   const performance = read("docs/assets/incremental-performance.svg");
   assert.match(performance, /Symfony/);
-  assert.match(performance, /54\.53×/);
+  assert.match(performance, /Vite/);
+  assert.match(performance, /All 5 pinned repositories/);
+  assert.match(performance, /<polyline/);
 });
 
 test("README user paths and screenshots are present and portable", () => {

@@ -77,27 +77,26 @@ alongside the exact scope and limitations of each result.
 ![Flopeek product proof panel with bounded evidence](docs/assets/screenshots/product-proof.png)
 
 <details>
-<summary>Historical beta-candidate verification snapshot (not a public npm release)</summary>
+<summary>Current verified repository snapshot — July 26, 2026 (not a public npm release)</summary>
 
-This snapshot describes the candidate validated on July 25, 2026 before public
-Core became authoritative in tagged commits on public `main`. These are
-repository and test facts for that revision—not live telemetry, runtime
-coverage, or universal accuracy claims.
+This snapshot is the evidence refresh represented by the screenshots and
+machine-readable benchmark files below. These are repository, package, and
+test facts for this candidate—not live telemetry, runtime coverage, or
+universal accuracy claims.
 
 | Metric | Validated result |
 | --- | ---: |
-| Full repository test suite | **318 passed / 0 failed** |
-| Source files scanned | **196** |
-| Structurally parsed files | **196** |
+| Full repository test suite | **315 passed / 0 failed** |
+| Source files scanned | **219** |
+| Structurally parsed files | **219** |
 | Parse failures | **0** |
-| Static graph nodes | **1,787** |
-| Static graph edges | **6,479** |
-| Tests represented in the graph | **84** |
+| Static graph nodes | **1,875** |
+| Static graph edges | **6,697** |
+| Tests represented in the graph | **83** |
 | MCP tools exposed by clean-room install | **62** |
-| Package audit | **Passed — 178 files** |
-| GitHub Actions | **Node 20 passed · Node 22 passed** |
+| Package audit | **Passed — 178 files / 2,587,076 unpacked bytes** |
 
-### Development included in this beta channel
+### Capabilities represented by this candidate
 
 | Product area | Current capability |
 | --- | --- |
@@ -110,8 +109,8 @@ coverage, or universal accuracy claims.
 | Stability | Last-complete-graph fallback, scan cancellation, cache freshness, helper cleanup, and deterministic cancellation coverage |
 | Packaging | Strict allowlist, clean-room installation verification, and tagged public-Core release checks |
 
-The historical beta candidate does not mean the npm package was published as a
-public beta release.
+This verified candidate does not mean the npm package was published as a public
+beta release.
 
 </details>
 
@@ -256,7 +255,7 @@ The chart reports one host-specific comparison for one supported unchanged file 
 | Evidence | Checked result | Boundary |
 | --- | ---: | --- |
 | Real-repository relationship audit | 92/92 | 14 declared scopes in 5 pinned repositories |
-| Incremental parser reuse | 1.67×–54.53× | 4 pinned repositories on one benchmark host |
+| Incremental parser reuse | 2.76×–8.75× | All 5 pinned repositories on one benchmark host; median of 3 samples per mode |
 | Orientation graph retrieval | 14/14 ordered steps; 3/3 stale refs | 3 small fixtures; no human or provider study |
 | Clean-room package | Strict allowlist; CLI, scan, and MCP bootstrap pass | One Windows/Node observation; no publish |
 

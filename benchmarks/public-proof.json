@@ -1,9 +1,9 @@
 {
   "schemaVersion": "flopeek-public-proof-evidence/v1",
-  "updatedAt": "2026-07-14T00:00:00.000Z",
+  "updatedAt": "2026-07-26T01:26:36.018Z",
   "relationshipAudit": {
     "manifest": "benchmarks/real-repository-corpus.json",
-    "runDate": "2026-07-14",
+    "runDate": "2026-07-26",
     "repositories": 5,
     "auditedScopes": 14,
     "expectedRelationships": 92,
@@ -12,54 +12,79 @@
     "falseNegatives": 0,
     "precision": 1,
     "recall": 1,
-    "elapsedSeconds": 283.4,
+    "elapsedSeconds": 395.3,
     "limitation": "This result covers only the manually audited outgoing relationships declared by the pinned manifest. It is not a global score for every edge, language construct, repository, or runtime behavior."
   },
   "incrementalPerformance": {
     "benchmark": "flopeek-incremental-scan/v1",
-    "runDates": ["2026-07-13", "2026-07-14"],
+    "runDates": ["2026-07-26"],
     "runtime": "Node.js 24.14.1",
     "iterationsPerRepository": 3,
     "rows": [
       {
-        "repository": "SvelteKit",
-        "url": "https://github.com/sveltejs/kit",
-        "revision": "14d7d5a",
-        "sourceFiles": 2216,
-        "parsedFiles": 2214,
-        "fullMedianMs": 3992.24,
-        "incrementalMedianMs": 947.48,
-        "speedup": 4.21
-      },
-      {
         "repository": "pnpm",
         "url": "https://github.com/pnpm/pnpm",
         "revision": "0a68c77",
+        "selectedPath": "pnpm/crates/cli/src/cli_args/access.rs",
         "sourceFiles": 2615,
-        "parsedFiles": 1568,
-        "fullMedianMs": 11485.87,
-        "incrementalMedianMs": 6865.61,
-        "speedup": 1.67
+        "parsedFiles": 2611,
+        "fullMedianMs": 31534.88,
+        "fullSamplesMs": [24332.14, 31534.88, 44333.53],
+        "incrementalMedianMs": 11435.05,
+        "incrementalSamplesMs": [10394.62, 11435.05, 15131.76],
+        "speedup": 2.76
       },
       {
         "repository": "NestJS",
         "url": "https://github.com/nestjs/nest",
         "revision": "f293848",
+        "selectedPath": "integration/injector/src/multiple-providers/a.module.ts",
         "sourceFiles": 1731,
         "parsedFiles": 1727,
-        "fullMedianMs": 6675.51,
-        "incrementalMedianMs": 3952.46,
-        "speedup": 1.69
+        "fullMedianMs": 7297.01,
+        "fullSamplesMs": [9133.17, 6287.1, 7297.01],
+        "incrementalMedianMs": 1023.38,
+        "incrementalSamplesMs": [1415.52, 1023.38, 647.88],
+        "speedup": 7.13
+      },
+      {
+        "repository": "SvelteKit",
+        "url": "https://github.com/sveltejs/kit",
+        "revision": "14d7d5a",
+        "selectedPath": "packages/adapter-netlify/test/apps/split/src/routes/+error.svelte",
+        "sourceFiles": 2216,
+        "parsedFiles": 2214,
+        "fullMedianMs": 8922.73,
+        "fullSamplesMs": [8572.39, 9876.26, 8922.73],
+        "incrementalMedianMs": 2867.13,
+        "incrementalSamplesMs": [2550.38, 3600.64, 2867.13],
+        "speedup": 3.11
+      },
+      {
+        "repository": "Vite",
+        "url": "https://github.com/vitejs/vite",
+        "revision": "fef682d",
+        "selectedPath": "packages/vite/src/node/__tests__/fixtures/scan-subpath-import-glob/src/foo/a.ts",
+        "sourceFiles": 1495,
+        "parsedFiles": 1487,
+        "fullMedianMs": 13750.07,
+        "fullSamplesMs": [11926.16, 17441.37, 13750.07],
+        "incrementalMedianMs": 1570.54,
+        "incrementalSamplesMs": [991.21, 1570.54, 2410.84],
+        "speedup": 8.75
       },
       {
         "repository": "Symfony",
         "url": "https://github.com/symfony/symfony",
         "revision": "7dbebd8",
-        "sourceFiles": 10730,
+        "selectedPath": "src/Symfony/Component/DependencyInjection/Tests/Fixtures/Preload/A.php",
+        "sourceFiles": 10732,
         "parsedFiles": 10726,
-        "fullMedianMs": 47270.13,
-        "incrementalMedianMs": 866.87,
-        "speedup": 54.53
+        "fullMedianMs": 51216.85,
+        "fullSamplesMs": [51216.85, 56079.62, 46379.01],
+        "incrementalMedianMs": 9842.95,
+        "incrementalSamplesMs": [10039.4, 7498.22, 9842.95],
+        "speedup": 5.2
       }
     ],
     "limitation": "These are local CPU-time samples for one unchanged supported source file per pinned checkout. They compare parser-fact reuse with full reparsing on one machine and are not universal performance guarantees."

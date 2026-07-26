@@ -13,7 +13,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 input, select, textarea { width: 100%; border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 9px 10px; color: var(--text); }
 input:focus, select:focus, textarea:focus { outline: 3px solid #dce4ff; border-color: var(--accent); }
 .app-header { min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 32px; padding: 13px 28px; background: linear-gradient(118deg, #13213f 0%, #1b2d58 60%, #243a76 100%); color: #fff; box-shadow: 0 8px 24px #10203a24; }
-.app-header h1 { margin: 0; font-size: 23px; letter-spacing: -.55px; }
+.app-header > div { min-width: 0; }
+.app-header h1 { max-width: min(62vw, 760px); margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 23px; letter-spacing: -.55px; }
+.app-header .product-name { color: #b9c8ff; }
 .eyebrow { margin: 0 0 2px; color: #a9b9e9; font-size: 10px; letter-spacing: .12em; font-weight: 800; }
 .scan-form { display: grid; grid-template-columns: auto minmax(250px, 430px) auto; align-items: center; gap: 8px; }
 .scan-form label { color: #c8d3f3; font-size: 12px; font-weight: 700; }
@@ -289,6 +291,7 @@ textarea { min-height: 98px; resize: vertical; line-height: 1.4; }
 .benchmark-bar-incremental { fill: var(--accent); }
 @media (max-width: 1180px) {
   .app-header { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .app-header h1 { max-width: calc(100vw - 56px); }
   .scan-form { width: 100%; grid-template-columns: auto minmax(180px, 1fr) auto; }
   .workspace { grid-template-columns: 220px minmax(380px, 1fr) 290px; }
   .toolbar-actions { flex-wrap: wrap; justify-content: flex-end; }
@@ -299,6 +302,7 @@ textarea { min-height: 98px; resize: vertical; line-height: 1.4; }
 }
 @media (max-width: 900px) {
   .app-header, .project-bar { padding-left: 14px; padding-right: 14px; }
+  .app-header h1 { max-width: calc(100vw - 28px); }
   .scan-form { grid-template-columns: 1fr; }
   .scan-form label { grid-column: auto; }
   .scan-form button { width: 100%; }

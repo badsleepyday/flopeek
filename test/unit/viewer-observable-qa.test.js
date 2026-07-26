@@ -33,6 +33,20 @@ test("Viewer publishes a bounded, keyboard-described flow journey with explicit 
   assert.doesNotMatch(styles, /body \{[^}]*min-width: 1024px/);
 });
 
+test("Viewer title and primary header follow active project metadata", () => {
+  assert.match(index, /<title>Loading project · Flopeek<\/title>/);
+  assert.match(index, /id="viewer-project-title">Loading project\.\.\.<\/h1>/);
+  assert.match(index, /<span class="product-name">FLOPEEK<\/span> · LOCAL PROJECT FLOW EXPLORER/);
+  assert.match(app, /function activeProjectMetadata\(\)/);
+  assert.match(app, /state\.workspace\?\.projects\?\.find\(\(project\) => project\.active\)/);
+  assert.match(app, /activeWorkspaceProject\?\.serviceLabel \|\| graphProject\.name/);
+  assert.match(app, /\$\("#viewer-project-title"\)\.textContent = project\.name/);
+  assert.match(app, /document\.title = `\$\{project\.name\} · Flopeek`/);
+  assert.match(app, /\$\("#project-name"\)\.textContent = state\.graph\.project\.name;\s*renderProjectIdentity\(\);/);
+  assert.match(styles, /\.app-header h1 \{[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/);
+  assert.match(styles, /@media \(max-width: 900px\) \{[\s\S]*?\.app-header h1 \{ max-width: calc\(100vw - 28px\); \}/);
+});
+
 test("Viewer exposes cancellation only for a bounded running scan and states the retained-graph boundary", () => {
   assert.match(index, /id="cancel-scan"/);
   assert.match(app, /state\.events\.addEventListener\("scan-status"/);
