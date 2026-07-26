@@ -41,8 +41,11 @@ test("package policy rejects repository governance, cache, secrets, maps, omissi
 test("npm publication requires an explicit matching owner approval", () => {
   const { assertNpmPublicationApproved, loadNpmPublicationApproval } = require("../../src/npm-publication-approval");
   const approval = loadNpmPublicationApproval(path.join(ROOT, "packaging", "npm-publication-approval.json"));
-  assert.equal(approval.status, "not-approved");
-  assert.throws(() => assertNpmPublicationApproved(ROOT), /npm publication is not approved/);
+  assert.equal(approval.status, "approved");
+  assert.equal(approval.packageName, PACKAGE.name);
+  assert.equal(approval.version, PACKAGE.version);
+  assert.equal(approval.distTag, PACKAGE.publishConfig.tag);
+  assert.deepEqual(assertNpmPublicationApproved(ROOT), approval);
 });
 
 test("current npm dry-run package passes the committed allowlist", () => {
