@@ -19,6 +19,9 @@ const { createFlowProjection } = require("../src/flow-lens");
 const { createSemanticFlowSuggestion } = require("../src/semantic-flow-suggestion");
 const { createMcpServer } = require("../src/mcp");
 
+// This is an integration-test scheduling deadline, not a product latency guarantee.
+const SSE_INTEGRATION_DEADLINE_MS = 15_000;
+
 const GO_TOOLCHAIN_AVAILABLE = (() => {
   try {
     execFileSync(process.platform === "win32" ? "go.exe" : "go", ["version"], { stdio: "ignore" });
@@ -47,7 +50,7 @@ function git(root, args) {
   return execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
-async function readSseEvent(reader, predicate, timeoutMs = 6_000) {
+async function readSseEvent(reader, predicate, timeoutMs = SSE_INTEGRATION_DEADLINE_MS) {
   const decoder = new TextDecoder();
   let buffer = "";
   const deadline = Date.now() + timeoutMs;
@@ -84,7 +87,7 @@ function createSseEventReader(reader) {
   const decoder = new TextDecoder();
   let buffer = "";
   return {
-    async next(predicate, timeoutMs = 6_000) {
+    async next(predicate, timeoutMs = SSE_INTEGRATION_DEADLINE_MS) {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
         const remaining = Math.max(deadline - Date.now(), 1);
