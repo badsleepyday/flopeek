@@ -27,6 +27,10 @@ screen-reader, browser zoom, or human readability observation.
 
 ## Current S5 evidence status
 
+S5 is `partial`: the automated Viewer contract is current, and scoped manual
+observation exists, but it is not an accessibility or cross-platform
+certification.
+
 The current product-code evidence target is commit
 `beccef32af9b0a978d4463a90806aeb66a8f1a28`.
 Its [six-job CI matrix](https://github.com/badsleepyday/flopeek/actions/runs/30161751505)
@@ -45,9 +49,18 @@ This is a reproducible local engineering observation, not a human-readability,
 assistive-technology, 200%-zoom, touch, cross-browser, cross-device, or
 independent-provider result.
 
+On 2026-07-26, the maintainer reported completing manual S5 checking with the
+browser application named Chrome on Windows, Linux, Android, and iPhone. No
+physical macOS device was available for that session. Browser versions,
+viewport and zoom settings, assistive-technology configuration, screenshots,
+and the individual outcomes for the checklist below were not captured in the
+evidence bundle. This is an attributed maintainer scope report only; it does
+not turn the reported platforms into reproducible accessibility, browser-engine,
+or release-certification evidence.
+
 This is deliberately **not** a cross-browser or accessibility certification.
-Screen readers, 200% zoom, touch interaction, other browsers, and other
-platforms remain `unknown` until directly observed and recorded.
+Screen readers, 200% zoom, touch interaction, other browsers, macOS, and any
+check not directly observed and recorded remain `unknown`.
 
 ## Manual session checklist
 

@@ -35,7 +35,9 @@ test("public documentation charts match checked benchmark evidence", () => {
   assert.match(capabilities, /Versioned stale refs/);
   const performance = read("docs/assets/incremental-performance.svg");
   assert.match(performance, /Symfony/);
-  assert.match(performance, /54\.53×/);
+  assert.match(performance, /Vite/);
+  assert.match(performance, /All 5 pinned repositories/);
+  assert.match(performance, /<polyline/);
 });
 
 test("README user paths and screenshots are present and portable", () => {
@@ -113,6 +115,10 @@ test("Viewer QA guidance preserves current S5 evidence boundaries", () => {
   assert.ok(guide.includes("390 px"));
   assert.ok(guide.includes("screen reader"));
   assert.ok(guide.includes("flopeek-independent-review/v1"));
+  assert.ok(guide.includes("S5 is `partial`"));
+  assert.ok(guide.includes("Chrome on Windows, Linux, Android, and iPhone"));
+  assert.ok(guide.includes("physical macOS device was available"));
+  assert.ok(guide.includes("not turn the reported platforms into reproducible accessibility"));
   assert.equal(guide.includes("dirty\ndevelopment tree"), false);
   assert.equal(guide.includes("full suite (296/296)"), false);
 });

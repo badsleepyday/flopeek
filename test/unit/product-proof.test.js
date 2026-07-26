@@ -25,7 +25,9 @@ test("public proof evidence matches its pinned relationship manifest and timing 
   assert.equal(evidence.relationshipAudit.falseNegatives, 0);
   assert.equal(evidence.relationshipAudit.precision, 1);
   assert.equal(evidence.relationshipAudit.recall, 1);
-  assert.deepEqual(evidence.incrementalPerformance.rows.map((row) => row.speedup), [4.21, 1.67, 1.69, 54.53]);
+  assert.deepEqual(evidence.incrementalPerformance.rows.map((row) => row.repository), ["pnpm", "NestJS", "SvelteKit", "Vite", "Symfony"]);
+  assert.equal(evidence.incrementalPerformance.rows.length, evidence.relationshipAudit.repositories);
+  assert.ok(evidence.incrementalPerformance.rows.every((row) => row.fullSamplesMs.length === 3 && row.incrementalSamplesMs.length === 3));
 });
 
 test("public proof validation rejects claim drift and unpinned performance evidence", () => {
@@ -40,6 +42,12 @@ test("public proof validation rejects claim drift and unpinned performance evide
   const unpinnedRevision = structuredClone(evidence);
   unpinnedRevision.incrementalPerformance.rows[0].revision = "unreviewed";
   assert.throws(() => validatePublicEvidence(unpinnedRevision, manifest), /not present in the pinned manifest/);
+  const missingRepository = structuredClone(evidence);
+  missingRepository.incrementalPerformance.rows.pop();
+  assert.throws(() => validatePublicEvidence(missingRepository, manifest), /cover every pinned repository/);
+  const wrongMedian = structuredClone(evidence);
+  wrongMedian.incrementalPerformance.rows[0].fullSamplesMs = [1, 1, 1];
+  assert.throws(() => validatePublicEvidence(wrongMedian, manifest), /medians do not match raw samples/);
 });
 
 test("orientation proof validates raw per-case totals and keeps human and agent studies unrun", () => {
@@ -75,7 +83,7 @@ test("product proof combines bounded public evidence with current repository fac
     const proof = createProductProof(graph, { generatedAt: "2026-07-15T00:00:00.000Z" });
     assert.equal(proof.schemaVersion, "flopeek-product-proof/v1");
     assert.equal(proof.headlineMetrics.auditedRelationships, 92);
-    assert.deepEqual(proof.headlineMetrics.measuredIncrementalSpeedup, { minimum: 1.67, maximum: 54.53, repositories: 4 });
+    assert.deepEqual(proof.headlineMetrics.measuredIncrementalSpeedup, { minimum: 2.76, maximum: 8.75, repositories: 5 });
     assert.deepEqual(proof.headlineMetrics.orientationRetrieval, { cases: 3, expectedTargets: 10, matchedTargets: 10, expectedFlowSteps: 14, matchedFlowSteps: 14, expectedRelatedTests: 3, matchedRelatedTests: 3, staleRefsRequested: 3, staleRefsDetected: 3, evidenceClass: "deterministic-retrieval" });
     assert.equal(proof.currentRepository.projectId, graph.project.projectId);
     assert.equal(proof.currentRepository.structuralParseRatio, 1);

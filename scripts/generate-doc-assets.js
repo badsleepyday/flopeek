@@ -44,8 +44,11 @@ function shell(title, description, content, height = 520) {
 }
 
 function capabilityAsset() {
-  const baseline = readJson("benchmarks/orientation-baseline.json").summary;
-  const flopeek = readJson("benchmarks/orientation-flopeek.json").summary;
+  const baselineReport = readJson("benchmarks/orientation-baseline.json");
+  const flopeekReport = readJson("benchmarks/orientation-flopeek.json");
+  const baseline = baselineReport.summary;
+  const flopeek = flopeekReport.summary;
+  const refreshed = new Date(flopeekReport.generatedAt).toISOString().slice(0, 10);
   const metrics = [
     ["Target paths", `${baseline.correctTargetRetrieval.matched}/${baseline.correctTargetRetrieval.expected}`, `${flopeek.correctTargetRetrieval.matched}/${flopeek.correctTargetRetrieval.expected}`],
     ["Ordered flow steps", "Not available", `${flopeek.flowSteps.matchedInExpectedOrder}/${flopeek.flowSteps.expected}`],
@@ -65,28 +68,72 @@ function capabilityAsset() {
     </g>`;
   }).join("");
   const content = `${cards}
-    <text x="72" y="425" fill="#b9c4dc" font-family="Inter,Segoe UI,sans-serif" font-size="13">Three source-pinned fixtures · deterministic retrieval · no human or AI outcome claim</text>`;
+    <text x="72" y="419" fill="#b9c4dc" font-family="Inter,Segoe UI,sans-serif" font-size="13">3 source-pinned fixtures · refreshed ${escapeXml(refreshed)} UTC · deterministic retrieval</text>
+    <text x="72" y="440" fill="#8592aa" font-family="Inter,Segoe UI,sans-serif" font-size="12">No human-productivity, AI-outcome, or runtime-order claim</text>`;
   writeAsset("orientation-capabilities.svg", shell("What the graph adds", "Literal retrieval finds files; Flopeek adds ordered static flow and versioned context.", content, 470));
 }
 
 function performanceAsset() {
   const proof = readJson("benchmarks/public-proof.json");
   const rows = proof.incrementalPerformance.rows;
-  const max = Math.max(...rows.map((row) => row.speedup));
-  const chart = rows.map((row, index) => {
-    const y = 190 + index * 68;
-    const width = Math.max(18, Math.round(row.speedup / max * 760));
+  const chartLeft = 135;
+  const chartRight = 1080;
+  const chartTop = 205;
+  const chartBottom = 430;
+  const timingValues = rows.flatMap((row) => [row.fullMedianMs, row.incrementalMedianMs]);
+  const minimumExponent = Math.floor(Math.log10(Math.min(...timingValues)));
+  const maximumExponent = Math.max(minimumExponent + 2, Math.ceil(Math.log10(Math.max(...timingValues))));
+  const xFor = (index) => rows.length === 1 ? (chartLeft + chartRight) / 2 : chartLeft + (chartRight - chartLeft) * index / (rows.length - 1);
+  const yFor = (milliseconds) => {
+    const normalized = (Math.log10(milliseconds) - minimumExponent) / (maximumExponent - minimumExponent);
+    return chartBottom - normalized * (chartBottom - chartTop);
+  };
+  const fullPoints = rows.map((row, index) => `${xFor(index).toFixed(1)},${yFor(row.fullMedianMs).toFixed(1)}`).join(" ");
+  const incrementalPoints = rows.map((row, index) => `${xFor(index).toFixed(1)},${yFor(row.incrementalMedianMs).toFixed(1)}`).join(" ");
+  const tickLabel = (milliseconds) => {
+    if (milliseconds >= 60_000) {
+      const seconds = Math.round(milliseconds / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const remainingSeconds = seconds % 60;
+      return remainingSeconds === 0 ? `${minutes} min` : `${minutes}m ${remainingSeconds}s`;
+    }
+    if (milliseconds >= 1000) return `${milliseconds / 1000} s`;
+    return `${milliseconds} ms`;
+  };
+  const ticks = Array.from(
+    { length: maximumExponent - minimumExponent + 1 },
+    (_, index) => 10 ** (minimumExponent + index),
+  ).map((milliseconds) => {
+    const y = yFor(milliseconds);
+    return `<line x1="${chartLeft}" x2="${chartRight}" y1="${y}" y2="${y}" stroke="#ffffff" stroke-opacity=".10"/>
+      <text x="${chartLeft - 16}" y="${y + 4}" text-anchor="end" fill="#8592aa" font-family="Inter,Segoe UI,sans-serif" font-size="11">${tickLabel(milliseconds)}</text>`;
+  }).join("");
+  const points = rows.map((row, index) => {
+    const x = xFor(index);
+    const fullY = yFor(row.fullMedianMs);
+    const incrementalY = yFor(row.incrementalMedianMs);
     return `<g>
-      <text x="72" y="${y + 19}" fill="#ffffff" font-family="Inter,Segoe UI,sans-serif" font-size="15" font-weight="700">${escapeXml(row.repository)}</text>
-      <rect x="190" y="${y}" width="760" height="26" rx="8" fill="#ffffff" fill-opacity=".08"/>
-      <rect x="190" y="${y}" width="${width}" height="26" rx="8" fill="#6f8cff"/>
-      <text x="${Math.min(970, 202 + width)}" y="${y + 19}" fill="#8ef0cf" font-family="Inter,Segoe UI,sans-serif" font-size="14" font-weight="800">${escapeXml(row.speedup.toFixed(2))}×</text>
-      <text x="1050" y="${y + 18}" text-anchor="end" fill="#b9c4dc" font-family="Inter,Segoe UI,sans-serif" font-size="12">${escapeXml(row.sourceFiles.toLocaleString("en-US"))} files</text>
+      <circle cx="${x}" cy="${fullY}" r="6" fill="#8aa2ff" stroke="#172a55" stroke-width="3"/>
+      <circle cx="${x}" cy="${incrementalY}" r="6" fill="#8ef0cf" stroke="#172a55" stroke-width="3"/>
+      <text x="${x}" y="466" text-anchor="middle" fill="#ffffff" font-family="Inter,Segoe UI,sans-serif" font-size="13" font-weight="700">${escapeXml(row.repository)}</text>
+      <text x="${x}" y="484" text-anchor="middle" fill="#8592aa" font-family="Inter,Segoe UI,sans-serif" font-size="10">${escapeXml(row.sourceFiles.toLocaleString("en-US"))} files</text>
+      <text x="${x}" y="${Math.max(chartTop + 14, incrementalY - 12)}" text-anchor="middle" fill="#8ef0cf" font-family="Inter,Segoe UI,sans-serif" font-size="11" font-weight="800">${escapeXml(row.speedup.toFixed(2))}×</text>
     </g>`;
   }).join("");
-  const content = `${chart}
-    <text x="190" y="464" fill="#8592aa" font-family="Inter,Segoe UI,sans-serif" font-size="12">Median parser-fact reuse speedup vs full reparse · one supported changed file · one benchmark host</text>`;
-  writeAsset("incremental-performance.svg", shell("Reuse the graph instead of rebuilding it", "Incremental scan speedups across four pinned real repositories.", content, 500));
+  const refreshed = escapeXml(proof.updatedAt.slice(0, 10));
+  const content = `<g>
+    ${ticks}
+    <polyline points="${fullPoints}" fill="none" stroke="#8aa2ff" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+    <polyline points="${incrementalPoints}" fill="none" stroke="#8ef0cf" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/>
+    ${points}
+    <g transform="translate(735 167)">
+      <line x1="0" x2="34" y1="0" y2="0" stroke="#8aa2ff" stroke-width="4"/><text x="44" y="4" fill="#c8d2e7" font-family="Inter,Segoe UI,sans-serif" font-size="12">Full reparse median</text>
+      <line x1="190" x2="224" y1="0" y2="0" stroke="#8ef0cf" stroke-width="4"/><text x="234" y="4" fill="#c8d2e7" font-family="Inter,Segoe UI,sans-serif" font-size="12">Incremental reuse median</text>
+    </g>
+    <text x="72" y="522" fill="#b9c4dc" font-family="Inter,Segoe UI,sans-serif" font-size="12">All ${rows.length} pinned repositories · log-time axis · 3 samples per mode · refreshed ${refreshed} UTC</text>
+    <text x="72" y="542" fill="#8592aa" font-family="Inter,Segoe UI,sans-serif" font-size="11">One supported unchanged file per checkout · one benchmark host · not a universal speed guarantee</text>
+  </g>`;
+  writeAsset("incremental-performance.svg", shell("Reuse the graph instead of rebuilding it", `Full reparse and incremental parser-fact reuse across all ${rows.length} pinned repositories.`, content, 590));
 }
 
 function workflowAsset() {

@@ -8,6 +8,22 @@ function mapTitle(view) {
   return ({ domain: "Domain overview", feature: "Feature overview", component: "Component overview", symbol: "Symbol overview" })[view.level] || modeTitles.overview;
 }
 
+function activeProjectMetadata() {
+  const activeWorkspaceProject = state.workspace?.projects?.find((project) => project.active);
+  const graphProject = state.graph?.project || {};
+  const name = String(activeWorkspaceProject?.serviceLabel || graphProject.name || "").trim();
+  return {
+    name: name || "Untitled project",
+    repositoryName: String(graphProject.name || "").trim() || null,
+  };
+}
+
+function renderProjectIdentity() {
+  const project = activeProjectMetadata();
+  $("#viewer-project-title").textContent = project.name;
+  document.title = `${project.name} · Flopeek`;
+}
+
 function escapeHtml(value = "") { return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]); }
 function toast(message) { const node = $("#toast-template").content.firstElementChild.cloneNode(true); node.textContent = message; document.body.append(node); setTimeout(() => node.remove(), 2600); }
 
@@ -91,6 +107,7 @@ async function loadView() {
   $("#status").textContent = "";
   $("#root-input").value = state.graph.project.root;
   $("#project-name").textContent = state.graph.project.name;
+  renderProjectIdentity();
   renderPackageScope();
   $("#project-id-badge").textContent = state.graph.project.projectId ? state.graph.project.projectId.slice(0, 20) : "identity unavailable";
   $("#graph-version-badge").textContent = Number.isInteger(state.graph.aiContext?.graphState?.graphVersion) ? `v${state.graph.aiContext.graphState.graphVersion}` : "unversioned";

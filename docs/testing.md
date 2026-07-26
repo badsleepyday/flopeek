@@ -52,8 +52,16 @@ npm run check:docs
 Viewer screenshots use an isolated headless Chrome/Edge profile and only accept a loopback HTTP URL plus an output path under `docs/assets/screenshots`:
 
 ```powershell
-node scripts/capture-doc-screenshot.js --url http://127.0.0.1:4780/ --output docs/assets/screenshots/flow-lens.png
+node scripts/capture-doc-screenshot.js --url http://127.0.0.1:4780/ --output docs/assets/screenshots/flow-lens.png --expect-project flopeek --expect-files 219 --width 1200 --height 750
 ```
+
+The expectation flags fail the capture when the Viewer header or source-file
+statistic does not match the project being documented. The capture replaces
+the repository input with a portable display-only path; the header, tab title,
+graph statistics, and inspector content still come from the active local
+project metadata and graph.
+The checked 1200×750 viewport keeps the three-column Viewer legible while
+remaining inside the package-size policy with all three PNG captures.
 
 The capture script sanitizes the repository input path, closes the isolated browser, and removes its temporary profile. Screenshot presence proves only that the declared Viewer state rendered on the capture host; it is not a browser-compatibility or usability study.
 

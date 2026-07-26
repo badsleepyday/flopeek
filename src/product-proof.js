@@ -18,6 +18,12 @@ function divideOrientation(numerator, denominator) {
   return denominator > 0 ? Number((numerator / denominator).toFixed(6)) : null;
 }
 
+function median(values) {
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
 function readJson(target) {
   return JSON.parse(fs.readFileSync(target, "utf8"));
 }
@@ -33,7 +39,9 @@ function validatePublicEvidence(evidence, manifest) {
   const predicted = audit.truePositives + audit.falsePositives;
   const expected = audit.truePositives + audit.falseNegatives;
   if (audit.precision !== divide(audit.truePositives, predicted) || audit.recall !== divide(audit.truePositives, expected)) throw new Error("Public proof precision or recall does not match its confusion counts.");
-  if (!Array.isArray(evidence.incrementalPerformance?.rows) || !evidence.incrementalPerformance.rows.length) throw new Error("Public proof performance evidence requires at least one pinned row.");
+  if (!Array.isArray(evidence.incrementalPerformance?.rows) || evidence.incrementalPerformance.rows.length !== repositories.length) throw new Error("Public proof performance evidence must cover every pinned repository exactly once.");
+  const iterations = evidence.incrementalPerformance.iterationsPerRepository;
+  if (!Number.isInteger(iterations) || iterations < 1) throw new Error("Public proof performance evidence requires a positive iteration count.");
   const seenRevisions = new Set();
   for (const row of evidence.incrementalPerformance.rows) {
     const repository = repositories.find((candidate) => candidate.revision === row.revision);
@@ -44,6 +52,8 @@ function validatePublicEvidence(evidence, manifest) {
     seenRevisions.add(row.revision);
     if (![row.sourceFiles, row.parsedFiles, row.fullMedianMs, row.incrementalMedianMs, row.speedup].every((value) => Number.isFinite(value) && value > 0)) throw new Error(`Public proof timing row is incomplete for ${row.repository}.`);
     if (row.parsedFiles > row.sourceFiles) throw new Error(`Public proof parsed-file count exceeds source files for ${row.repository}.`);
+    if (![row.fullSamplesMs, row.incrementalSamplesMs].every((samples) => Array.isArray(samples) && samples.length === iterations && samples.every((value) => Number.isFinite(value) && value > 0))) throw new Error(`Public proof raw timing samples are incomplete for ${row.repository}.`);
+    if (row.fullMedianMs !== Number(median(row.fullSamplesMs).toFixed(2)) || row.incrementalMedianMs !== Number(median(row.incrementalSamplesMs).toFixed(2))) throw new Error(`Public proof timing medians do not match raw samples for ${row.repository}.`);
     const calculated = Number((row.fullMedianMs / row.incrementalMedianMs).toFixed(2));
     if (row.speedup !== calculated) throw new Error(`Public proof speedup does not match timing medians for ${row.repository}.`);
   }

@@ -9,7 +9,7 @@ Every result is bounded by its dataset, revision, host, and evidence class. Raw 
 | Question | Checked answer | Read it as |
 | --- | ---: | --- |
 | Are declared static relationships recovered? | **92/92** | Exact result for 14 manually audited scopes in 5 pinned repositories |
-| Is parser reuse faster than full reparse? | **1.67×–54.53×** | Four host-specific repository samples; not a universal promise |
+| Is parser reuse faster than full reparse? | **2.76×–8.75×** | All 5 pinned repositories on one host; not a universal promise |
 | Does Flopeek add context beyond literal retrieval? | **14/14 ordered steps; 3/3 stale refs** | Three small source-pinned fixtures; no productivity claim |
 | Can the package install from its exact tarball? | **Passed** | One private Windows/Node clean-room observation; no publish approval |
 | Does a framework command adapter work beyond a fixture? | **47 declarations** | One pinned Django source snapshot; static declaration evidence only |
@@ -29,11 +29,14 @@ The external corpus pins pnpm, NestJS, SvelteKit, Vite, and Symfony. Fourteen so
 
 | Run | Repositories | Scopes | Expected | TP | FP | FN | Precision | Recall |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2026-07-14 | 5 | 14 | 92 | 92 | 0 | 0 | 100% | 100% |
+| 2026-07-26 | 5 | 14 | 92 | 92 | 0 | 0 | 100% | 100% |
 
 Raw manifest: [`benchmarks/real-repository-corpus.json`](benchmarks/real-repository-corpus.json).
 
-Fresh declared-host reproduction: [`production-static-evidence.json`](benchmarks/production-static-evidence.json) records the complete 5/5 corpus run at the current dirty development baseline.
+The July 26 declared-host reproduction and its elapsed time are recorded in
+[`public-proof.json`](benchmarks/public-proof.json). The separate
+[`production-static-evidence.json`](benchmarks/production-static-evidence.json)
+remains a historical July 22 reproduction; it is not relabeled as current.
 
 ```powershell
 node src/real-repository-corpus.js --clone-directory D:\benchmarks\flopeek-real-corpus --format json
@@ -47,7 +50,9 @@ Flopeek scanned [Django 5.2.5](https://github.com/django/django/tree/5.2.5) at p
 
 Raw evidence: [`framework-entry-production-evidence.json`](benchmarks/framework-entry-production-evidence.json).
 
-The same Django snapshot was re-scanned at the current dirty development baseline; the reproduced 2,864 files, 47 supported declarations, 24 Flow Lenses, and checked relation are recorded in [`production-static-evidence.json`](benchmarks/production-static-evidence.json).
+The same Django snapshot was re-scanned on July 22; the reproduced 2,864
+files, 47 supported declarations, 24 Flow Lenses, and checked relation are
+recorded in [`production-static-evidence.json`](benchmarks/production-static-evidence.json).
 
 **Boundary:** this validates only Flopeek's narrow static `management/commands` declaration subset. It does not prove Django app registration, settings loading, command discovery at runtime, invocation, `handle()` execution, or application behavior.
 
@@ -69,10 +74,10 @@ Benchmark oracle files such as `expectations.json` are explicitly excluded from 
 | Directly related tests | 3/3 | 3/3 |
 | Versioned stale refs | unavailable | 3/3 |
 | Bounded context files | 13 | 13 |
-| Estimated context tokens | 508 | 1,158 |
-| Repository preparation | 71.435 ms | 1,103.443 ms |
-| Three case retrievals | 0.777 ms | 15.676 ms |
-| Separate stale-ref probe | unavailable | 2,413.364 ms |
+| Estimated context tokens | 488 | 1,158 |
+| Repository preparation | 6.515 ms | 680.700 ms |
+| Three case retrievals | 0.597 ms | 7.779 ms |
+| Separate stale-ref probe | unavailable | 1,041.790 ms |
 
 Raw runs: [`orientation-baseline.json`](benchmarks/orientation-baseline.json), [`orientation-flopeek.json`](benchmarks/orientation-flopeek.json), and [`orientation-cases.json`](benchmarks/orientation-cases.json).
 
@@ -86,7 +91,7 @@ flopeek evaluate orientation . --cases benchmarks/orientation-cases.json
 - Flopeek pays a cold graph-build cost for ordered relationships and reusable versioned context.
 - The stale-ref probe is separate: it copies a fixture, scans a baseline, changes source, refreshes, and resolves the older ref.
 - Token values use the disclosed four-characters-per-token estimator. They are not provider tokenizer measurements.
-- Timing is one Windows/Node 24.18.0 observation and is non-gating.
+- Timing is one Windows/Node 24.14.1 observation captured on July 26, 2026 and is non-gating.
 
 This suite does not measure developer time, agent patch quality, runtime correctness, business understanding, or end-to-end token savings. See the [orientation protocol](docs/orientation-benchmark-protocol.md).
 
@@ -96,12 +101,13 @@ This suite does not measure developer time, agent patch quality, runtime correct
 
 | Repository | Revision | Source / parsed files | Full median | Incremental median | Speedup |
 | --- | --- | ---: | ---: | ---: | ---: |
-| [SvelteKit](https://github.com/sveltejs/kit) | `14d7d5a` | 2,216 / 2,214 | 3,992.24 ms | 947.48 ms | 4.21× |
-| [pnpm](https://github.com/pnpm/pnpm) | `0a68c77` | 2,615 / 1,568 | 11,485.87 ms | 6,865.61 ms | 1.67× |
-| [NestJS](https://github.com/nestjs/nest) | `f293848` | 1,731 / 1,727 | 6,675.51 ms | 3,952.46 ms | 1.69× |
-| [Symfony](https://github.com/symfony/symfony) | `7dbebd8` | 10,730 / 10,726 | 47,270.13 ms | 866.87 ms | 54.53× |
+| [pnpm](https://github.com/pnpm/pnpm) | `0a68c77` | 2,615 / 2,611 | 31,534.88 ms | 11,435.05 ms | 2.76× |
+| [NestJS](https://github.com/nestjs/nest) | `f293848` | 1,731 / 1,727 | 7,297.01 ms | 1,023.38 ms | 7.13× |
+| [SvelteKit](https://github.com/sveltejs/kit) | `14d7d5a` | 2,216 / 2,214 | 8,922.73 ms | 2,867.13 ms | 3.11× |
+| [Vite](https://github.com/vitejs/vite) | `fef682d` | 1,495 / 1,487 | 13,750.07 ms | 1,570.54 ms | 8.75× |
+| [Symfony](https://github.com/symfony/symfony) | `7dbebd8` | 10,732 / 10,726 | 51,216.85 ms | 9,842.95 ms | 5.20× |
 
-Each row contains three full and incremental samples for one supported unchanged source file. Incremental mode reuses parser facts, then rebuilds global relationships. Selected paths and raw samples come from:
+Each row contains three full and incremental samples for one supported unchanged source file. Incremental mode reuses parser facts, then rebuilds global relationships. Selected paths and every raw sample are checked into [`public-proof.json`](benchmarks/public-proof.json); reproduce them with:
 
 ```powershell
 flopeek benchmark D:\path\to\repository --iterations 3 --format json

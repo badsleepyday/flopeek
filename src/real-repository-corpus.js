@@ -39,6 +39,10 @@ function revisionMatches(actualRevision, expectedRevision) {
   return typeof actualRevision === "string" && typeof expectedRevision === "string" && actualRevision.toLowerCase().startsWith(expectedRevision.toLowerCase());
 }
 
+function checkoutArguments(root, revision) {
+  return ["-c", `safe.directory=${root}`, "-C", root, "checkout", "--detach", revision];
+}
+
 function pause(milliseconds) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 }
@@ -64,7 +68,7 @@ function cloneRepositoryAtRevision(repository, destination) {
   const temporary = `${destination}.flopeek-clone-${process.pid}-${Date.now()}`;
   try {
     execFileSync("git", ["clone", "--filter=blob:none", "--no-checkout", repository.url, temporary], { stdio: ["ignore", "pipe", "pipe"], maxBuffer: 16 * 1024 * 1024 });
-    execFileSync("git", ["-C", temporary, "checkout", "--detach", repository.revision], { stdio: ["ignore", "pipe", "pipe"], maxBuffer: 16 * 1024 * 1024 });
+    execFileSync("git", checkoutArguments(temporary, repository.revision), { stdio: ["ignore", "pipe", "pipe"], maxBuffer: 16 * 1024 * 1024 });
     // Windows file scanners can transiently keep a fresh checkout open. Retry
     // only those lock-like errors so a completed clone is not discarded.
     renameWithRetry(temporary, destination);
@@ -223,4 +227,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { cloneRepositoryAtRevision, corpusResult, parseArguments, renameWithRetry, resolveCorpusRepositories, revisionMatches, scanRepositoryWithTimeout, scoreFocus, validateRealRepositoryCorpus };
+module.exports = { checkoutArguments, cloneRepositoryAtRevision, corpusResult, parseArguments, renameWithRetry, resolveCorpusRepositories, revisionMatches, scanRepositoryWithTimeout, scoreFocus, validateRealRepositoryCorpus };

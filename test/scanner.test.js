@@ -7,7 +7,7 @@ const { execFileSync } = require("node:child_process");
 const test = require("node:test");
 const { createRepositoryScanner, graphToMermaid, readGraphCache, saveDescription, scanRepository, writeGraphCache } = require("../src/scanner");
 const { benchmarkRepository } = require("../src/benchmark");
-const { parseArguments: parseCorpusArguments, renameWithRetry, resolveCorpusRepositories, revisionMatches, scanRepositoryWithTimeout, scoreFocus, validateRealRepositoryCorpus } = require("../src/real-repository-corpus");
+const { checkoutArguments, parseArguments: parseCorpusArguments, renameWithRetry, resolveCorpusRepositories, revisionMatches, scanRepositoryWithTimeout, scoreFocus, validateRealRepositoryCorpus } = require("../src/real-repository-corpus");
 const { compareGitSnapshots, createGitSnapshot } = require("../src/history");
 const { getChangeImpact, getChangedContexts, getContextCard, getFlowComparison, getFlowContextCard, getFlowProjection, getRelatedImplementations, projectView, resolveContextRef } = require("../src/graph-service");
 const { startServer } = require("../src/server");
@@ -18,6 +18,9 @@ const { createContextRef } = require("../src/context-card");
 const { createFlowProjection } = require("../src/flow-lens");
 const { createSemanticFlowSuggestion } = require("../src/semantic-flow-suggestion");
 const { createMcpServer } = require("../src/mcp");
+
+// This is an integration-test scheduling deadline, not a product latency guarantee.
+const SSE_INTEGRATION_DEADLINE_MS = 15_000;
 
 const GO_TOOLCHAIN_AVAILABLE = (() => {
   try {
@@ -47,7 +50,7 @@ function git(root, args) {
   return execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
-async function readSseEvent(reader, predicate, timeoutMs = 6_000) {
+async function readSseEvent(reader, predicate, timeoutMs = SSE_INTEGRATION_DEADLINE_MS) {
   const decoder = new TextDecoder();
   let buffer = "";
   const deadline = Date.now() + timeoutMs;
@@ -84,7 +87,7 @@ function createSseEventReader(reader) {
   const decoder = new TextDecoder();
   let buffer = "";
   return {
-    async next(predicate, timeoutMs = 6_000) {
+    async next(predicate, timeoutMs = SSE_INTEGRATION_DEADLINE_MS) {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
         const remaining = Math.max(deadline - Date.now(), 1);
@@ -1261,6 +1264,19 @@ test("real-repository corpus can prepare missing repositories through an explici
 test("real-repository corpus accepts a pinned abbreviated revision against its full SHA", () => {
   assert.equal(revisionMatches("0a68c77931ae2da1000000000000000000000000", "0a68c77"), true);
   assert.equal(revisionMatches("0a68c77931ae2da1000000000000000000000000", "f293848"), false);
+});
+
+test("real-repository corpus trusts only the temporary checkout for Windows Git", () => {
+  const root = String.raw`E:\benchmarks\pnpm.flopeek-clone-123`;
+  assert.deepEqual(checkoutArguments(root, "abc1234"), [
+    "-c",
+    `safe.directory=${root}`,
+    "-C",
+    root,
+    "checkout",
+    "--detach",
+    "abc1234",
+  ]);
 });
 
 test("real-repository corpus retries transient Windows checkout rename locks", () => {
