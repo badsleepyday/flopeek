@@ -91,7 +91,12 @@ function performanceAsset() {
   const fullPoints = rows.map((row, index) => `${xFor(index).toFixed(1)},${yFor(row.fullMedianMs).toFixed(1)}`).join(" ");
   const incrementalPoints = rows.map((row, index) => `${xFor(index).toFixed(1)},${yFor(row.incrementalMedianMs).toFixed(1)}`).join(" ");
   const tickLabel = (milliseconds) => {
-    if (milliseconds >= 60000) return `${milliseconds / 60000} min`;
+    if (milliseconds >= 60_000) {
+      const seconds = Math.round(milliseconds / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const remainingSeconds = seconds % 60;
+      return remainingSeconds === 0 ? `${minutes} min` : `${minutes}m ${remainingSeconds}s`;
+    }
     if (milliseconds >= 1000) return `${milliseconds / 1000} s`;
     return `${milliseconds} ms`;
   };
@@ -128,7 +133,7 @@ function performanceAsset() {
     <text x="72" y="522" fill="#b9c4dc" font-family="Inter,Segoe UI,sans-serif" font-size="12">All ${rows.length} pinned repositories · log-time axis · 3 samples per mode · refreshed ${refreshed} UTC</text>
     <text x="72" y="542" fill="#8592aa" font-family="Inter,Segoe UI,sans-serif" font-size="11">One supported unchanged file per checkout · one benchmark host · not a universal speed guarantee</text>
   </g>`;
-  writeAsset("incremental-performance.svg", shell("Reuse the graph instead of rebuilding it", `Full reparse and incremental parser-fact reuse across all ${rows.length} pinned repositories.`, content, 570));
+  writeAsset("incremental-performance.svg", shell("Reuse the graph instead of rebuilding it", `Full reparse and incremental parser-fact reuse across all ${rows.length} pinned repositories.`, content, 590));
 }
 
 function workflowAsset() {

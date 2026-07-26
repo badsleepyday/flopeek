@@ -94,7 +94,7 @@ universal accuracy claims.
 | Static graph edges | **6,697** |
 | Tests represented in the graph | **83** |
 | MCP tools exposed by clean-room install | **62** |
-| Package audit | **Passed — 178 files / 2,587,076 unpacked bytes** |
+| Package audit | **Passed — 178 files / 2,587,060 unpacked bytes** |
 
 ### Capabilities represented by this candidate
 
