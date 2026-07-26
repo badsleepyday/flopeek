@@ -65,7 +65,9 @@ test("README leads with one reproducible change-context loop", () => {
   assert.match(readme, /Copy its versioned Context Ref/);
   assert.match(readme, /Compare before\/current evidence/);
   assert.match(readme, /## Run the change-context loop/);
-  assert.match(readme, /Flopeek is \*\*not available from npm yet\*\*/);
+  assert.match(readme, /npm install --global flopeek@beta/);
+  assert.match(readme, /Use the explicit `@beta` channel until a stable release is published/);
+  assert.equal(readme.includes("not available from npm yet"), false);
   assert.match(readme, /docs\/showcase-walkthrough\.md/);
   assert.equal(readme.includes("## What you get"), false);
 });

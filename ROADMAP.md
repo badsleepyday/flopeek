@@ -28,7 +28,7 @@ Checkboxes describe repository implementation status. Prose alone never implies 
 
 ## Current product baseline
 
-Current public preview package version: `0.2.1-beta.0`.
+Current public preview package version: `0.2.1-beta.1`.
 
 | Capability | Status | Current evidence |
 | --- | --- | --- |
@@ -59,7 +59,7 @@ Current public preview package version: `0.2.1-beta.0`.
 | Agent evidence trace | `done` | Append-only Context Ref/action/changed-path/verification records, bounded viewer history/filtering, API, and MCP are available; records remain declarations, not proof. |
 | Semantic inference | `partial` | Deterministic HTTP/request candidates, evidence, confidence, abstention, immutable local feedback, trace binding, and draft-only viewer handoff exist; no real feedback dataset or trained model. |
 | SDLC workflow engine and local Work ledger | `partial` | Durable work records, planned windows, append-only actual events, Agile/Waterfall/custom definitions, evidence-gated transitions, a read-only Viewer inspector, immutable continuation checkpoints, immutable planned overlays/Plan Refs with CLI/HTTP/MCP parity, an opt-in Viewer Continue mode, append-only human reconciliation records, deterministic baseline/plan/current comparison, read-only divergence, and declared dependency readiness are current. Checkpoint editing and external evidence authority remain. |
-| Public distribution | `planned` | Package remains private; Apache-2.0 source licensing is present, while owner approval and publication decisions remain. |
+| Public distribution | `partial` | The unscoped `flopeek@0.2.1-beta.1` package is published on npm with the `beta` dist-tag and verified through an anonymous clean-room install. A tagged GitHub beta release, stable channel, and documented upgrade policy remain. |
 
 ## Agile operating model
 
@@ -635,19 +635,19 @@ Every “why” or “what happened after release” statement links to evidence
 
 ## Epic 9 — Product distribution and operations
 
-Status: `planned`.
+Status: `partial`.
 
 Priority: P1 before public recommendation; otherwise can proceed alongside later product work.
 
 ### Stories
 
-- [ ] Select and add license.
-- [ ] Remove `private: true` only when publication is authorized.
-- [ ] Add package `files` allowlist.
-- [ ] Exclude tests, corpus, and GitHub workflows from runtime package unless intentionally shipped.
-- [ ] Add `flopeek --version`.
-- [ ] Add `flopeek doctor` for Node, Git, Go, .NET, adapter, and cache diagnostics.
-- [ ] Auto-select the next available loopback port or clearly report collision.
+- [x] Select and add license.
+- [x] Remove `private: true` only when publication is authorized.
+- [x] Add package `files` allowlist.
+- [x] Exclude tests, corpus, and GitHub workflows from runtime package unless intentionally shipped.
+- [x] Add `flopeek --version`.
+- [x] Add `flopeek doctor` for Node, Git, Go, .NET, adapter, and cache diagnostics.
+- [x] Auto-select the next available loopback port or clearly report collision.
 - [ ] Add changelog and release automation.
 - [ ] Test clean-room install, MCP launch, scan, viewer, and uninstall.
 

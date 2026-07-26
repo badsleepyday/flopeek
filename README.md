@@ -77,7 +77,7 @@ alongside the exact scope and limitations of each result.
 ![Flopeek product proof panel with bounded evidence](docs/assets/screenshots/product-proof.png)
 
 <details>
-<summary>Current verified repository snapshot — July 26, 2026 (not a public npm release)</summary>
+<summary>Current verified repository and npm beta snapshot — July 26, 2026</summary>
 
 This snapshot is the evidence refresh represented by the screenshots and
 machine-readable benchmark files below. These are repository, package, and
@@ -109,27 +109,26 @@ universal accuracy claims.
 | Stability | Last-complete-graph fallback, scan cancellation, cache freshness, helper cleanup, and deterministic cancellation coverage |
 | Packaging | Strict allowlist, clean-room installation verification, and tagged public-Core release checks |
 
-This verified candidate does not mean the npm package was published as a public
-beta release.
+The same `flopeek@0.2.1-beta.1` package identity is published on npm and was
+verified through an anonymous clean-room registry installation. The repository
+metrics remain bounded source and test evidence, not live product telemetry.
 
 </details>
 
 ## Run the change-context loop
 
-Flopeek is **not available from npm yet**. Its package metadata is prepared
-for a future beta, but the standard publication path remains owner-gated. The
-default `main` branch is the current public Flopeek Core, so start from a
-source checkout:
+Install the explicitly named public beta from npm:
 
 ```powershell
-git clone https://github.com/badsleepyday/flopeek.git
-cd flopeek
-npm install
-npm run showcase
+npm install --global flopeek@beta
+flopeek showcase
 ```
 
 The showcase opens a safe temporary checkout flow. It does not execute the
 target application or change the committed example.
+
+Use the explicit `@beta` channel until a stable release is published. The
+source checkout on public `main` remains canonical for contributors.
 
 Public preview and stable versions are immutable Git tags on `main`, not long-
 lived `alpha` or `beta` branches. See [RELEASING.md](RELEASING.md) for the
@@ -172,17 +171,17 @@ checkout showcase and the shortest local setup. Flopeek also has explicitly
 bounded parser support beyond that starting point; check the
 [support matrix](SUPPORT.md) before treating a missing relationship as absent.
 
-From the Flopeek checkout:
+After installing `flopeek@beta`:
 
 ```powershell
-npm exec -- flopeek discover D:\path\to\repository --max-files 5000 --budget-ms 10000
-npm exec -- flopeek scan D:\path\to\repository
-npm exec -- flopeek scan D:\path\to\repository --max-files 5000 --max-bytes 250000000 --budget-ms 60000
-npm exec -- flopeek scan D:\path\to\repository --package apps\api
-npm exec -- flopeek scan D:\path\to\repository --no-cache
-npm exec -- flopeek view D:\path\to\repository --level domain --format json
-npm exec -- flopeek serve D:\path\to\repository --max-files 5000 --max-bytes 250000000 --budget-ms 60000
-npm exec -- flopeek doctor D:\path\to\repository --platform all
+flopeek discover D:\path\to\repository --max-files 5000 --budget-ms 10000
+flopeek scan D:\path\to\repository
+flopeek scan D:\path\to\repository --max-files 5000 --max-bytes 250000000 --budget-ms 60000
+flopeek scan D:\path\to\repository --package apps\api
+flopeek scan D:\path\to\repository --no-cache
+flopeek view D:\path\to\repository --level domain --format json
+flopeek serve D:\path\to\repository --max-files 5000 --max-bytes 250000000 --budget-ms 60000
+flopeek doctor D:\path\to\repository --platform all
 ```
 
 The local Viewer and MCP expose the same scan freshness. If a bounded refresh
@@ -195,9 +194,9 @@ For a large monorepo, select a concrete package directory before asking for a
 technical map:
 
 ```powershell
-npm exec -- flopeek discover D:\path\to\repository --package apps\api --format json
-npm exec -- flopeek serve D:\path\to\repository --package apps\api
-npm exec -- flopeek mcp D:\path\to\repository --package apps\api
+flopeek discover D:\path\to\repository --package apps\api --format json
+flopeek serve D:\path\to\repository --package apps\api
+flopeek mcp D:\path\to\repository --package apps\api
 ```
 
 The path must be inside the repository and contain its own regular
@@ -214,10 +213,10 @@ override them.
 Install project-local MCP configuration for a supported host:
 
 ```powershell
-npm exec -- flopeek install D:\path\to\repository --platform codex
-npm exec -- flopeek install D:\path\to\repository --platform claude
-npm exec -- flopeek install D:\path\to\repository --platform cursor
-npm exec -- flopeek install D:\path\to\repository --platform gemini
+flopeek install D:\path\to\repository --platform codex
+flopeek install D:\path\to\repository --platform claude
+flopeek install D:\path\to\repository --platform cursor
+flopeek install D:\path\to\repository --platform gemini
 ```
 
 Flopeek preserves unrelated host settings and refuses conflicting managed entries. ChatGPT web cannot connect to a local stdio MCP server through this installer.
@@ -257,12 +256,12 @@ The chart reports one host-specific comparison for one supported unchanged file 
 | Real-repository relationship audit | 92/92 | 14 declared scopes in 5 pinned repositories |
 | Incremental parser reuse | 2.76×–8.75× | All 5 pinned repositories on one benchmark host; median of 3 samples per mode |
 | Orientation graph retrieval | 14/14 ordered steps; 3/3 stale refs | 3 small fixtures; no human or provider study |
-| Clean-room package | Strict allowlist; CLI, scan, and MCP bootstrap pass | One Windows/Node observation; no publish |
+| Clean-room package | Strict allowlist; CLI, scan, and MCP bootstrap pass | One Windows/Node observation; the verifier itself does not publish |
 
 Run the public proof contract:
 
 ```powershell
-npm exec -- flopeek proof D:\path\to\repository --iterations 3
+flopeek proof D:\path\to\repository --iterations 3
 npm run test:real-corpus
 npm run evaluate:orientation
 ```
@@ -306,4 +305,5 @@ npm run verify:clean-room
 ```
 
 Flopeek currently requires Node.js 20 or later. The source repository is
-public; npm registry publishing remains a separate release decision.
+public, and `flopeek@0.2.1-beta.1` is available through the npm `beta` channel.
+GitHub release tags remain a separate, evidence-gated release decision.
