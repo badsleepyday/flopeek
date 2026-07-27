@@ -1,0 +1,12 @@
+[package]
+name = "flopeek-native-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+publish = false
+description = "Native compatibility wrapper baseline for Flopeek."
+
+[dependencies]
+blake3 = "1.8.2"
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+serde_json = "1.0.149"

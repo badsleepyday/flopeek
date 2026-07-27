@@ -13,7 +13,8 @@ test("public Core CI proves package and clean-room behavior on the declared Node
   assert.match(workflow, /os:\s*\[ubuntu-latest, windows-latest, macos-latest\]/);
   assert.match(workflow, /node:\s*\[20, 22\]/);
   assert.match(workflow, /runs-on:\s*\$\{\{ matrix\.os \}\}/);
-  for (const command of ["node scripts/verify-branch-name.js", "npm run verify:core-baseline", "npm run test:public-source", "npm run test:package", "npm run audit:package", "npm run verify:clean-room"]) {
+  assert.match(workflow, /uses: dtolnay\/rust-toolchain@stable/);
+  for (const command of ["cargo test --manifest-path native/flopeek-core/Cargo.toml --locked", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --version", "node scripts/verify-branch-name.js", "npm run verify:core-baseline", "npm run test:public-source", "npm run test:package", "npm run audit:package", "npm run verify:clean-room"]) {
     assert.match(workflow, new RegExp(`- run: ${command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   }
 });

@@ -9,3 +9,4 @@ node_modules/
 coverage/
 *.flopeek-reviewed.json
 /test/fixtures/**/.flopeek/
+native/**/target/
