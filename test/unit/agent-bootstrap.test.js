@@ -41,6 +41,22 @@ test("agent bootstrap explicitly requires source fallback when no application fl
   assert.match(bootstrap.limitations.join(" "), /runtime order/);
 });
 
+test("agent bootstrap exposes initial scan state without inventing graph evidence", () => {
+  const bootstrap = createAgentBootstrap(null, {
+    project: { name: "fixture", branch: "main", revision: "abc123" },
+    scanOutcome: {
+      schemaVersion: "flopeek-scan-outcome/v1",
+      status: "running",
+      activeGraph: { available: false, projectId: null, graphVersion: null },
+    },
+  });
+  assert.equal(bootstrap.graph.status, "unavailable");
+  assert.equal(bootstrap.readiness.graphAvailable, false);
+  assert.equal(bootstrap.scan.status, "running");
+  assert.ok(bootstrap.workflow[0].tools.includes("get_scan_status"));
+  assert.match(bootstrap.limitations.join(" "), /No complete Flopeek graph/);
+});
+
 test("agent bootstrap preserves an explicit static package-scope boundary", () => {
   const graph = {
     schemaVersion: 5,

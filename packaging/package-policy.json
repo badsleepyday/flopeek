@@ -51,6 +51,7 @@
     "docs/assets/screenshots/flow-lens.png",
     "package.json",
     "src/cli.js",
+    "src/core-compatibility.js",
     "src/mcp.js",
     "src/scanner.js",
     "public/index.html",
@@ -90,6 +91,6 @@
     ".pem",
     ".pfx"
   ],
-  "maximumEntries": 180,
-  "maximumUnpackedBytes": 2600000
+  "maximumEntries": 190,
+  "maximumUnpackedBytes": 2700000
 }

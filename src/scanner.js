@@ -2679,7 +2679,7 @@ function isScannableFile(absolutePath) {
 
 function createFileRecord(root, absolutePath, sourceScope, goFact = null) {
   const relativePath = toPosix(path.relative(root, absolutePath));
-  const content = fs.readFileSync(absolutePath, "utf8");
+  const content = fs.readFileSync(absolutePath, "utf8").replace(/\r\n?/gu, "\n");
   const descriptor = sourceDescriptor(absolutePath);
   return {
     absolutePath,

@@ -1,10 +1,10 @@
 {
   "schemaVersion": "flopeek-clean-room-package-report/v1",
-  "generatedAt": "2026-07-25T16:23:44.974Z",
+  "generatedAt": "2026-07-27T06:15:19.819Z",
   "status": "passed",
   "evidenceClass": "clean-room-package-observation",
   "environment": {
-    "nodeVersion": "24.14.1",
+    "nodeVersion": "24.18.0",
     "platform": "win32",
     "architecture": "x64",
     "lifecycleScriptsDuringInstall": false,
@@ -16,18 +16,18 @@
     "status": "passed",
     "package": {
       "name": "flopeek",
-      "version": "0.2.1-beta.1",
+      "version": "0.2.1-beta.3",
       "private": false,
-      "filename": "flopeek-0.2.1-beta.1.tgz",
-      "packedBytes": 730353,
-      "unpackedBytes": 2314619,
-      "entries": 178
+      "filename": "flopeek-0.2.1-beta.3.tgz",
+      "packedBytes": 967309,
+      "unpackedBytes": 2603551,
+      "entries": 180
     },
     "policy": {
       "schemaVersion": "flopeek-package-policy/v2",
-      "maximumEntries": 180,
-      "maximumUnpackedBytes": 2600000,
-      "requiredPaths": 18,
+      "maximumEntries": 190,
+      "maximumUnpackedBytes": 2700000,
+      "requiredPaths": 19,
       "releasePublishingApproved": false,
       "publicationState": "prepared",
       "distTag": "beta"
@@ -47,63 +47,63 @@
     ]
   },
   "artifact": {
-    "filename": "flopeek-0.2.1-beta.1.tgz",
-    "sha256": "7a3f27d1c8c44f65f07b9848d8e54afcd7c56db13be00081fb33cf6b5377a63c",
-    "packedBytes": 730353
+    "filename": "flopeek-0.2.1-beta.3.tgz",
+    "sha256": "3da908760a57ccbf329160afbbd874d3f7160259f62ba59c5bd59ca1c4448953",
+    "packedBytes": 967309
   },
   "phases": [
     {
       "id": "pack-and-audit",
       "status": "passed",
-      "milliseconds": 2030.071
+      "milliseconds": 3276.351
     },
     {
       "id": "copy-fixture",
       "status": "passed",
-      "milliseconds": 33.945
+      "milliseconds": 100.972
     },
     {
       "id": "install-tarball",
       "status": "passed",
-      "milliseconds": 21342.438
+      "milliseconds": 23378.134
     },
     {
       "id": "binary-version",
       "status": "passed",
-      "milliseconds": 4357.202
+      "milliseconds": 2772.388
     },
     {
       "id": "binary-help",
       "status": "passed",
-      "milliseconds": 1269.645
+      "milliseconds": 3158.19
     },
     {
       "id": "binary-doctor",
       "status": "passed",
-      "milliseconds": 1823.13
+      "milliseconds": 2761.789
     },
     {
       "id": "bounded-static-scan",
       "status": "passed",
-      "milliseconds": 1808.548
+      "milliseconds": 3311.441
     },
     {
       "id": "mcp-startup",
       "status": "passed",
-      "milliseconds": 8121.808
+      "milliseconds": 2493.063
     }
   ],
   "smoke": {
     "packageIdentity": {
       "expectedName": "flopeek",
       "actualName": "flopeek",
-      "expectedVersion": "0.2.1-beta.1",
-      "actualVersion": "0.2.1-beta.1",
+      "expectedVersion": "0.2.1-beta.3",
+      "actualVersion": "0.2.1-beta.3",
       "binShimPresent": true
     },
     "version": {
-      "expected": "0.2.1-beta.1",
-      "actual": "0.2.1-beta.1",
+      "expected": "0.2.1-beta.3",
+      "actual": "0.2.1-beta.3",
       "matched": true
     },
     "help": {
@@ -113,7 +113,7 @@
       "schemaVersion": "flopeek-agent-integration-doctor/v1",
       "ok": true,
       "errors": 0,
-      "warnings": 10,
+      "warnings": 11,
       "strict": false
     },
     "scan": {
@@ -142,12 +142,12 @@
       "copied": true,
       "sourceFingerprintBefore": {
         "algorithm": "sha256",
-        "value": "8af12773f94f232590bca814e833647e36e9e1bb1f0fce485035c0f247dc4d46",
+        "value": "ae4b631b2116bd40a2b29d434859460d37e873bdd1ac281737b10153997614ed",
         "files": 16
       },
       "sourceFingerprintAfter": {
         "algorithm": "sha256",
-        "value": "8af12773f94f232590bca814e833647e36e9e1bb1f0fce485035c0f247dc4d46",
+        "value": "ae4b631b2116bd40a2b29d434859460d37e873bdd1ac281737b10153997614ed",
         "files": 16
       },
       "unchanged": true,
@@ -157,7 +157,7 @@
   },
   "cleanup": {
     "status": "passed",
-    "milliseconds": 2559.529
+    "milliseconds": 4996.135
   },
   "publication": {
     "attempted": false,

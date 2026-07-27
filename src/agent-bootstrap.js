@@ -11,7 +11,71 @@ function coverageSummary(graph) {
   };
 }
 
-function createAgentBootstrap(graph) {
+function unavailableBootstrap(options = {}) {
+  const scanOutcome = options.scanOutcome || {
+    status: "unavailable",
+    reason: "No Flopeek scan outcome is available.",
+    activeGraph: { available: false, projectId: null, graphVersion: null },
+  };
+  const activeGraph = scanOutcome.activeGraph || {};
+  return {
+    schemaVersion: AGENT_BOOTSTRAP_SCHEMA,
+    project: {
+      projectId: activeGraph.projectId || null,
+      name: options.project?.name || null,
+      branch: options.project?.branch || null,
+      revision: options.project?.revision || null,
+    },
+    graph: {
+      schemaVersion: null,
+      graphVersion: activeGraph.graphVersion ?? null,
+      status: "unavailable",
+      updatedAt: null,
+      inventory: { nodes: 0, edges: 0, applicationFlows: 0, endpoints: 0, commandEntries: 0, scheduledEntries: 0, services: 0, tests: 0 },
+      cache: { status: "unavailable", diagnostics: [] },
+      packageSelection: scanOutcome.discovery?.selection || null,
+    },
+    readiness: {
+      graphAvailable: false,
+      applicationFlowsAvailable: false,
+      sourceFallbackRequired: true,
+      currentSourceVerified: false,
+      attachedHeadVerified: false,
+    },
+    scan: scanOutcome,
+    coverage: {
+      summary: null,
+      files: null,
+      languages: [],
+      diagnostics: [],
+      interpretation: "Coverage is unavailable until a complete Flopeek scan produces a graph. It is never runtime or behavioral coverage.",
+    },
+    workflow: [
+      { step: 1, action: "Wait for graph readiness", tools: ["get_scan_status"], purpose: "Poll the explicit initial scan outcome before relying on graph evidence." },
+      { step: 2, action: "Use source fallback", tools: [], purpose: "Inspect source with host workspace tools when immediate work cannot wait for graph evidence." },
+    ],
+    policy: {
+      strategy: "graph-first-with-source-fallback",
+      parserFactsAuthority: "flopeek-deterministic-scanner",
+      agentRole: "consumer-and-proposer",
+      sourceWrites: "not-exposed",
+      targetExecution: "not-exposed",
+      staticIsRuntimeTruth: false,
+      staticIsBusinessTruth: false,
+      missingEvidenceMeansMissingBehavior: false,
+      agentProposalCreatesParserFact: false,
+      agentProposalCreatesHumanVerification: false,
+    },
+    limitations: [
+      "No complete Flopeek graph is available yet; do not treat scan progress as parser evidence.",
+      "Static relationships do not prove runtime order, dynamic dispatch, successful side effects, or business intent.",
+      "Do not store source bodies, secrets, prompts, private reasoning, or raw command logs in Flopeek metadata.",
+    ],
+  };
+}
+
+function createAgentBootstrap(graph, options = {}) {
+  if (!graph) return unavailableBootstrap(options);
   const flows = graph.flows || [];
   const cacheState = graph.analysis?.cacheState || null;
   const scanOutcome = graph.analysis?.scanOutcome || null;

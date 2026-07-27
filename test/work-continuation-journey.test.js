@@ -10,6 +10,16 @@ const { scanRepository } = require("../src/scanner");
 
 function write(root, file, content) { const target = path.join(root, file); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, content, "utf8"); }
 function payload(result) { assert.equal(result.isError, undefined); return JSON.parse(result.content.find((item) => item.type === "text").text); }
+async function waitForMcpGraph(client, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const status = payload(await client.callTool({ name: "get_scan_status", arguments: {} }));
+    if (status.status === "complete") return status;
+    assert.ok(["idle", "running"].includes(status.status), `Unexpected MCP scan status: ${status.status}`);
+    await new Promise((resolve) => setTimeout(resolve, 35));
+  }
+  throw new Error("Timed out waiting for the continuation MCP graph.");
+}
 
 test("stdio MCP supports the bounded continuation handoff journey without source-write authority", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-continuation-journey-"));
@@ -24,6 +34,7 @@ test("stdio MCP supports the bounded continuation handoff journey without source
     transport = new StdioClientTransport({ command: process.execPath, args: [path.join(__dirname, "..", "src", "cli.js"), "mcp", root], cwd: path.join(__dirname, ".."), stderr: "pipe" });
     client = new Client({ name: "continuation-journey", version: "1.0.0" });
     await client.connect(transport);
+    await waitForMcpGraph(client);
     const bootstrap = payload(await client.callTool({ name: "get_agent_bootstrap", arguments: {} }));
     const flow = payload(await client.callTool({ name: "get_flow_context_card", arguments: { flowId: initial.flows[0].id } }));
     const contextRef = flow.card.contextRef;

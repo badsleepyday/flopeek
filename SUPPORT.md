@@ -329,8 +329,8 @@ This is deliberate: source structure comes from parser facts. Current semantic f
 
 | Tool | Current guarantee | Important limit |
 | --- | --- | --- |
-| `get_agent_bootstrap` | Provider-independent graph identity, readiness, parser coverage, safe tool sequence, and evidence policy | Does not read source bodies, execute the target, grant source-write authority, or make runtime/business claims. |
-| `get_scan_status` | Shared scan status, declared bounds, active complete-graph source, freshness, and cache-promotion outcome | A `stale-unverified` graph is the last complete baseline, not current-source evidence or a partial reconstruction. |
+| `get_agent_bootstrap` | Provider-independent graph identity, readiness, parser coverage, safe tool sequence, and evidence policy | Before the initial graph is complete, it explicitly reports graph availability as false; it does not read source bodies, execute the target, grant source-write authority, or make runtime/business claims. |
+| `get_scan_status` | Shared scan status, declared bounds, active complete-graph source, freshness, and cache-promotion outcome | MCP tools register before initial analysis, which starts after the client handshake; `idle`/`running` has no graph evidence. A `stale-unverified` graph is the last complete baseline, not current-source evidence or a partial reconstruction. |
 | `cancel_scan` | Idempotently request cancellation of the active bounded scan without changing source or promoting incomplete evidence | Cannot interrupt the unbounded synchronous scanner and cannot cancel a scan that is not running. |
 | `get_agent_context` | Parser coverage, interpretation rules, projection meaning, and bounded deterministic semantic suggestions | Suggestions do not provide verified business intent. |
 | `get_agent_evidence_traces` | Bounded agent-declared action records filtered by Context Ref or operation ID | Not private reasoning, human verification, source diff, command output, or runtime proof. |
@@ -378,7 +378,7 @@ MCP currently exposes no source write, file content, shell, deployment, credenti
 - `flopeek --version`, `flopeek version`, and `flopeek -v` return the installed package version without scanning a repository.
 - `npm run audit:package` validates the npm dry-run inventory against `packaging/package-policy.json`.
 - `npm run verify:clean-room` packs and installs the exact tarball into a temporary private consumer with lifecycle scripts disabled, then exercises the local binary, help, doctor, one copied-fixture static scan, and MCP bootstrap.
-- The unscoped `flopeek@0.2.1-beta.1` package is published publicly on npm. The `beta` dist-tag resolves to that exact version, and an anonymous clean-room registry installation returned the same CLI version.
+- The unscoped `flopeek@0.2.1-beta.3` package is published publicly on npm. The `beta` dist-tag resolves to that exact version, and a registry installation returned the same CLI version.
 - Install with the explicit `flopeek@beta` channel until a stable release exists. The first registry publication also exposes the same prerelease through npm's default `latest` resolution; this does not promote the product to Flopeek's stable release stage.
 - Clean-room scan and MCP startup may write Flopeek cache metadata only inside the disposable fixture copy. They do not execute the target application or its tests and must leave non-cache fixture content unchanged.
 
@@ -387,7 +387,7 @@ MCP currently exposes no source write, file content, shell, deployment, credenti
 - The public `main` branch is the canonical Flopeek Core source. It is the branch users clone, review, test, and extend.
 - Short-lived contribution branches must use an approved SDLC type such as `feature/`, `fix/`, `docs/`, `release/`, `hotfix/`, `chore/`, `test/`, or `ci/`. CI rejects tool, vendor, account, and agent identity prefixes, including `codex/` and `agent/`, and merged branches are deleted.
 - Alpha, beta, release-candidate, and stable Core releases are immutable tags on commits already present on public `main`. The tagged-release workflow fails closed until a source-owned owner approval records the exact tag/package, review evidence, and—outside alpha—the matching public npm dist-tag; it then verifies source and package before creating a GitHub Release. The record does not itself prove that an asserted provider identity is independent.
-- The source-owned approval matches `flopeek@0.2.1-beta.1`, and that exact package is published on npm under the `beta` channel. Registry publication does not by itself create a GitHub Release or change the public Core repository's role as canonical source.
+- The source-owned approval matches `flopeek@0.2.1-beta.3`, and that exact package is published on npm under the `beta` channel. Registry publication does not by itself create a GitHub Release or change the public Core repository's role as canonical source.
 - Commercial and confidential work belongs in a separate private overlay repository that pins an immutable public Core tag. The overlay must not copy `src/`, `public/`, or the Core test suite, and Core defects found privately must be safely reproduced and fixed through public Core first.
 - The former private-development-to-public snapshot exporter has been retired. Public Core release readiness is evaluated from the public repository, its tagged commit, package policy, CI, and the explicit owner release decision.
 

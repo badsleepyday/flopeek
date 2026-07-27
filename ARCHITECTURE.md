@@ -462,6 +462,8 @@ The browser reloads its current projection after the event and preserves a selec
 
 MCP is read-only with respect to repository source. Current tools:
 
+The stdio transport completes the MCP `initialized` handshake before the initial repository scan is scheduled, so host tool discovery is not gated on graph construction. Before a complete graph exists, `get_scan_status` returns its explicit `idle` or `running` outcome and `get_agent_bootstrap` returns no graph identity or parser inventory. Graph-dependent tools must not treat that state as missing behavior; they require a complete/current graph or direct source fallback.
+
 - `get_agent_bootstrap`;
 - `get_scan_status`;
 - `cancel_scan`;
@@ -577,6 +579,7 @@ explicit unavailable result.
 ### Test layers currently present
 
 - parser and integration behavior in `test/scanner.test.js`;
+- the `flopeek-core-compatibility/v1` JavaScript oracle and committed audited-fixture baseline, which exclude session-local state while pinning stable static facts;
 - agent evidence trace contracts in `test/unit/agent-evidence-trace.test.js`;
 - relationship precision/recall fixture gate in `test/fixture-corpus.test.js`;
 - pinned external-repository audit through `src/real-repository-corpus.js`;
@@ -1096,7 +1099,8 @@ Do not report incremental parser speed as total end-to-end live-update latency. 
 9. Add Delivery Graph and generic workflow engine (current foundation).
 10. Expose planned overlays and Plan Refs through CLI, HTTP, MCP, and an explicit opt-in Viewer Continue mode with exact non-redirecting resolution, append-only manual reconciliation, deterministic bounded comparison, read-only divergence, and a bounded agent continuation packet (current).
 11. Complete cross-surface dogfooding and stabilization.
-12. Evaluate storage backend and permissioned integrations at measured scale.
+12. Preserve the JavaScript core as the dogfooding and compatibility oracle while a native core matches the pinned static-fact contract.
+13. Evaluate storage backend and permissioned integrations at measured scale.
 
 ## Architecture invariants
 

@@ -135,7 +135,7 @@ async function reserveLoopbackPort() {
   return port;
 }
 
-async function waitFor(check, timeoutMs = 12_000) {
+async function waitFor(check, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   let last = null;
   while (Date.now() < deadline) {
@@ -2468,6 +2468,13 @@ test("MCP server exposes deterministic graph tools over stdio", async () => {
       assert.equal(maxStepsSchema.maximum, 24);
       assert.equal(maxStepsSchema.type, "integer");
     }
+    const initialScan = await waitFor(async () => {
+      const result = await client.callTool({ name: "get_scan_status", arguments: {} });
+      if (result.isError) return null;
+      const status = JSON.parse(result.content.find((item) => item.type === "text").text);
+      return status.status === "complete" ? status : null;
+    });
+    assert.equal(initialScan.activeGraph.freshness, "current");
     const result = await client.callTool({ name: "find_nodes", arguments: { query: "Payment" } });
     assert.equal(result.isError, undefined);
     const text = result.content.find((item) => item.type === "text").text;

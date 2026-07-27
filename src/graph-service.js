@@ -533,8 +533,8 @@ function createAgentContext(graph, projection, mode, scope, focusId) {
   };
 }
 
-function getAgentBootstrap(graph) {
-  return createAgentBootstrap(graph);
+function getAgentBootstrap(graph, options = {}) {
+  return createAgentBootstrap(graph, options);
 }
 
 function semanticSuggestionsForGraph(graph, scope = "application") {

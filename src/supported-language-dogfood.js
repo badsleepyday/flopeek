@@ -89,6 +89,18 @@ function toolPayload(result) {
   return JSON.parse(text);
 }
 
+async function waitForMcpScan(client, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let latest;
+  while (Date.now() < deadline) {
+    latest = toolPayload(await client.callTool({ name: "get_scan_status", arguments: {} }));
+    if (latest.status === "complete") return latest;
+    if (latest.status !== "running" && latest.status !== "idle") throw new Error(`MCP initial scan did not complete: ${latest.failure?.message || latest.reason || latest.status}.`);
+    await new Promise((resolve) => setTimeout(resolve, 35));
+  }
+  throw new Error(`Timed out waiting for the MCP initial scan; last status: ${latest?.status || "unavailable"}.`);
+}
+
 async function mcpFlowBasis(disposableRoot, flowId) {
   let client;
   let transport;
@@ -100,6 +112,7 @@ async function mcpFlowBasis(disposableRoot, flowId) {
     transport = new StdioClientTransport({ command: process.execPath, args: [path.join(__dirname, "cli.js"), "mcp", disposableRoot], cwd: path.resolve(__dirname, ".."), stderr: "pipe" });
     client = new Client({ name: "flopeek-supported-language-dogfood", version: "1.0.0" });
     await client.connect(transport);
+    await waitForMcpScan(client);
     const bootstrap = toolPayload(await client.callTool({ name: "get_agent_bootstrap", arguments: {} }));
     const flow = toolPayload(await client.callTool({ name: "get_flow_context_card", arguments: { flowId } }));
     if (!flow.card?.contextRef || flow.card.project?.graphVersion !== bootstrap.graph?.graphVersion) throw new Error("MCP Flow Context Card does not share the bootstrap graph basis.");

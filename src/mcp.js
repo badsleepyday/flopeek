@@ -27,9 +27,11 @@ async function createMcpServer(options) {
     maxFiles: options.maxFiles,
     maxBytes: options.maxBytes,
     packagePath: options.packagePath,
+    analysisDelayMs: options.analysisDelayMs,
   });
   let graph;
   let previousGraph = null;
+  let initialScanPromise = null;
   const refresh = async (changedPaths = null, reason = "agent-refresh") => {
     const result = await coordinator.refresh(changedPaths, reason);
     previousGraph = result.previousGraph;
@@ -37,8 +39,18 @@ async function createMcpServer(options) {
     if (!graph) throw new Error(`Flopeek scan ${result.outcome.status}: ${result.outcome.failure?.message || result.outcome.reason || "no complete graph is available"}.`);
     return { graph, delta: getGraphDelta(previousGraph, graph), scanOutcome: result.outcome };
   };
-  const currentGraph = () => graph;
-  await refresh(null, "mcp-initial");
+  const currentGraph = () => {
+    if (graph) return graph;
+    const outcome = coordinator.currentOutcome();
+    const error = new Error(`No complete Flopeek graph is available while the scan status is ${outcome.status}. Call get_scan_status and wait for a complete/current graph, or inspect source directly.`);
+    error.code = "FLOPEEK_GRAPH_NOT_READY";
+    throw error;
+  };
+  const startInitialScan = () => {
+    if (!initialScanPromise) initialScanPromise = refresh(null, "mcp-initial");
+    return initialScanPromise;
+  };
+  if (!options.deferInitialScan) await startInitialScan();
 
   const server = new McpServer({ name: "flopeek", version: packageInfo.version });
   const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
@@ -60,7 +72,14 @@ async function createMcpServer(options) {
     title: "Get the Flopeek agent bootstrap",
     description: "Start here. Return the current graph identity, parser coverage, readiness, recommended evidence workflow, and non-overclaiming policy shared by every supported agent host.",
     inputSchema: {},
-  }, () => getAgentBootstrap(currentGraph()));
+  }, () => getAgentBootstrap(graph, {
+    scanOutcome: coordinator.currentOutcome(),
+    project: {
+      name: path.basename(root),
+      branch: null,
+      revision: null,
+    },
+  }));
 
   register("get_scan_status", {
     title: "Get the current Flopeek scan status",
@@ -707,15 +726,25 @@ async function createMcpServer(options) {
     };
   });
 
-  return { server, root, refresh, coordinator };
+  return { server, root, refresh, startInitialScan, coordinator };
 }
 
 async function runMcpServer(options) {
   const [{ StdioServerTransport }, instance] = await Promise.all([
     import("@modelcontextprotocol/sdk/server/stdio.js"),
-    createMcpServer(options),
+    createMcpServer({ ...options, deferInitialScan: true }),
   ]);
   const transport = new StdioServerTransport();
+  let initialScanScheduled = false;
+  instance.server.server.oninitialized = () => {
+    if (initialScanScheduled) return;
+    initialScanScheduled = true;
+    setImmediate(() => {
+      instance.startInitialScan().catch((error) => {
+        process.stderr.write(`Flopeek MCP initial scan failed: ${error?.message || "unknown error"}\n`);
+      });
+    });
+  };
   await instance.server.connect(transport);
   process.stderr.write(`Flopeek MCP connected for ${instance.root}\n`);
   return instance;

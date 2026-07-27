@@ -51,6 +51,8 @@ ChatGPT web is not a local stdio host and is intentionally excluded. A future re
 
 It reports project and graph identity, static inventory, cache state, application-flow availability, parser coverage, a recommended tool sequence, evidence policy, and explicit limitations. It contains no source body or machine-specific repository root.
 
+The stdio server registers its MCP tools before it starts the initial repository scan; it schedules that scan after the MCP client completes its `initialized` handshake. Until that scan reaches a complete graph, `get_scan_status` reports `idle` or `running` and `get_agent_bootstrap` reports graph availability as `false`; neither response is parser evidence. Agents should poll the scan status or use direct source fallback, rather than assuming that an unavailable graph means absent behavior.
+
 The expected provider workflow is:
 
 ```text
@@ -87,4 +89,5 @@ promoting an incomplete graph; unbounded scanning is not interruptible.
 - **Existing Flopeek entry:** remove or reconcile the unmanaged entry manually. Flopeek does not claim ownership of it.
 - **Modified installed skill:** keep the customization and resolve it manually, or restore the canonical content before uninstalling.
 - **MCP command not found:** install or link Flopeek so `flopeek` is on PATH, then rerun doctor.
+- **MCP tools do not appear after installation:** start a new host task after the project configuration is loaded. `doctor` checks the managed files and PATH; it does not start the host or prove a completed repository scan. Then call `get_scan_status` and wait for `complete`/`current` before using graph evidence.
 - **Graph evidence appears incomplete:** read bootstrap coverage, inspect source directly, and retain the limitation in the result.
