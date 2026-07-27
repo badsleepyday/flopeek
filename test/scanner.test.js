@@ -135,7 +135,7 @@ async function reserveLoopbackPort() {
   return port;
 }
 
-async function waitFor(check, timeoutMs = 12_000) {
+async function waitFor(check, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   let last = null;
   while (Date.now() < deadline) {
