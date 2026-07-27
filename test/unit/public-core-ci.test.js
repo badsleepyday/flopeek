@@ -10,11 +10,13 @@ const readWorkflow = (name) => fs.readFileSync(path.join(ROOT, ".github", "workf
 
 test("public Core CI proves package and clean-room behavior on the declared Node and OS matrix", () => {
   const workflow = readWorkflow("ci.yml");
+  const publicSourceRunner = fs.readFileSync(path.join(ROOT, "scripts", "run-tests.js"), "utf8");
   assert.match(workflow, /os:\s*\[ubuntu-latest, windows-latest, macos-latest\]/);
   assert.match(workflow, /node:\s*\[20, 22\]/);
   assert.match(workflow, /runs-on:\s*\$\{\{ matrix\.os \}\}/);
   assert.match(workflow, /uses: dtolnay\/rust-toolchain@stable/);
-  for (const command of ["cargo test --manifest-path native/flopeek-core/Cargo.toml --locked", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --version", "node scripts/verify-branch-name.js", "npm run verify:core-baseline", "npm run test:public-source", "npm run test:package", "npm run audit:package", "npm run verify:clean-room"]) {
+  assert.match(publicSourceRunner, /lanes\["public-source"\]\.unshift\("test\/unit\/native-inventory-parity\.test\.js"\)/);
+  for (const command of ["cargo test --manifest-path native/flopeek-core/Cargo.toml --locked", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --version", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-facts .", "node scripts/verify-branch-name.js", "npm run verify:core-baseline", "npm run test:public-source", "npm run test:package", "npm run audit:package", "npm run verify:clean-room"]) {
     assert.match(workflow, new RegExp(`- run: ${command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   }
 });

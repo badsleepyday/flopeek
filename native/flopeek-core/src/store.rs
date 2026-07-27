@@ -2,7 +2,7 @@ use rusqlite::Connection;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const NATIVE_STORE_SCHEMA_VERSION: i64 = 1;
+pub const NATIVE_STORE_SCHEMA_VERSION: i64 = 3;
 pub const NATIVE_STORE_RELATIVE_PATH: &str = ".flopeek/native-core.sqlite3";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,7 +13,7 @@ pub struct NativeStoreStatus {
     pub foreign_keys_enabled: bool,
 }
 
-pub fn initialize_native_store(root: &Path) -> rusqlite::Result<NativeStoreStatus> {
+pub fn open_native_store(root: &Path) -> rusqlite::Result<Connection> {
     let metadata_directory = root.join(".flopeek");
     fs::create_dir_all(&metadata_directory)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
@@ -70,13 +70,42 @@ pub fn initialize_native_store(root: &Path) -> rusqlite::Result<NativeStoreStatu
           created_at_ms INTEGER NOT NULL,
           UNIQUE(project_pk, from_node_id, to_node_id)
         );
+        CREATE TABLE IF NOT EXISTS inventory_files (
+          project_pk INTEGER NOT NULL REFERENCES projects(project_pk),
+          path TEXT NOT NULL,
+          size_bytes INTEGER NOT NULL,
+          modified_at_ns INTEGER NOT NULL,
+          source_scope TEXT NOT NULL,
+          content_hash TEXT NOT NULL,
+          last_seen_scan_pk INTEGER NOT NULL REFERENCES scan_runs(scan_pk),
+          PRIMARY KEY(project_pk, path)
+        );
+        CREATE INDEX IF NOT EXISTS inventory_files_project_seen
+          ON inventory_files(project_pk, last_seen_scan_pk);
         ",
     )?;
+    let has_source_scope = {
+        let mut statement = connection.prepare("PRAGMA table_info(inventory_files)")?;
+        statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?
+            .iter()
+            .any(|name| name == "source_scope")
+    };
+    if !has_source_scope {
+        connection.execute("ALTER TABLE inventory_files ADD COLUMN source_scope TEXT NOT NULL DEFAULT 'application'", [])?;
+    }
     connection.execute(
         "INSERT INTO metadata(key, value) VALUES ('schema_version', ?1)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         [NATIVE_STORE_SCHEMA_VERSION.to_string()],
     )?;
+    Ok(connection)
+}
+
+pub fn initialize_native_store(root: &Path) -> rusqlite::Result<NativeStoreStatus> {
+    let database_path = root.join(NATIVE_STORE_RELATIVE_PATH);
+    let connection = open_native_store(root)?;
     let journal_mode =
         connection.query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))?;
     let foreign_keys =

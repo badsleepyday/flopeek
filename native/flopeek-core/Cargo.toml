@@ -9,4 +9,8 @@ description = "Native compatibility wrapper baseline for Flopeek."
 [dependencies]
 blake3 = "1.8.2"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
+serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+syn = { version = "2.0.117", features = ["full", "visit"] }
+time = { version = "0.3.36", features = ["formatting"] }
+uuid = { version = "1.10.0", features = ["v4"] }

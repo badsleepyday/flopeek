@@ -26,6 +26,7 @@ jobs:
       - run: npm ci
       - run: cargo test --manifest-path native/flopeek-core/Cargo.toml --locked
       - run: cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --version
+      - run: cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-facts .
       - run: node scripts/verify-branch-name.js
       - run: npm run check:support
       - run: npm run check:docs
