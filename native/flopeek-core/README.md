@@ -10,6 +10,7 @@ cargo run --manifest-path native/flopeek-core/Cargo.toml -- --version
 cargo run --manifest-path native/flopeek-core/Cargo.toml -- --native-status .
 cargo run --manifest-path native/flopeek-core/Cargo.toml -- --native-inventory .
 cargo run --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-facts .
+cargo run --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-graph .
 ```
 
 `--native-status` initializes `.flopeek/native-core.sqlite3` with a WAL-backed
@@ -50,3 +51,10 @@ uses `syn` to cache Rust `use` declarations, top-level types/functions, impl and
 trait methods, and direct identifier calls. The cache key is the file's BLAKE3
 content hash plus `native-rust-syn/v1`; only metadata projections are persisted,
 never source bodies. Its output is explicitly not a public graph projection.
+
+`--native-rust-graph` assembles a deliberately narrow comparable projection:
+Rust file/type/function IDs plus `contains`, resolved internal `imports`,
+external import, and direct-call edges. Run `cargo build --release` followed by
+`npm run benchmark:native-rust-shadow -- --iterations 7` to compare this exact
+projection against JavaScript. The benchmark rejects any node-ID or edge mismatch
+before reporting timings.

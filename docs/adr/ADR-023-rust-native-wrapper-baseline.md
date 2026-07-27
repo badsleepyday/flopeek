@@ -40,6 +40,12 @@ hash, and adapter version. JavaScript remains the graph and public-output oracle
 the native parser cannot replace it until compatibility tests and corpus evidence
 approve that promotion.
 
+Native Rust graph shadow output is compared with a normalized JavaScript graph
+projection before a timing sample is accepted. The benchmark uses disposable
+identical Rust corpus copies, symmetric unmeasured process warm-up, and reports
+only cold command-envelope timings for the currently matched subset. It must not
+be presented as a whole-product or warm-cache performance claim.
+
 SQLite integer primary keys are internal join keys. The native BLAKE3 ID is not
 yet emitted as a graph node ID or Context Reference. Existing JavaScript node
 IDs and `flopeek-core-compatibility/v1` remain authoritative. The native crate

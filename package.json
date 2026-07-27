@@ -98,6 +98,7 @@
     "test:docs": "node --test test/unit/documentation-assets.test.js",
     "check:support": "node scripts/generate-support.js --check",
     "benchmark": "node src/cli.js benchmark .",
+    "benchmark:native-rust-shadow": "node scripts/benchmark-native-rust-shadow.js",
     "test:real-corpus": "node src/real-repository-corpus.js",
     "qa:viewer-cancellation": "node scripts/viewer-cancellation-fixture.js",
     "prepublishOnly": "npm run verify:npm-publication"

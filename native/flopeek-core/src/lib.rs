@@ -1,4 +1,5 @@
 pub mod facts;
+pub mod graph;
 pub mod identity;
 pub mod inventory;
 pub mod project_identity;
