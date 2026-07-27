@@ -34,6 +34,16 @@ function mcpPayload(result) {
   return JSON.parse(result.content.find((item) => item.type === "text").text);
 }
 
+async function waitForMcpGraph(client, timeoutMs = 12_000) {
+  for (let attempt = 0; attempt < timeoutMs / 35; attempt += 1) {
+    const status = mcpPayload(await client.callTool({ name: "get_scan_status", arguments: {} }));
+    if (status.status === "complete") return status;
+    assert.ok(["idle", "running"].includes(status.status), `Unexpected MCP scan status: ${status.status}`);
+    await new Promise((resolve) => setTimeout(resolve, 35));
+  }
+  throw new Error("Timed out waiting for the showcase MCP graph.");
+}
+
 test("showcase preparation, apply, reset, and cleanup are confined to a marked temporary copy", () => {
   const baselineSource = path.join(DEFAULT_SHOWCASE_ROOT, "src", "checkout", "payment.ts");
   const original = fs.readFileSync(baselineSource, "utf8");
@@ -116,6 +126,7 @@ test("showcase demonstrates one shared Viewer, HTTP, and MCP context before and 
     });
     client = new Client({ name: "flopeek-showcase-test", version: "1.0.0" });
     await client.connect(transport);
+    await waitForMcpGraph(client);
     const bootstrap = mcpPayload(await client.callTool({ name: "get_agent_bootstrap", arguments: {} }));
     const mcpLens = mcpPayload(await client.callTool({ name: "get_flow_projection", arguments: { flowId: PRIMARY_FLOW_ID } }));
     const mcpPacket = mcpPayload(await client.callTool({ name: "get_flow_context_card", arguments: { flowId: PRIMARY_FLOW_ID } }));
