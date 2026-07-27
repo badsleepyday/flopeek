@@ -1,0 +1,142 @@
+{
+  "schemaVersion": "flopeek-js-core-baseline/v1",
+  "oracle": {
+    "implementation": "javascript",
+    "packageVersion": "0.2.1-beta.3",
+    "command": "npm run verify:core-baseline"
+  },
+  "compatibilitySchemaVersion": "flopeek-core-compatibility/v1",
+  "cases": [
+    {
+      "id": "commonjs-call-flow",
+      "fixture": "test/fixtures/commonjs-call-flow",
+      "sourceDigest": "sha256:19f0f0550cfb510420ac18312cb886e782dbb63df3a975c1d82a5a824cf82820",
+      "compatibilityDigest": "sha256:6640075413d8614ff5fec270dc1dd82b834f53a9993f3748346eb30b32476f97",
+      "graphSchemaVersion": 5,
+      "nodes": 5,
+      "edges": 9,
+      "flows": 0,
+      "diagnosticFlows": 0
+    },
+    {
+      "id": "django-management-command-flow",
+      "fixture": "test/fixtures/django-management-command-flow",
+      "sourceDigest": "sha256:74d52444fc46501219f42d0d5650947a45d53f1b59bbb79cae5d67a814351829",
+      "compatibilityDigest": "sha256:4df5a3ffc0e7383a790d31dfea3c7b33128ab0534d7c6c7a4f204cbacb8934d7",
+      "graphSchemaVersion": 5,
+      "nodes": 6,
+      "edges": 8,
+      "flows": 1,
+      "diagnosticFlows": 1
+    },
+    {
+      "id": "framework-command-flow",
+      "fixture": "test/fixtures/framework-command-flow",
+      "sourceDigest": "sha256:b30f0cab861f6b4666e7e27f7a17480a02559b30049bacd8182113706600208f",
+      "compatibilityDigest": "sha256:a371a99c0a22dceed4fb9b83367a16f2be167826af5a673f61eb3b3c1a56393c",
+      "graphSchemaVersion": 5,
+      "nodes": 16,
+      "edges": 23,
+      "flows": 3,
+      "diagnosticFlows": 3
+    },
+    {
+      "id": "legacy-handoff",
+      "fixture": "test/fixtures/legacy-handoff",
+      "sourceDigest": "sha256:1cc89fecefc4f152f2fb2ac688695c626819364064766e0407de53359309e909",
+      "compatibilityDigest": "sha256:e92571725879273dc6f6ceedf7114fcd4efd3816aa90860a401a1a4f85f0d127",
+      "graphSchemaVersion": 5,
+      "nodes": 17,
+      "edges": 32,
+      "flows": 2,
+      "diagnosticFlows": 2
+    },
+    {
+      "id": "monorepo-package-selection",
+      "fixture": "test/fixtures/monorepo-package-selection",
+      "sourceDigest": "sha256:022cb4779c94bf41a4ae129c9ba1d4e38029e6500fa3f680f911d32bb7ff8262",
+      "compatibilityDigest": "sha256:b5da96764ab53b8e0cbe82732d6d6ce2f00bfe50dc9d3ea980d2dc49779e179c",
+      "graphSchemaVersion": 5,
+      "nodes": 7,
+      "edges": 9,
+      "flows": 1,
+      "diagnosticFlows": 1
+    },
+    {
+      "id": "next-request-flow",
+      "fixture": "test/fixtures/next-request-flow",
+      "sourceDigest": "sha256:fe650d6bacab09b064be29b12904831535caa89409760fb3208832119bb2e198",
+      "compatibilityDigest": "sha256:091496bd060b211622a00dd5d0dffc688703cafb31c13da3326a909f06fb344a",
+      "graphSchemaVersion": 5,
+      "nodes": 5,
+      "edges": 6,
+      "flows": 1,
+      "diagnosticFlows": 1
+    },
+    {
+      "id": "node-cron-schedule-flow",
+      "fixture": "test/fixtures/node-cron-schedule-flow",
+      "sourceDigest": "sha256:a1b8c7b060d4bc90625cb0a605f5f1fde52d357e2539e517bd4106d48df6179e",
+      "compatibilityDigest": "sha256:f932d1849bf1ae25152694255afd0915f1d9d74d2cedbad5a8a11dadc8e91cfb",
+      "graphSchemaVersion": 5,
+      "nodes": 6,
+      "edges": 9,
+      "flows": 1,
+      "diagnosticFlows": 1
+    },
+    {
+      "id": "package-script-flow",
+      "fixture": "test/fixtures/package-script-flow",
+      "sourceDigest": "sha256:75c87c8b2beaf80e2e2f47278655b51505adf98269ca747df861727e39e1cb2a",
+      "compatibilityDigest": "sha256:81422313da26794b4470ce140052bb49b7f21c5690f657c93ec2ed1979488850",
+      "graphSchemaVersion": 5,
+      "nodes": 5,
+      "edges": 8,
+      "flows": 1,
+      "diagnosticFlows": 1
+    },
+    {
+      "id": "php-package-flow",
+      "fixture": "test/fixtures/php-package-flow",
+      "sourceDigest": "sha256:ab7626c1b51ace47e2f52529e2917afc1fbf00dc61dc2948f2982c507493ba43",
+      "compatibilityDigest": "sha256:8ba78325a26970d3ef3d18fa39affc9ecac00320bb56cb7351b265cc663334d6",
+      "graphSchemaVersion": 5,
+      "nodes": 5,
+      "edges": 7,
+      "flows": 1,
+      "diagnosticFlows": 1
+    },
+    {
+      "id": "python-payment-flow",
+      "fixture": "test/fixtures/python-payment-flow",
+      "sourceDigest": "sha256:a3cc4be650568e47e007659eee1725d30ee966f62ea3a37a676591ce1dee15b2",
+      "compatibilityDigest": "sha256:b40c32624f0c95922ff4b2a27a86a233ec3de87a57483bb14985cb83398b08d8",
+      "graphSchemaVersion": 5,
+      "nodes": 10,
+      "edges": 13,
+      "flows": 1,
+      "diagnosticFlows": 1
+    },
+    {
+      "id": "typescript-order-flow",
+      "fixture": "test/fixtures/typescript-order-flow",
+      "sourceDigest": "sha256:2de8708076d76ed64a1df768bb3ecb2057a84ceb0b2991fd6c05fdf8b7b177a4",
+      "compatibilityDigest": "sha256:5ece4ddbc413f45043dbca4e768285e4447c79033ab6d8ae8e97b7ca2eeac49e",
+      "graphSchemaVersion": 5,
+      "nodes": 10,
+      "edges": 15,
+      "flows": 1,
+      "diagnosticFlows": 1
+    }
+  ],
+  "excludedVolatileState": [
+    "absolute repository root",
+    "local project identity",
+    "Git metadata",
+    "scan timestamps",
+    "graph version",
+    "cache and adjacent-delta state",
+    "manual descriptions"
+  ],
+  "limitation": "This baseline proves deterministic static-fact compatibility only. It does not prove runtime behavior, performance parity, storage compatibility, or business intent."
+}

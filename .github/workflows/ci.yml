@@ -26,6 +26,7 @@ jobs:
       - run: node scripts/verify-branch-name.js
       - run: npm run check:support
       - run: npm run check:docs
+      - run: npm run verify:core-baseline
       - run: npm run test:public-source
       - run: npm run test:package
       - run: npm run audit:package

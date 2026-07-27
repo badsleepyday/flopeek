@@ -378,7 +378,7 @@ MCP currently exposes no source write, file content, shell, deployment, credenti
 - `flopeek --version`, `flopeek version`, and `flopeek -v` return the installed package version without scanning a repository.
 - `npm run audit:package` validates the npm dry-run inventory against `packaging/package-policy.json`.
 - `npm run verify:clean-room` packs and installs the exact tarball into a temporary private consumer with lifecycle scripts disabled, then exercises the local binary, help, doctor, one copied-fixture static scan, and MCP bootstrap.
-- The unscoped `flopeek@0.2.1-beta.2` package is published publicly on npm. The `beta` dist-tag resolves to that exact version, and a registry installation returned the same CLI version.
+- The unscoped `flopeek@0.2.1-beta.3` package is published publicly on npm. The `beta` dist-tag resolves to that exact version, and a registry installation returned the same CLI version.
 - Install with the explicit `flopeek@beta` channel until a stable release exists. The first registry publication also exposes the same prerelease through npm's default `latest` resolution; this does not promote the product to Flopeek's stable release stage.
 - Clean-room scan and MCP startup may write Flopeek cache metadata only inside the disposable fixture copy. They do not execute the target application or its tests and must leave non-cache fixture content unchanged.
 
@@ -387,7 +387,7 @@ MCP currently exposes no source write, file content, shell, deployment, credenti
 - The public `main` branch is the canonical Flopeek Core source. It is the branch users clone, review, test, and extend.
 - Short-lived contribution branches must use an approved SDLC type such as `feature/`, `fix/`, `docs/`, `release/`, `hotfix/`, `chore/`, `test/`, or `ci/`. CI rejects tool, vendor, account, and agent identity prefixes, including `codex/` and `agent/`, and merged branches are deleted.
 - Alpha, beta, release-candidate, and stable Core releases are immutable tags on commits already present on public `main`. The tagged-release workflow fails closed until a source-owned owner approval records the exact tag/package, review evidence, and—outside alpha—the matching public npm dist-tag; it then verifies source and package before creating a GitHub Release. The record does not itself prove that an asserted provider identity is independent.
-- The source-owned approval matches `flopeek@0.2.1-beta.2`, and that exact package is published on npm under the `beta` channel. Registry publication does not by itself create a GitHub Release or change the public Core repository's role as canonical source.
+- The source-owned approval matches `flopeek@0.2.1-beta.3`, and that exact package is published on npm under the `beta` channel. Registry publication does not by itself create a GitHub Release or change the public Core repository's role as canonical source.
 - Commercial and confidential work belongs in a separate private overlay repository that pins an immutable public Core tag. The overlay must not copy `src/`, `public/`, or the Core test suite, and Core defects found privately must be safely reproduced and fixed through public Core first.
 - The former private-development-to-public snapshot exporter has been retired. Public Core release readiness is evaluated from the public repository, its tagged commit, package policy, CI, and the explicit owner release decision.
 

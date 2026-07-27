@@ -1,6 +1,6 @@
 {
   "name": "flopeek",
-  "version": "0.2.1-beta.2",
+  "version": "0.2.1-beta.3",
   "private": false,
   "license": "Apache-2.0",
   "description": "Versioned change context for developers and coding agents.",
@@ -93,6 +93,8 @@
     "generate:docs": "node scripts/generate-doc-assets.js",
     "check:docs": "node scripts/generate-doc-assets.js --check",
     "check:document-contracts": "node scripts/check-document-contracts.js",
+    "verify:core-baseline": "node scripts/verify-core-baseline.js",
+    "update:core-baseline": "node scripts/verify-core-baseline.js --update",
     "test:docs": "node --test test/unit/documentation-assets.test.js",
     "check:support": "node scripts/generate-support.js --check",
     "benchmark": "node src/cli.js benchmark .",

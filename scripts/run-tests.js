@@ -13,7 +13,7 @@ const lanes = {
   feedback: ["test/unit/semantic-suggestion-feedback.test.js"],
   "reviewed-evaluation": ["test/unit/semantic-suggestion-reviewed-evaluation.test.js"],
   trace: ["test/unit/agent-evidence-trace.test.js"],
-  contracts: ["test/contracts/adapter-capability-contract.test.js", "test/flow-verification.test.js"],
+  contracts: ["test/contracts/adapter-capability-contract.test.js", "test/contracts/core-compatibility-contract.test.js", "test/flow-verification.test.js"],
   adapters: ["test/scanner.test.js"],
   viewer: ["test/scanner.test.js", "test/unit/viewer-empty-flow-state.test.js", "test/unit/viewer-observable-qa.test.js"],
   showcase: ["test/showcase.test.js"],
@@ -52,6 +52,7 @@ for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/fram
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/public-core-ci.test.js");
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/branch-name-policy.test.js");
 for (const name of ["full", "fast", "contracts"]) lanes[name].unshift("test/contracts/flopeek-skill-contract.test.js");
+for (const name of ["full", "fast"]) lanes[name].unshift("test/contracts/core-compatibility-contract.test.js");
 lanes["public-source"] = lanes.full.filter((file) => !["test/contracts/agent-skills-contract.test.js", "test/unit/fixture-cache-hygiene.test.js"].includes(file));
 if (!lanes[lane]) throw new Error(`Unknown test lane: ${lane}`);
 if (lane === "fast") {
