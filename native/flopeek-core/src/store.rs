@@ -2,7 +2,7 @@ use rusqlite::Connection;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const NATIVE_STORE_SCHEMA_VERSION: i64 = 3;
+pub const NATIVE_STORE_SCHEMA_VERSION: i64 = 4;
 pub const NATIVE_STORE_RELATIVE_PATH: &str = ".flopeek/native-core.sqlite3";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +82,16 @@ pub fn open_native_store(root: &Path) -> rusqlite::Result<Connection> {
         );
         CREATE INDEX IF NOT EXISTS inventory_files_project_seen
           ON inventory_files(project_pk, last_seen_scan_pk);
+        CREATE TABLE IF NOT EXISTS js_file_records (
+          project_pk INTEGER NOT NULL REFERENCES projects(project_pk),
+          path TEXT NOT NULL,
+          source_hash TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          updated_at_ms INTEGER NOT NULL,
+          PRIMARY KEY(project_pk, path)
+        );
+        CREATE INDEX IF NOT EXISTS js_file_records_project_hash
+          ON js_file_records(project_pk, source_hash);
         ",
     )?;
     let has_source_scope = {

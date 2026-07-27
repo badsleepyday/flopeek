@@ -11,6 +11,7 @@ cargo run --manifest-path native/flopeek-core/Cargo.toml -- --native-status .
 cargo run --manifest-path native/flopeek-core/Cargo.toml -- --native-inventory .
 cargo run --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-facts .
 cargo run --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-graph .
+cargo run --manifest-path native/flopeek-core/Cargo.toml -- --native-incremental-scan .
 ```
 
 `--native-status` initializes `.flopeek/native-core.sqlite3` with a WAL-backed
@@ -58,3 +59,23 @@ external import, and direct-call edges. Run `cargo build --release` followed by
 `npm run benchmark:native-rust-shadow -- --iterations 7` to compare this exact
 projection against JavaScript. The benchmark rejects any node-ID or edge mismatch
 before reporting timings.
+
+`--native-incremental-scan` is the first cross-language native migration path.
+Rust owns the bounded file inventory and BLAKE3 change detection, then SQLite
+stores JavaScript parser-record metadata (never source bodies). The JavaScript
+scanner receives current candidate paths plus valid unchanged records, parses
+changed files, and still assembles the public graph. Its result exposes a
+`flopeek-core-compatibility/v1` digest for exact static-fact comparison.
+
+For an end-to-end fair measurement, build the release binary and run paired
+cold, unchanged, and one-file-change states against disposable copies:
+
+```powershell
+cargo build --release --manifest-path native/flopeek-core/Cargo.toml
+$env:FLOPEEK_NATIVE_CORE = (Resolve-Path native/flopeek-core/target/release/flopeek-native-core.exe)
+npm run benchmark:native-incremental -- --root .\repo-a --root .\repo-b --iterations 3
+```
+
+The timing includes native process, SQLite, and JS graph-assembly overhead. A
+digest mismatch rejects the sample; it is not a native-parser or universal speed
+claim.

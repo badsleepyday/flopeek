@@ -3109,6 +3109,18 @@ function createRepositoryScanner(inputRoot, options = {}) {
       return absolutePath;
     })
     : null;
+  const initialRecords = Array.isArray(options.initialRecords) ? options.initialRecords : [];
+  for (const candidate of initialRecords) {
+    if (!candidate || typeof candidate !== "object" || typeof candidate.relativePath !== "string" || !candidate.relativePath) {
+      throw new Error("initialRecords must contain cached file records with a repository-relative path.");
+    }
+    const absolutePath = path.resolve(root, candidate.relativePath);
+    const rootRelativePath = path.relative(root, absolutePath);
+    if (!rootRelativePath || rootRelativePath.startsWith("..") || path.isAbsolute(rootRelativePath)) {
+      throw new Error("initialRecords must not contain paths outside the repository.");
+    }
+    records.set(candidate.relativePath, { ...candidate, absolutePath });
+  }
 
   const timed = (phase, operation) => {
     if (typeof options.onProfile !== "function") return operation();
@@ -3329,7 +3341,8 @@ function createRepositoryScanner(inputRoot, options = {}) {
       });
     });
     return timed("graph-assembly", () => {
-      const graph = buildGraphFromRecords(root, [...records.values()], refresh, graphContext, repositoryScope, [...excludedPaths].sort(), projectIdentity);
+      const sourceRecords = [...records.values()].sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+      const graph = buildGraphFromRecords(root, sourceRecords, refresh, graphContext, repositoryScope, [...excludedPaths].sort(), projectIdentity);
       if (persistIdentity) return graph;
       graph.analysis.cacheState = {
         status: "disabled",
@@ -3344,7 +3357,11 @@ function createRepositoryScanner(inputRoot, options = {}) {
     });
   };
 
-  return { root, scan };
+  const snapshotRecords = () => [...records.values()]
+    .map(({ absolutePath: _absolutePath, ...record }) => record)
+    .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+
+  return { root, scan, snapshotRecords };
 }
 
 function scanRepository(inputRoot, options = {}) {

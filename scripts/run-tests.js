@@ -56,6 +56,7 @@ for (const name of ["full", "fast"]) lanes[name].unshift("test/contracts/core-co
 lanes["public-source"] = lanes.full.filter((file) => !["test/contracts/agent-skills-contract.test.js", "test/unit/fixture-cache-hygiene.test.js"].includes(file));
 lanes["public-source"].unshift("test/unit/native-inventory-parity.test.js");
 lanes["public-source"].unshift("test/unit/native-rust-shadow.test.js");
+lanes["public-source"].unshift("test/unit/native-incremental-coordinator.test.js");
 if (!lanes[lane]) throw new Error(`Unknown test lane: ${lane}`);
 if (lane === "fast") {
   const support = spawnSync(process.execPath, ["scripts/generate-support.js", "--check"], { cwd: root, stdio: "inherit" });

@@ -46,6 +46,17 @@ identical Rust corpus copies, symmetric unmeasured process warm-up, and reports
 only cold command-envelope timings for the currently matched subset. It must not
 be presented as a whole-product or warm-cache performance claim.
 
+The next promoted shadow slice is the native incremental coordinator. Rust
+creates a complete scoped source manifest and stores BLAKE3 content identities;
+SQLite stores JavaScript parser-record metadata keyed to that identity. On a
+subsequent process, the coordinator loads only records whose native content hash
+still matches, supplies them to the unchanged JavaScript scanner, parses every
+other candidate in JavaScript, and writes refreshed records back. Graph
+assembly, public node IDs, Context Refs, and semantic parsing remain
+JavaScript-owned. The coordinator is accepted only when its full
+`flopeek-core-compatibility/v1` digest equals a normal JavaScript scan for each
+benchmark state.
+
 SQLite integer primary keys are internal join keys. The native BLAKE3 ID is not
 yet emitted as a graph node ID or Context Reference. Existing JavaScript node
 IDs and `flopeek-core-compatibility/v1` remain authoritative. The native crate
@@ -59,6 +70,9 @@ and parity promotion are separately approved.
   rules on every CI operating system.
 - Future native parser/cache work must compare against the JavaScript
   compatibility oracle before it is selected for production output.
+- Cold, unchanged, and one-file-change benchmarks include native process
+  startup, SQLite reads/writes, JavaScript graph assembly, and independent
+  disposable source copies. A mismatch rejects the timing sample.
 - Native inventory parity compares candidate path sets, configured scope, and
   project-identity precedence with JavaScript in tests; it does not claim parser,
   graph, or runtime parity.

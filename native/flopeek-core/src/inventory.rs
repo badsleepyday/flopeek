@@ -66,6 +66,14 @@ pub struct NativeInventoryStatus {
     pub reused_files: usize,
     pub removed_files: usize,
     pub candidate_paths: Option<Vec<String>>,
+    pub changed_paths: Vec<String>,
+    pub reused_paths: Vec<String>,
+    pub removed_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeIncrementalManifest {
+    pub inventory: NativeInventoryStatus,
 }
 
 fn now_millis() -> Result<i64, String> {
@@ -307,6 +315,8 @@ fn scan_native_inventory_with_options(
     };
     let mut hashed_files = 0;
     let mut reused_files = 0;
+    let mut changed_paths = Vec::new();
+    let mut reused_paths = Vec::new();
     let mut records = Vec::with_capacity(candidates.len());
     for candidate in candidates {
         let hash = match cached.get(&candidate.path) {
@@ -315,10 +325,12 @@ fn scan_native_inventory_with_options(
                     && cached.modified_at_ns == candidate.modified_at_ns =>
             {
                 reused_files += 1;
+                reused_paths.push(candidate.path.clone());
                 cached.content_hash.clone()
             }
             _ => {
                 hashed_files += 1;
+                changed_paths.push(candidate.path.clone());
                 content_hash(&root.join(&candidate.path))?
             }
         };
@@ -370,10 +382,30 @@ fn scan_native_inventory_with_options(
             )
             .map_err(|error| error.to_string())?;
     }
+    let removed_paths = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT path FROM inventory_files WHERE project_pk = ?1 AND last_seen_scan_pk != ?2 ORDER BY path",
+            )
+            .map_err(|error| error.to_string())?;
+        statement
+            .query_map(params![project_pk, scan_pk], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?
+    };
     let removed_files = transaction
         .execute(
             "DELETE FROM inventory_files WHERE project_pk = ?1 AND last_seen_scan_pk != ?2",
             params![project_pk, scan_pk],
+        )
+        .map_err(|error| error.to_string())?;
+    transaction
+        .execute(
+            "DELETE FROM js_file_records
+             WHERE project_pk = ?1
+               AND path NOT IN (SELECT path FROM inventory_files WHERE project_pk = ?1)",
+            [project_pk],
         )
         .map_err(|error| error.to_string())?;
     transaction
@@ -401,6 +433,9 @@ fn scan_native_inventory_with_options(
                 .map(|record| record.candidate.path.clone())
                 .collect()
         }),
+        changed_paths,
+        reused_paths,
+        removed_paths,
     })
 }
 
@@ -412,6 +447,14 @@ pub fn scan_native_inventory_with_paths(
     input_root: &Path,
 ) -> Result<NativeInventoryStatus, String> {
     scan_native_inventory_with_options(input_root, true)
+}
+
+pub fn scan_native_incremental_manifest(
+    input_root: &Path,
+) -> Result<NativeIncrementalManifest, String> {
+    Ok(NativeIncrementalManifest {
+        inventory: scan_native_inventory_with_options(input_root, true)?,
+    })
 }
 
 #[cfg(test)]

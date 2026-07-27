@@ -1,10 +1,14 @@
 use flopeek_native_core::facts::scan_native_rust_facts;
 use flopeek_native_core::graph::scan_native_rust_graph;
-use flopeek_native_core::inventory::{scan_native_inventory, scan_native_inventory_with_paths};
+use flopeek_native_core::inventory::{
+    scan_native_incremental_manifest, scan_native_inventory, scan_native_inventory_with_paths,
+};
+use flopeek_native_core::record_cache::handle_native_js_record_cache;
 use flopeek_native_core::store::initialize_native_store;
 use serde_json::json;
 use std::env;
 use std::ffi::{OsStr, OsString};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -106,6 +110,69 @@ fn native_inventory(root: PathBuf, include_paths: bool) -> Result<(), String> {
         serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?
     );
     Ok(())
+}
+
+fn native_incremental_manifest(root: PathBuf) -> Result<(), String> {
+    let manifest = scan_native_incremental_manifest(&root)?;
+    let inventory = manifest.inventory;
+    let payload = json!({
+        "schemaVersion": "flopeek-native-incremental-manifest/v1",
+        "mode": "native-incremental-manifest",
+        "projectRoot": inventory.project_root,
+        "projectId": inventory.project_identity.project_id,
+        "sourceFingerprint": inventory.source_fingerprint,
+        "candidatePaths": inventory.candidate_paths.unwrap_or_default(),
+        "changedPaths": inventory.changed_paths,
+        "reusedPaths": inventory.reused_paths,
+        "removedPaths": inventory.removed_paths,
+        "candidateFiles": inventory.candidate_files,
+        "hashedFiles": inventory.hashed_files,
+        "reusedFiles": inventory.reused_files,
+        "removedFiles": inventory.removed_files,
+        "limitation": "This manifest identifies cache-safe source candidates only. JavaScript remains authoritative for parsing and graph assembly until full compatibility parity is demonstrated."
+    });
+    println!(
+        "{}",
+        serde_json::to_string(&payload).map_err(|error| error.to_string())?
+    );
+    Ok(())
+}
+
+fn native_js_record_cache(root: PathBuf) -> Result<(), String> {
+    let mut input = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input)
+        .map_err(|error| format!("Unable to read native JS record cache input: {error}"))?;
+    let payload = handle_native_js_record_cache(&root, &input)?;
+    println!(
+        "{}",
+        serde_json::to_string(&payload).map_err(|error| error.to_string())?
+    );
+    Ok(())
+}
+
+fn native_incremental_scan(root: PathBuf) -> Result<i32, String> {
+    let js_root = repository_root(None)?;
+    let executable = env::current_exe().map_err(|error| {
+        format!("Unable to resolve the native executable for incremental scan: {error}")
+    })?;
+    let status =
+        Command::new(env::var_os("FLOPEEK_NODE").unwrap_or_else(|| OsString::from("node")))
+            .arg(
+                js_root
+                    .join("scripts")
+                    .join("run-native-incremental-scan.js"),
+            )
+            .arg(root)
+            .env("FLOPEEK_NATIVE_CORE", executable)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
+            .map_err(|error| {
+                format!("Unable to start the JavaScript native incremental coordinator: {error}")
+            })?;
+    Ok(status.code().unwrap_or(1))
 }
 
 fn native_rust_facts(root: PathBuf) -> Result<(), String> {
@@ -224,6 +291,53 @@ fn run() -> Result<i32, String> {
             .unwrap_or(repository_root(None)?);
         native_rust_graph(root)?;
         return Ok(0);
+    }
+    if arguments
+        .first()
+        .is_some_and(|argument| equals(argument, "--native-incremental-manifest"))
+    {
+        if arguments.len() > 2 {
+            return Err(
+                "--native-incremental-manifest accepts at most one repository path.".to_string(),
+            );
+        }
+        let root = arguments
+            .get(1)
+            .map(PathBuf::from)
+            .unwrap_or(repository_root(None)?);
+        native_incremental_manifest(root)?;
+        return Ok(0);
+    }
+    if arguments
+        .first()
+        .is_some_and(|argument| equals(argument, "--native-js-record-cache"))
+    {
+        if arguments.len() > 2 {
+            return Err(
+                "--native-js-record-cache accepts at most one repository path.".to_string(),
+            );
+        }
+        let root = arguments
+            .get(1)
+            .map(PathBuf::from)
+            .unwrap_or(repository_root(None)?);
+        native_js_record_cache(root)?;
+        return Ok(0);
+    }
+    if arguments
+        .first()
+        .is_some_and(|argument| equals(argument, "--native-incremental-scan"))
+    {
+        if arguments.len() > 2 {
+            return Err(
+                "--native-incremental-scan accepts at most one repository path.".to_string(),
+            );
+        }
+        let root = arguments
+            .get(1)
+            .map(PathBuf::from)
+            .unwrap_or(repository_root(None)?);
+        return native_incremental_scan(root);
     }
     if arguments.first().is_some_and(|argument| {
         equals(argument, "--native-inventory") || equals(argument, "--native-inventory-paths")
