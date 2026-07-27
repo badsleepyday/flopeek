@@ -109,7 +109,7 @@ universal accuracy claims.
 | Stability | Last-complete-graph fallback, scan cancellation, cache freshness, helper cleanup, and deterministic cancellation coverage |
 | Packaging | Strict allowlist, clean-room installation verification, and tagged public-Core release checks |
 
-The same `flopeek@0.2.1-beta.1` package identity is published on npm and was
+The same `flopeek@0.2.1-beta.2` package identity is published on npm and was
 verified through an anonymous clean-room registry installation. The repository
 metrics remain bounded source and test evidence, not live product telemetry.
 
@@ -305,5 +305,5 @@ npm run verify:clean-room
 ```
 
 Flopeek currently requires Node.js 20 or later. The source repository is
-public, and `flopeek@0.2.1-beta.1` is available through the npm `beta` channel.
+public, and `flopeek@0.2.1-beta.2` is available through the npm `beta` channel.
 GitHub release tags remain a separate, evidence-gated release decision.

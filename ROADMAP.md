@@ -28,7 +28,7 @@ Checkboxes describe repository implementation status. Prose alone never implies 
 
 ## Current product baseline
 
-Current public preview package version: `0.2.1-beta.1`.
+Current public preview package version: `0.2.1-beta.2`.
 
 | Capability | Status | Current evidence |
 | --- | --- | --- |
@@ -59,7 +59,7 @@ Current public preview package version: `0.2.1-beta.1`.
 | Agent evidence trace | `done` | Append-only Context Ref/action/changed-path/verification records, bounded viewer history/filtering, API, and MCP are available; records remain declarations, not proof. |
 | Semantic inference | `partial` | Deterministic HTTP/request candidates, evidence, confidence, abstention, immutable local feedback, trace binding, and draft-only viewer handoff exist; no real feedback dataset or trained model. |
 | SDLC workflow engine and local Work ledger | `partial` | Durable work records, planned windows, append-only actual events, Agile/Waterfall/custom definitions, evidence-gated transitions, a read-only Viewer inspector, immutable continuation checkpoints, immutable planned overlays/Plan Refs with CLI/HTTP/MCP parity, an opt-in Viewer Continue mode, append-only human reconciliation records, deterministic baseline/plan/current comparison, read-only divergence, and declared dependency readiness are current. Checkpoint editing and external evidence authority remain. |
-| Public distribution | `partial` | The unscoped `flopeek@0.2.1-beta.1` package is published on npm with the `beta` dist-tag and verified through an anonymous clean-room install. A tagged GitHub beta release, stable channel, and documented upgrade policy remain. |
+| Public distribution | `partial` | The unscoped `flopeek@0.2.1-beta.2` package is published on npm with the `beta` dist-tag and verified through a clean-room install. A tagged GitHub beta release, stable channel, and documented upgrade policy remain. |
 
 ## Agile operating model
 
