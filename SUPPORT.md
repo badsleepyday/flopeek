@@ -329,8 +329,8 @@ This is deliberate: source structure comes from parser facts. Current semantic f
 
 | Tool | Current guarantee | Important limit |
 | --- | --- | --- |
-| `get_agent_bootstrap` | Provider-independent graph identity, readiness, parser coverage, safe tool sequence, and evidence policy | Does not read source bodies, execute the target, grant source-write authority, or make runtime/business claims. |
-| `get_scan_status` | Shared scan status, declared bounds, active complete-graph source, freshness, and cache-promotion outcome | A `stale-unverified` graph is the last complete baseline, not current-source evidence or a partial reconstruction. |
+| `get_agent_bootstrap` | Provider-independent graph identity, readiness, parser coverage, safe tool sequence, and evidence policy | Before the initial graph is complete, it explicitly reports graph availability as false; it does not read source bodies, execute the target, grant source-write authority, or make runtime/business claims. |
+| `get_scan_status` | Shared scan status, declared bounds, active complete-graph source, freshness, and cache-promotion outcome | MCP tools register before initial analysis, which starts after the client handshake; `idle`/`running` has no graph evidence. A `stale-unverified` graph is the last complete baseline, not current-source evidence or a partial reconstruction. |
 | `cancel_scan` | Idempotently request cancellation of the active bounded scan without changing source or promoting incomplete evidence | Cannot interrupt the unbounded synchronous scanner and cannot cancel a scan that is not running. |
 | `get_agent_context` | Parser coverage, interpretation rules, projection meaning, and bounded deterministic semantic suggestions | Suggestions do not provide verified business intent. |
 | `get_agent_evidence_traces` | Bounded agent-declared action records filtered by Context Ref or operation ID | Not private reasoning, human verification, source diff, command output, or runtime proof. |

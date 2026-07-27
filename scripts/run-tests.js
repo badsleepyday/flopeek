@@ -43,7 +43,7 @@ for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/boun
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/session-graph-state.test.js");
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/scan-coordinator.test.js");
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/git-metadata.test.js", "test/unit/agent-comparison.test.js");
-for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/agent-bootstrap.test.js", "test/unit/agent-integration.test.js", "test/unit/product-proof.test.js", "test/unit/trust-analytics.test.js");
+for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/mcp-startup.test.js", "test/unit/agent-bootstrap.test.js", "test/unit/agent-integration.test.js", "test/unit/product-proof.test.js", "test/unit/trust-analytics.test.js");
 for (const name of ["full", "unit"]) lanes[name].unshift("test/unit/orientation-benchmark.test.js");
 for (const name of ["full", "fast", "contracts"]) lanes[name].unshift("test/contracts/agent-skills-contract.test.js");
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/child-process-cleanup.test.js");

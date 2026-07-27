@@ -462,6 +462,8 @@ The browser reloads its current projection after the event and preserves a selec
 
 MCP is read-only with respect to repository source. Current tools:
 
+The stdio transport completes the MCP `initialized` handshake before the initial repository scan is scheduled, so host tool discovery is not gated on graph construction. Before a complete graph exists, `get_scan_status` returns its explicit `idle` or `running` outcome and `get_agent_bootstrap` returns no graph identity or parser inventory. Graph-dependent tools must not treat that state as missing behavior; they require a complete/current graph or direct source fallback.
+
 - `get_agent_bootstrap`;
 - `get_scan_status`;
 - `cancel_scan`;
