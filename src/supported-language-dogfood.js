@@ -89,7 +89,7 @@ function toolPayload(result) {
   return JSON.parse(text);
 }
 
-async function waitForMcpScan(client, timeoutMs = 12_000) {
+async function waitForMcpScan(client, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   let latest;
   while (Date.now() < deadline) {

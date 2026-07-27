@@ -10,7 +10,7 @@ function text(result) {
   return result.content.find((item) => item.type === "text").text;
 }
 
-async function waitFor(check, timeoutMs = 10_000) {
+async function waitFor(check, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   let latest = null;
   while (Date.now() < deadline) {

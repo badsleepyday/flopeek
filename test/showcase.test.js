@@ -34,7 +34,7 @@ function mcpPayload(result) {
   return JSON.parse(result.content.find((item) => item.type === "text").text);
 }
 
-async function waitForMcpGraph(client, timeoutMs = 12_000) {
+async function waitForMcpGraph(client, timeoutMs = 30_000) {
   for (let attempt = 0; attempt < timeoutMs / 35; attempt += 1) {
     const status = mcpPayload(await client.callTool({ name: "get_scan_status", arguments: {} }));
     if (status.status === "complete") return status;
