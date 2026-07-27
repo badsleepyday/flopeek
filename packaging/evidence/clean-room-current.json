@@ -1,6 +1,6 @@
 {
   "schemaVersion": "flopeek-clean-room-package-report/v1",
-  "generatedAt": "2026-07-27T05:48:21.462Z",
+  "generatedAt": "2026-07-27T06:15:19.819Z",
   "status": "passed",
   "evidenceClass": "clean-room-package-observation",
   "environment": {
@@ -19,8 +19,8 @@
       "version": "0.2.1-beta.3",
       "private": false,
       "filename": "flopeek-0.2.1-beta.3.tgz",
-      "packedBytes": 967210,
-      "unpackedBytes": 2603286,
+      "packedBytes": 967309,
+      "unpackedBytes": 2603551,
       "entries": 180
     },
     "policy": {
@@ -48,49 +48,49 @@
   },
   "artifact": {
     "filename": "flopeek-0.2.1-beta.3.tgz",
-    "sha256": "c671501308e7d575a28b87c8dbfe9f0d4b3f19499a2e197892d4f515b475fdce",
-    "packedBytes": 967210
+    "sha256": "3da908760a57ccbf329160afbbd874d3f7160259f62ba59c5bd59ca1c4448953",
+    "packedBytes": 967309
   },
   "phases": [
     {
       "id": "pack-and-audit",
       "status": "passed",
-      "milliseconds": 3414.044
+      "milliseconds": 3276.351
     },
     {
       "id": "copy-fixture",
       "status": "passed",
-      "milliseconds": 67.806
+      "milliseconds": 100.972
     },
     {
       "id": "install-tarball",
       "status": "passed",
-      "milliseconds": 33231.532
+      "milliseconds": 23378.134
     },
     {
       "id": "binary-version",
       "status": "passed",
-      "milliseconds": 8142.54
+      "milliseconds": 2772.388
     },
     {
       "id": "binary-help",
       "status": "passed",
-      "milliseconds": 9919.758
+      "milliseconds": 3158.19
     },
     {
       "id": "binary-doctor",
       "status": "passed",
-      "milliseconds": 7916.689
+      "milliseconds": 2761.789
     },
     {
       "id": "bounded-static-scan",
       "status": "passed",
-      "milliseconds": 6248.609
+      "milliseconds": 3311.441
     },
     {
       "id": "mcp-startup",
       "status": "passed",
-      "milliseconds": 4613.714
+      "milliseconds": 2493.063
     }
   ],
   "smoke": {
@@ -157,7 +157,7 @@
   },
   "cleanup": {
     "status": "passed",
-    "milliseconds": 9412.09
+    "milliseconds": 4996.135
   },
   "publication": {
     "attempted": false,

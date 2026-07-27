@@ -35,6 +35,11 @@ CI fails closed when a fixture or projected fact drifts. Updating the manifest
 requires an intentional `npm run update:core-baseline` operation and review of
 the semantic change.
 
+Source text is normalized to LF before hashing and parser analysis. This keeps
+evidence ranges and graph ordering invariant when an otherwise identical Git
+checkout uses CRLF on Windows and LF on Linux; the original files are never
+rewritten.
+
 During native-core development, Flopeek JS continues to orient and assess each
 repository change. The native implementation must also emit or be adapted to the
 same compatibility projection and match the pinned cases before it can replace

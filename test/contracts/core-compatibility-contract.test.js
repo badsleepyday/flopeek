@@ -1,12 +1,15 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const {
   CORE_COMPATIBILITY_SCHEMA,
   createCoreCompatibilityDigest,
   createCoreCompatibilityProjection,
+  createSourceDigest,
 } = require("../../src/core-compatibility");
 const { scanRepository } = require("../../src/scanner");
 const { verifyJsCoreBaseline } = require("../../scripts/verify-core-baseline");
@@ -33,6 +36,28 @@ test("core compatibility projection excludes session state while preserving dete
   assert.equal(projection.nodes.length, graph.nodes.length);
   assert.equal(projection.edges.length, graph.edges.length);
   assert.equal(projection.flows.length, graph.flows.length);
+});
+
+test("core compatibility facts are invariant across LF and CRLF source checkouts", (context) => {
+  const fixture = path.join(ROOT, "test", "fixtures", "python-payment-flow");
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-newline-contract-"));
+  const lfRoot = path.join(temporaryRoot, "lf");
+  const crlfRoot = path.join(temporaryRoot, "crlf");
+  context.after(() => fs.rmSync(temporaryRoot, { recursive: true, force: true }));
+  fs.cpSync(fixture, lfRoot, { recursive: true });
+  fs.cpSync(fixture, crlfRoot, { recursive: true });
+
+  for (const relativePath of ["src/payments/routes.py", "src/payments/service.py", "src/payments/service_test.py"]) {
+    const canonical = fs.readFileSync(path.join(fixture, relativePath), "utf8").replace(/\r\n?/gu, "\n");
+    fs.writeFileSync(path.join(lfRoot, relativePath), canonical, "utf8");
+    fs.writeFileSync(path.join(crlfRoot, relativePath), canonical.replace(/\n/gu, "\r\n"), "utf8");
+  }
+
+  const lfGraph = scanRepository(lfRoot, { persistIdentity: false });
+  const crlfGraph = scanRepository(crlfRoot, { persistIdentity: false });
+  assert.equal(createSourceDigest(lfRoot), createSourceDigest(crlfRoot));
+  assert.equal(createCoreCompatibilityDigest(lfGraph), createCoreCompatibilityDigest(crlfGraph));
+  assert.deepEqual(createCoreCompatibilityProjection(lfGraph), createCoreCompatibilityProjection(crlfGraph));
 });
 
 test("committed JavaScript core baseline matches every audited fixture", () => {
