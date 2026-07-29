@@ -7,9 +7,19 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+const { NATIVE_PLATFORM_TARGETS, nativePlatformPackageNames } = require("../../src/native-platform-targets");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const PACKAGER = path.join(ROOT, "scripts", "package-native-platform.js");
+
+test("main package declares every target-locked native binary as an exact optional dependency", () => {
+  const packageJson = require("../../package.json");
+  assert.equal(NATIVE_PLATFORM_TARGETS.length, 6);
+  assert.deepEqual(Object.keys(packageJson.optionalDependencies).sort(), nativePlatformPackageNames().sort());
+  for (const packageName of nativePlatformPackageNames()) {
+    assert.equal(packageJson.optionalDependencies[packageName], packageJson.version);
+  }
+});
 
 test("platform packager emits a target-locked protocol and checksum manifest", (context) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-native-package-"));

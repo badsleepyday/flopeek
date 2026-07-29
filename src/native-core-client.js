@@ -52,6 +52,74 @@ function nativeGraphHandle(result) {
   return handle;
 }
 
+function nativeSessionGraphHandle(result) {
+  const handle = result?.graphHandle;
+  if (!handle || handle.schemaVersion !== "flopeek-native-session-graph-handle/v1"
+    || typeof handle.projectId !== "string" || !handle.projectId
+    || typeof handle.factsDigest !== "string" || !handle.factsDigest
+    || handle.persistence !== "session-memory" || !Number.isSafeInteger(handle.publicGraphVersion)) {
+    throw new TypeError("Native cache-disabled lifecycle returned an invalid session graph handle.");
+  }
+  return handle;
+}
+
+function isNativeGraphHandleOnly(graph) {
+  return graph?.analysis?.graphState?.transport === "handle-only";
+}
+
+function nativeHandleOnlyGraph(result, validateHandle = nativeGraphHandle) {
+  const envelope = result?.publicGraphEnvelope;
+  if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
+    throw new Error("Native handle-only lifecycle returned no public graph envelope.");
+  }
+  for (const field of ["nodes", "edges", "flows", "diagnosticFlows"]) {
+    if (Object.hasOwn(envelope, field)) {
+      throw new Error("Native handle-only lifecycle must not transfer public graph collections.");
+    }
+  }
+  const graph = {
+    ...envelope,
+    analysis: {
+      ...(envelope.analysis || {}),
+      graphState: {
+        ...(envelope.analysis?.graphState || {}),
+        transport: "handle-only",
+        limitation: result?.publicGraphTransport?.limitation
+          || "Public graph collections remain in the native SQLite session.",
+      },
+    },
+  };
+  validateHandle(result);
+  return graph;
+}
+
+function requireMaterializedNativeGraph(graph, operation) {
+  if (!isNativeGraphHandleOnly(graph)) return;
+  throw new Error(`${operation}() requires a materialized public graph. Rescan without nativeGraphHandle to use JavaScript extension or export surfaces.`);
+}
+
+function nativeFlowMetadataGraph(graph, lens) {
+  if (!isNativeGraphHandleOnly(graph)) return graph;
+  const nodes = [...new Map((lens?.steps || [])
+    .map((step) => step?.node)
+    .filter((node) => node?.id)
+    .map((node) => [node.id, node])).values()];
+  const edges = [...new Map((lens?.steps || []).flatMap((step) => [
+    step?.transition,
+    ...(Array.isArray(step?.alternativeIncomingTransitions) ? step.alternativeIncomingTransitions : []),
+  ]).filter((edge) => edge?.sourceId && edge?.targetId && edge?.type).map((edge) => [edge.id, {
+    id: edge.id,
+    source: edge.sourceId,
+    target: edge.targetId,
+    type: edge.type,
+    confidence: edge.confidence,
+    evidence: edge.evidence,
+  }])).values()];
+  // This facade is strictly bounded to the selected Flow Lens. It gives local
+  // audit metadata enough static evidence without recreating a repository graph.
+  return { ...graph, nodes, edges, flows: lens?.flow ? [lens.flow] : [], diagnosticFlows: lens?.flow ? [lens.flow] : [] };
+}
+
 async function prepareRustNativeBatch(native, inputRoot, options = {}) {
   const root = fs.realpathSync(inputRoot);
   const request = (changedPaths) => native.request("nativeJsStructuralFacts", {
@@ -316,6 +384,11 @@ function createNativeCoreClient(options = {}) {
   const scanners = new Map();
   const nativeSourceStates = new Map();
   const persistentBatches = new WeakMap();
+  // The JavaScript-source compatibility path still uses the native
+  // cache-disabled lifecycle. Retain its prior public graph for the same
+  // versioned reuse-envelope contract as strict Rust sessions; this is
+  // process-local and never creates repository metadata.
+  const ephemeralBatches = new WeakMap();
   const sourceAuthority = options.sourceAuthority === "rust" ? "rust" : "javascript-parser-host";
   const cacheDisabledProjectId = (root) => {
     const canonicalRoot = fs.realpathSync(root);
@@ -332,7 +405,10 @@ function createNativeCoreClient(options = {}) {
   };
   const scannerKey = (root, scanOptions, cacheDisabled) => {
     const optionsForKey = Object.fromEntries(Object.entries(scanOptions)
-      .filter(([key, value]) => key !== "onProfile" && key !== "changedPaths" && typeof value !== "function")
+      // `nativeGraphHandle` changes only the response transport. It must not
+      // fork the underlying Rust source session or prevent an explicit later
+      // compatibility snapshot from recognizing its preceding graph handle.
+      .filter(([key, value]) => key !== "onProfile" && key !== "changedPaths" && key !== "nativeGraphHandle" && typeof value !== "function")
       .sort(([left], [right]) => left.localeCompare(right)));
     return `${cacheDisabled ? "session" : "persistent"}:${fs.realpathSync(root)}:${JSON.stringify(optionsForKey)}`;
   };
@@ -350,6 +426,9 @@ function createNativeCoreClient(options = {}) {
   // internal transport optimization only.
   const requestNativeQuery = async (method, graph, params = {}) => {
     const batch = requireBatch(graph);
+    if (batch.schemaVersion === "flopeek-native-session-graph-handle/v1") {
+      return native.request(method, { ...params, sessionGraph: batch });
+    }
     const root = roots.get(graph);
     if (!root || typeof batch.projectId !== "string" || typeof batch.factsDigest !== "string") {
       return native.request(method, { ...params, batch });
@@ -368,10 +447,19 @@ function createNativeCoreClient(options = {}) {
           projectRoot: root,
           projectId: batch.projectId,
         });
-        if (!current?.batch || typeof current.batch !== "object") throw error;
-        const restored = withNativePublicGraphVersion(current.batch, graph.state.graphVersion);
+        let restored;
+        try {
+          restored = nativeGraphHandle(current);
+        } catch {
+          throw error;
+        }
         batches.set(graph, restored);
-        return native.request(method, { ...params, batch: restored });
+        return native.request(method, {
+          ...params,
+          projectRoot: root,
+          projectId: restored.projectId,
+          factsDigest: restored.factsDigest,
+        });
       }
       return native.request(method, { ...params, batch });
     }
@@ -406,7 +494,7 @@ function createNativeCoreClient(options = {}) {
       const previous = sourceAuthority === "rust"
         ? nativeSourceStates.get(key)
         : cacheDisabled
-          ? null
+          ? ephemeralBatches.get(scanner)
           : persistentBatches.get(scanner);
       // Process startup has no dependency on parser facts. Start it before
       // JavaScript prepares the StructuralFactBatch so cold launch latency is
@@ -425,6 +513,7 @@ function createNativeCoreClient(options = {}) {
       const directRustBounded = sourceAuthority === "rust" && scanOptions.nativeBounded === true;
       const directRustPersistent = sourceAuthority === "rust" && !cacheDisabled && !directRustBounded;
       const directRustEphemeral = sourceAuthority === "rust" && cacheDisabled && !directRustBounded;
+      const nativeGraphHandleOnly = (directRustPersistent || directRustEphemeral) && scanOptions.nativeGraphHandle === true;
       let directEphemeralResult = null;
       const preparation = directRustBounded
         ? await (async () => {
@@ -459,6 +548,7 @@ function createNativeCoreClient(options = {}) {
           const request = (changedPaths) => requestNativeWithSignal(native, scanOptions.signal, "refreshNativePersistentProject", {
             projectRoot: authorityRoot,
             ...(Array.isArray(changedPaths) ? { changedPaths } : {}),
+            ...(nativeGraphHandleOnly ? { returnPublicGraph: false } : {}),
           });
           try {
             directEphemeralResult = await request(scanOptions.changedPaths);
@@ -485,15 +575,14 @@ function createNativeCoreClient(options = {}) {
           };
         })()
         : directRustEphemeral
-        ? previous && Array.isArray(scanOptions.changedPaths) && scanOptions.changedPaths.length === 0
-          ? reuseRustNativeBatch(previous)
-          : await (async () => {
+        ? await (async () => {
           await nativeStartPromise;
           throwIfNativeScanCancelled(scanOptions.signal);
           const directParams = {
             projectRoot: authorityRoot,
             sessionProjectId: cacheDisabledProjectId(authorityRoot),
             ...(Array.isArray(scanOptions.changedPaths) ? { changedPaths: scanOptions.changedPaths } : {}),
+            ...(nativeGraphHandleOnly ? { returnPublicGraph: false } : {}),
           };
           try {
             directEphemeralResult = await requestNativeWithSignal(native, scanOptions.signal, "refreshNativeJsSessionGraph", directParams);
@@ -504,12 +593,10 @@ function createNativeCoreClient(options = {}) {
               sessionProjectId: cacheDisabledProjectId(authorityRoot),
             });
           }
-          if (!directEphemeralResult?.batch || typeof directEphemeralResult.batch !== "object") {
-            throw new Error("Native ephemeral source scan returned no structural fact batch.");
-          }
+          const handle = nativeSessionGraphHandle(directEphemeralResult);
           return {
-            batch: directEphemeralResult.batch,
-            prepared: { sourceRecords: directEphemeralResult.batch.records || [], graphContext: null },
+            batch: handle,
+            prepared: { sourceRecords: [], graphContext: null },
             preparedFacts: null,
             publicEnvelope: null,
           };
@@ -531,9 +618,16 @@ function createNativeCoreClient(options = {}) {
       });
       await nativeStartPromise;
       throwIfNativeScanCancelled(scanOptions.signal);
+      const nativeStartStats = sessionAlreadyRunning ? null : native.getLastStartStats?.();
       report("native-core-session-start", sessionStarted, {
         alreadyRunning: sessionAlreadyRunning,
         overlappedWithFactPreparation: !sessionAlreadyRunning,
+        // The elapsed phase can include Rust source preparation because both
+        // run concurrently. Keep the actual process protocol readiness
+        // separate so cold-start telemetry remains attributable.
+        processSpawnMs: nativeStartStats?.spawnedMilliseconds ?? null,
+        processReadyMs: nativeStartStats?.readyMilliseconds ?? null,
+        healthRequestId: nativeStartStats?.healthRequestId ?? null,
       });
       const lifecycleStarted = process.hrtime.bigint();
       let result;
@@ -573,20 +667,40 @@ function createNativeCoreClient(options = {}) {
         }
       }
       const lifecycleMilliseconds = Number(process.hrtime.bigint() - lifecycleStarted) / 1_000_000;
-      if (!result?.graph && result?.publicGraphReuse && previous?.graph) {
+      // A handle-only graph intentionally has no public collections. Treat the
+      // absence of `nodes` as a defensive marker too, so a future envelope
+      // schema cannot accidentally be used as the base of a JS-side patch.
+      const previousIsHandleOnly = directRustPersistent && previous?.graph
+        && (isNativeGraphHandleOnly(previous.graph) || !Array.isArray(previous.graph.nodes));
+      if (!result?.graph && result?.publicGraphReuse && previous?.graph && !previousIsHandleOnly) {
         result = {
           ...result,
           graph: materializeReusedPublicGraph(previous.graph, result.publicGraphReuse),
         };
         profile?.({ phase: "native-core-public-graph-reuse", milliseconds: 0, transport: "envelope" });
       }
-      if (!result?.graph && result?.publicGraphPatch && previous?.graph) {
+      if (!result?.graph && result?.publicGraphPatch && previous?.graph && !previousIsHandleOnly) {
         const patchStats = publicGraphPatchStats(result.publicGraphPatch);
         result = {
           ...result,
           graph: materializePatchedPublicGraph(previous.graph, result.publicGraphPatch),
         };
         profile?.({ phase: "native-core-public-graph-patch", milliseconds: 0, transport: "collections", ...patchStats });
+      }
+      if (nativeGraphHandleOnly) {
+        result = { ...result, graph: nativeHandleOnlyGraph(result, directRustEphemeral ? nativeSessionGraphHandle : nativeGraphHandle) };
+        profile?.({ phase: "native-core-public-graph-handle", milliseconds: 0, transport: "handle-only" });
+      } else if (!result?.graph && previousIsHandleOnly) {
+        // Switching back from the explicit query-only mode is the one case
+        // where Node intentionally asks for a complete compatibility snapshot.
+        const handle = nativeGraphHandle(result);
+        const snapshot = await requestNativeWithSignal(native, scanOptions.signal, "getNativeCurrentPublicGraph", {
+          projectRoot: authorityRoot,
+          projectId: handle.projectId,
+        });
+        if (!snapshot?.graph) throw new Error("Native core could not restore the requested public graph snapshot.");
+        result = { ...result, graph: snapshot.graph };
+        profile?.({ phase: "native-core-public-graph-snapshot", milliseconds: 0, transport: "explicit-compatibility-snapshot" });
       }
       // A declared empty changed-path set is a real session no-op. Rust keeps
       // the graph payload, while this boundary owns the precise event-driven
@@ -658,11 +772,14 @@ function createNativeCoreClient(options = {}) {
       }
       const queryBatch = directRustPersistent
         ? nativeGraphHandle(result)
-        : withNativePublicGraphVersion(batch, result.publicGraphVersion);
+        : batch?.schemaVersion === "flopeek-native-session-graph-handle/v1"
+          ? batch
+          : withNativePublicGraphVersion(batch, result.publicGraphVersion);
       batches.set(result.graph, queryBatch);
       roots.set(result.graph, cacheDisabled ? null : authorityRoot);
       const state = { batch: queryBatch, graphContext: prepared.graphContext, graph: result.graph };
       if (sourceAuthority === "rust") nativeSourceStates.set(key, state);
+      else if (cacheDisabled) ephemeralBatches.set(scanner, state);
       else if (!cacheDisabled) persistentBatches.set(scanner, state);
       report("native-core-scan-total", scanStarted, { cacheDisabled, scannerReused });
       return result.graph;
@@ -674,7 +791,8 @@ function createNativeCoreClient(options = {}) {
     const coreCard = await requestNativeQuery("getNativeFlowContextCard", graph, { flowId, maxSteps });
     if (!coreCard) return null;
     const lens = await requestNativeQuery("getNativeFlowLensCore", graph, { flowId, maxSteps });
-    const card = extensions.attachFlowContextCard(graph, coreCard, extensions.attachFlowExtensions(graph, lens));
+    const metadataGraph = nativeFlowMetadataGraph(graph, lens);
+    const card = extensions.attachFlowContextCard(metadataGraph, coreCard, extensions.attachFlowExtensions(metadataGraph, lens));
     return createContextPacket(card, format);
   };
 
@@ -683,7 +801,7 @@ function createNativeCoreClient(options = {}) {
     implementation: "native-experimental",
     backendAuthority: "rust-sqlite",
     sourceAuthority,
-    parserHost: sourceAuthority === "rust" ? "rust-tree-sitter-js-ts/v13" : "javascript-structural-fact-batch/v1",
+    parserHost: sourceAuthority === "rust" ? "rust-tree-sitter-source/v17" : "javascript-structural-fact-batch/v1",
     factEnvelopeHost: sourceAuthority === "rust" ? "rust-native-structural-batch/v1" : "javascript-structural-fact-batch/v1",
     extensionAdapterMethods,
     scan,
@@ -698,8 +816,14 @@ function createNativeCoreClient(options = {}) {
         projectRoot: durableRoot,
         projectId: durableProjectId(durableRoot),
       });
-      if (!result?.graph || !result?.batch) return null;
-      batches.set(result.graph, result.batch);
+      if (!result?.graph) return null;
+      let graphHandle;
+      try {
+        graphHandle = nativeGraphHandle(result);
+      } catch {
+        return null;
+      }
+      batches.set(result.graph, graphHandle);
       roots.set(result.graph, durableRoot);
       return result.graph;
     },
@@ -740,7 +864,7 @@ function createNativeCoreClient(options = {}) {
         flowId,
         maxSteps: queryOptions.maxSteps,
       });
-      return extensions.attachFlowExtensions(graph, lens);
+      return extensions.attachFlowExtensions(nativeFlowMetadataGraph(graph, lens), lens);
     },
     getFlowContextCard: getNativeFlowContextCard,
     getChangeImpact: async (graph, changedPaths, queryOptions = {}) => {
@@ -774,7 +898,7 @@ function createNativeCoreClient(options = {}) {
     },
     getRelatedTests: async (graph, id) => requestNativeQuery("getRelatedTests", graph, { nodeId: id }),
     getContextCard: async (graph, id, format = "json") => {
-      if (format !== "json" || !graph.nodes.some((node) => node.id === id)) {
+      if (format !== "json" || (!isNativeGraphHandleOnly(graph) && !graph.nodes.some((node) => node.id === id))) {
         return extensions.getFormattedContextCard(graph, id, format);
       }
       const card = await requestNativeQuery("getNativeNodeContextCard", graph, { nodeId: id });
@@ -791,7 +915,8 @@ function createNativeCoreClient(options = {}) {
       }
       // Diagnostic-only Flow Context Refs need the legacy all-scope projection
       // until that native scope has its public extension adapter.
-      if (parsed.kind === "flow" && !graph.flows.some((flow) => flow.id === parsed.contextId)) {
+      if (parsed.kind === "flow" && !isNativeGraphHandleOnly(graph)
+        && !graph.flows.some((flow) => flow.id === parsed.contextId)) {
         return extensions.resolveUnsupportedContextRef(graph, contextRef);
       }
       const resolution = await requestNativeQuery("resolveNativeContextRef", graph, {

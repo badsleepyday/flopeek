@@ -56,7 +56,7 @@ fn native_status(root: PathBuf) -> Result<(), String> {
         .map_err(|error| format!("Unable to initialize native SQLite store: {error}"))?;
     let payload = json!({
         "schemaVersion": NATIVE_WRAPPER_SCHEMA,
-        "mode": "javascript-wrapper",
+        "mode": "native-core-diagnostic",
         "projectRoot": root,
         "store": {
             "path": store.path,
@@ -72,7 +72,7 @@ fn native_status(root: PathBuf) -> Result<(), String> {
             "algorithm": "blake3",
             "publicNodeIdsEnabled": true,
         },
-        "limitation": "Normal Flopeek commands are delegated unchanged to the JavaScript CLI. SQLite and native IDs are bootstrap metadata only until compatibility parity promotes them."
+        "limitation": "This direct status command is diagnostic only. Product CLI presentation is JavaScript, while --core-mode native-experimental selects the Rust source, graph, query, and SQLite authority through the versioned JSONL boundary. The default native mode remains rollout-gated."
     });
     println!(
         "{}",
@@ -89,7 +89,7 @@ fn native_inventory(root: PathBuf, include_paths: bool) -> Result<(), String> {
     };
     let mut payload = json!({
         "schemaVersion": "flopeek-native-inventory/v1",
-        "mode": "native-inventory-shadow",
+        "mode": "native-inventory-diagnostic",
         "projectRoot": inventory.project_root,
         "projectId": inventory.project_identity.project_id,
         "identity": {
@@ -105,7 +105,7 @@ fn native_inventory(root: PathBuf, include_paths: bool) -> Result<(), String> {
         "hashedFiles": inventory.hashed_files,
         "reusedFiles": inventory.reused_files,
         "removedFiles": inventory.removed_files,
-        "limitation": "This is a native cache inventory only. JavaScript remains the source of truth for source scope, parser facts, graph IDs, Context Refs, and public CLI output."
+        "limitation": "This direct inventory output is a diagnostic projection; it does not itself assemble a public graph. Strict native sessions use the same native scope and inventory facts before Rust-owned parsing and graph promotion."
     });
     if include_paths {
         payload["candidatePaths"] = json!(inventory.candidate_paths.unwrap_or_default());
@@ -134,7 +134,7 @@ fn native_incremental_manifest(root: PathBuf) -> Result<(), String> {
         "hashedFiles": inventory.hashed_files,
         "reusedFiles": inventory.reused_files,
         "removedFiles": inventory.removed_files,
-        "limitation": "This manifest identifies cache-safe source candidates only. JavaScript remains authoritative for parsing and graph assembly until full compatibility parity is demonstrated."
+        "limitation": "This legacy manifest command exposes cache-safe source candidates for diagnostics. Strict native sessions parse and assemble supported source adapters in Rust; this command does not itself promote a public graph."
     });
     println!(
         "{}",
@@ -212,7 +212,7 @@ fn native_js_facts(root: PathBuf) -> Result<(), String> {
     let result = scan_native_js_facts(&root)?;
     let payload = json!({
         "schemaVersion": "flopeek-native-js-facts/v2",
-        "mode": "native-js-ts-parser-shadow",
+        "mode": "native-source-facts-diagnostic",
         "projectRoot": result.project_root,
         "projectId": result.project_identity.project_id,
         "adapterVersion": result.adapter_version,
@@ -223,7 +223,7 @@ fn native_js_facts(root: PathBuf) -> Result<(), String> {
         "facts": result.facts,
         "resolution": result.resolution,
         "structuralRecords": result.structural_records,
-        "limitation": "This is a Rust-owned JavaScript/TypeScript parser and resolver candidate. It remains shadow-only until the complete adapter, StructuralFactBatch, graph, query, and other-language compatibility gates pass."
+        "limitation": "This direct facts command is diagnostic and returns source facts rather than a public graph. Strict native sessions promote supported JavaScript/TypeScript, Python, PHP, Rust, Java, Svelte, and C# adapters through Rust-owned graph and SQLite lifecycles. Go remains outside this strict native adapter set."
     });
     println!(
         "{}",

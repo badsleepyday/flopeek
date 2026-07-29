@@ -32,6 +32,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 use std::time::Instant;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -95,8 +96,14 @@ struct NativeProtocolError {
 #[derive(Clone)]
 struct NativeSessionGraph {
     facts_digest: String,
+    topology_digest: String,
     public_graph_version: i64,
-    payload: Value,
+    // The assembled native public payload is retained for adjacent public
+    // graph deltas. It is not accepted by query handlers.
+    payload: Arc<Value>,
+    // Query handlers accept the original StructuralFactBatch. Retain it once
+    // in Rust so cache-disabled Node callers can refer to it by graph handle.
+    query_batch: Arc<Value>,
 }
 
 // One bounded derived cache for the current complete persistent graph. SQLite
@@ -132,6 +139,11 @@ struct NativePersistentFacts {
 #[derive(Default)]
 struct NativeProtocolSession {
     graphs: BTreeMap<String, NativeSessionGraph>,
+    // Every graph returned by a cache-disabled CoreClient can still be queried
+    // during this JSONL process.  Store its complete batch once in Rust and
+    // identify it to Node by a versioned handle, rather than retaining a
+    // duplicate StructuralFactBatch in Node for each public graph object.
+    session_query_graphs: BTreeMap<String, NativeSessionGraph>,
     ephemeral_sources: BTreeMap<String, NativeJsFactsStatus>,
     persistent_sources: BTreeMap<String, NativeJsFactsStatus>,
     // A durable CoreClient owns one JSONL process. Retain its SQLite handle by
@@ -141,6 +153,16 @@ struct NativeProtocolSession {
     persistent_connections: BTreeMap<String, rusqlite::Connection>,
     persistent_graph: Option<NativePersistentGraph>,
     persistent_facts: Option<NativePersistentFacts>,
+    // Git branch/revision metadata is repository-level observational context,
+    // not parser evidence. A source-only incremental event cannot alter HEAD
+    // or branch, and the source session already retains its matching graph
+    // lineage. Reuse this bounded snapshot to avoid spawning `git status` on
+    // every changed file; a reconciled source acquisition refreshes it.
+    persistent_git_metadata: BTreeMap<String, Value>,
+}
+
+fn native_session_graph_key(project_id: &str, public_graph_version: i64) -> String {
+    format!("{project_id}\0{public_graph_version}")
 }
 
 fn with_persistent_session_connection<T>(
@@ -321,6 +343,59 @@ fn hydrate_cached_query_batch_using_connection(
         message: "Cached native query params must be an object.".to_string(),
     })?;
     object.insert("batch".to_string(), batch);
+    Ok(())
+}
+
+// Cache-disabled graphs have no repository-local SQLite association.  The
+// complete batch is already retained by the owning JSONL process so queries
+// can use this versioned handle instead of asking Node to echo that batch back
+// on every request.  Unlike persistent handles, this is intentionally valid
+// only until process shutdown.
+fn hydrate_session_query_batch(
+    session: &NativeProtocolSession,
+    params: &mut Value,
+) -> Result<(), NativeProtocolError> {
+    let handle = params
+        .get("sessionGraph")
+        .and_then(Value::as_object)
+        .ok_or_else(|| NativeProtocolError {
+            code: "invalid-params",
+            message: "Native session query requires params.sessionGraph.".to_string(),
+        })?;
+    let schema = handle.get("schemaVersion").and_then(Value::as_str);
+    let project_id = handle.get("projectId").and_then(Value::as_str);
+    let facts_digest = handle.get("factsDigest").and_then(Value::as_str);
+    let public_graph_version = handle.get("publicGraphVersion").and_then(Value::as_i64);
+    if schema != Some("flopeek-native-session-graph-handle/v1")
+        || project_id.is_none_or(str::is_empty)
+        || facts_digest.is_none_or(str::is_empty)
+        || public_graph_version.is_none_or(|value| value <= 0)
+        || handle.get("persistence").and_then(Value::as_str) != Some("session-memory")
+    {
+        return Err(NativeProtocolError {
+            code: "invalid-params",
+            message: "Native session query received an invalid graph handle.".to_string(),
+        });
+    }
+    let project_id = project_id.expect("validated non-empty project ID");
+    let facts_digest = facts_digest.expect("validated non-empty facts digest");
+    let public_graph_version = public_graph_version.expect("validated graph version");
+    let key = native_session_graph_key(project_id, public_graph_version);
+    let graph = session
+        .session_query_graphs
+        .get(&key)
+        .filter(|graph| graph.facts_digest == facts_digest)
+        .ok_or_else(|| NativeProtocolError {
+            code: "native-session-graph-miss",
+            message: "The requested cache-disabled native graph is no longer retained by this JSONL session."
+                .to_string(),
+        })?;
+    let object = params.as_object_mut().ok_or_else(|| NativeProtocolError {
+        code: "invalid-params",
+        message: "Native session query params must be an object.".to_string(),
+    })?;
+    object.remove("sessionGraph");
+    object.insert("batch".to_string(), (*graph.query_batch).clone());
     Ok(())
 }
 
@@ -786,13 +861,16 @@ fn refresh_native_persistent_project(
     params: &Value,
 ) -> Result<Value, NativeProtocolError> {
     let root = project_root(params)?;
+    let handle_only_public_graph = requests_handle_only_public_graph(params)?;
     let session_key = root.display().to_string();
+    let source_refresh_started = Instant::now();
     let explicit_no_op = params
         .get("changedPaths")
         .and_then(Value::as_array)
         .is_some_and(Vec::is_empty)
         && session.persistent_sources.contains_key(&session_key);
     let status = load_native_js_facts_status(session, params)?;
+    let source_refresh_ms = elapsed_ms(source_refresh_started);
     if explicit_no_op {
         if let Some(mut response) = reuse_native_persistent_project_no_op(session, &root, &status)?
         {
@@ -811,6 +889,9 @@ fn refresh_native_persistent_project(
                 "persistence": "sqlite",
                 "publicGraphVersion": response["publicGraphVersion"],
             });
+            if handle_only_public_graph {
+                replace_public_graph_with_handle_envelope(&mut response)?;
+            }
             return Ok(response);
         }
     }
@@ -830,48 +911,174 @@ fn refresh_native_persistent_project(
             ),
         });
     }
-    let mut batch = native_js_batch_envelope(&status)?;
-    batch["projectRoot"] = Value::String(root.to_string_lossy().to_string());
-    let project_id = batch
-        .get("projectId")
-        .and_then(Value::as_str)
-        .ok_or_else(|| NativeProtocolError {
-            code: "native-source-facts-failed",
-            message: "Rust source authority returned a StructuralFactBatch without projectId."
-                .to_string(),
-        })?
-        .to_string();
-    let facts_digest = batch
-        .get("factsDigest")
-        .and_then(Value::as_str)
-        .ok_or_else(|| NativeProtocolError {
-            code: "native-source-facts-failed",
-            message: "Rust source authority returned a StructuralFactBatch without factsDigest."
-                .to_string(),
-        })?
-        .to_string();
-    let changed_record_paths = (!status.initial_scan).then(|| {
-        status
-            .changed_record_paths
-            .iter()
-            .cloned()
-            .collect::<BTreeSet<_>>()
-    });
-    let mut result = with_persistent_session_connection(session, &root, |session, connection| {
-        let receipt = submit_structural_facts(&batch)?;
-        persist_native_public_graph_with_receipt_using_connection(
-            session,
-            &mut batch,
-            receipt,
-            true,
-            None,
-            changed_record_paths,
-            connection,
-        )
-    })?;
+    let git_metadata = if status.initial_scan {
+        let metadata = native_js_git_metadata(&root);
+        session
+            .persistent_git_metadata
+            .insert(session_key.clone(), metadata.clone());
+        metadata
+    } else if let Some(metadata) = session.persistent_git_metadata.get(&session_key) {
+        metadata.clone()
+    } else {
+        // A source session can be restored independently from this lightweight
+        // observation cache. Acquire one live baseline rather than assuming a
+        // Git state that this process never observed.
+        let metadata = native_js_git_metadata(&root);
+        session
+            .persistent_git_metadata
+            .insert(session_key.clone(), metadata.clone());
+        metadata
+    };
+    // Once a complete graph has been promoted in this JSONL session, a
+    // changed-path refresh can move only its changed records.  The native
+    // patch routine transfers the cached unchanged records instead of cloning
+    // them into a second complete envelope. It still reconstructs and hashes
+    // the exact batch before SQLite promotion, so factsDigest and public graph
+    // compatibility remain byte-for-byte equivalent to a full refresh.
+    let cached_base_digest = (!status.initial_scan)
+        .then(|| {
+            session
+                .persistent_facts
+                .as_ref()
+                .filter(|facts| facts.project_id == status.project_identity.project_id)
+                .map(|facts| facts.facts_digest.clone())
+        })
+        .flatten();
+    let (mut result, facts_digest, used_fact_patch, envelope_build_ms, persistent_promotion_ms) =
+        if let Some(base_digest) = cached_base_digest {
+            let envelope_started = Instant::now();
+            let patch = native_js_structural_fact_patch(&status, &base_digest, &git_metadata)?;
+            let envelope_build_ms = elapsed_ms(envelope_started);
+            let promotion_started = Instant::now();
+            match persist_native_public_graph_patch(session, &patch) {
+                Ok(result) => {
+                    let facts_digest = result
+                        .get("factsDigest")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| NativeProtocolError {
+                            code: "native-source-facts-failed",
+                            message: "Native fact patch promotion returned no factsDigest."
+                                .to_string(),
+                        })?
+                        .to_string();
+                    (
+                        result,
+                        facts_digest,
+                        true,
+                        envelope_build_ms,
+                        elapsed_ms(promotion_started),
+                    )
+                }
+                // A second process may have advanced SQLite after this client
+                // cached its base. Rebuild once from current Rust source facts;
+                // malformed internal patches stay loud rather than being hidden by
+                // a full-batch retry.
+                Err(error) if error.code == "structural-fact-patch-miss" => {
+                    let full_envelope_started = Instant::now();
+                    let mut batch = native_js_batch_envelope_with_git(&status, &git_metadata)?;
+                    batch["projectRoot"] = Value::String(root.to_string_lossy().to_string());
+                    let facts_digest = batch
+                    .get("factsDigest")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| NativeProtocolError {
+                        code: "native-source-facts-failed",
+                        message: "Rust source authority returned a StructuralFactBatch without factsDigest."
+                            .to_string(),
+                    })?
+                    .to_string();
+                    let changed_record_paths = status
+                        .changed_record_paths
+                        .iter()
+                        .cloned()
+                        .collect::<BTreeSet<_>>();
+                    let full_envelope_build_ms = elapsed_ms(full_envelope_started);
+                    let full_promotion_started = Instant::now();
+                    let result = with_persistent_session_connection(
+                        session,
+                        &root,
+                        |session, connection| {
+                            let receipt = submit_structural_facts(&batch)?;
+                            persist_native_public_graph_with_receipt_using_connection(
+                                session,
+                                &mut batch,
+                                receipt,
+                                true,
+                                None,
+                                Some(changed_record_paths),
+                                connection,
+                            )
+                        },
+                    )?;
+                    (
+                        result,
+                        facts_digest,
+                        false,
+                        full_envelope_build_ms,
+                        elapsed_ms(full_promotion_started),
+                    )
+                }
+                Err(error) => return Err(error),
+            }
+        } else {
+            let envelope_started = Instant::now();
+            let mut batch = native_js_batch_envelope_with_git(&status, &git_metadata)?;
+            batch["projectRoot"] = Value::String(root.to_string_lossy().to_string());
+            let facts_digest = batch
+                .get("factsDigest")
+                .and_then(Value::as_str)
+                .ok_or_else(|| NativeProtocolError {
+                    code: "native-source-facts-failed",
+                    message:
+                        "Rust source authority returned a StructuralFactBatch without factsDigest."
+                            .to_string(),
+                })?
+                .to_string();
+            let changed_record_paths = (!status.initial_scan).then(|| {
+                status
+                    .changed_record_paths
+                    .iter()
+                    .cloned()
+                    .collect::<BTreeSet<_>>()
+            });
+            let envelope_build_ms = elapsed_ms(envelope_started);
+            let promotion_started = Instant::now();
+            let result =
+                with_persistent_session_connection(session, &root, |session, connection| {
+                    let receipt = submit_structural_facts(&batch)?;
+                    persist_native_public_graph_with_receipt_using_connection(
+                        session,
+                        &mut batch,
+                        receipt,
+                        true,
+                        None,
+                        changed_record_paths,
+                        connection,
+                    )
+                })?;
+            (
+                result,
+                facts_digest,
+                false,
+                envelope_build_ms,
+                elapsed_ms(promotion_started),
+            )
+        };
+    let project_id = status.project_identity.project_id.clone();
+    if let Some(profile) = result
+        .pointer_mut("/receipt/profile")
+        .and_then(Value::as_object_mut)
+    {
+        profile.insert("sourceRefreshMs".to_string(), json!(source_refresh_ms));
+        profile.insert("envelopeBuildMs".to_string(), json!(envelope_build_ms));
+        profile.insert(
+            "persistentPromotionMs".to_string(),
+            json!(persistent_promotion_ms),
+        );
+        profile.insert("usedFactPatch".to_string(), json!(used_fact_patch));
+    }
     result["sourceAuthority"] = json!("rust-native-persistent/v1");
     result["sourceRefresh"] = json!({
-        "mode": batch["lifecycleContext"]["refresh"]["mode"],
+        "mode": if status.initial_scan { "initial" } else { "incremental" },
         "parsedFiles": status.parsed_files,
         "reusedFiles": status.reused_files,
         "changedPaths": status.changed_paths,
@@ -884,19 +1091,23 @@ fn refresh_native_persistent_project(
         "persistence": "sqlite",
         "publicGraphVersion": result["publicGraphVersion"],
     });
+    if handle_only_public_graph {
+        replace_public_graph_with_handle_envelope(&mut result)?;
+    }
     Ok(result)
 }
 
 // The ephemeral path must not serialize a complete StructuralFactBatch to Node
-// only to have Node send the identical payload back for session assembly. Keep
-// discovery, parsing, envelope construction, and graph assembly inside the
-// native JSONL process; the returned batch is retained only for the existing
-// CoreClient query contract during this process-local graph lineage.
+// only to have Node send the identical payload back for session assembly or
+// later query calls. Keep discovery, parsing, envelope construction, graph
+// assembly, and query-batch retention inside the native JSONL process; Node
+// receives only a versioned session handle for this process-local lineage.
 fn refresh_native_js_session_graph(
     session: &mut NativeProtocolSession,
     params: &Value,
 ) -> Result<Value, NativeProtocolError> {
     let root = project_root(params)?;
+    let handle_only_public_graph = requests_handle_only_public_graph(params)?;
     let session_project_id = params
         .get("sessionProjectId")
         .and_then(Value::as_str)
@@ -942,7 +1153,6 @@ fn refresh_native_js_session_graph(
     })?;
     let batch = native_js_batch_envelope(&status)?;
     let mut result = refresh_native_session_graph(session, &batch)?;
-    result["batch"] = batch;
     result["sourceAuthority"] = json!("rust-native-ephemeral/v1");
     result["sourceRefresh"] = json!({
         "mode": if no_op { "no-op-session" } else if changed_paths.as_ref().is_some_and(|paths| !paths.is_empty()) { "changed-path-session" } else { "initial-or-reconciled" },
@@ -952,6 +1162,9 @@ fn refresh_native_js_session_graph(
         "removedPaths": status.removed_paths,
     });
     session.ephemeral_sources.insert(session_key, status);
+    if handle_only_public_graph {
+        replace_public_graph_with_handle_envelope(&mut result)?;
+    }
     Ok(result)
 }
 
@@ -1027,6 +1240,58 @@ fn native_js_batch_envelope(
     native_js_batch_envelope_for_package(status, None)
 }
 
+fn native_js_batch_envelope_with_git(
+    status: &crate::js_facts::NativeJsFactsStatus,
+    git_metadata: &Value,
+) -> Result<Value, NativeProtocolError> {
+    native_js_batch_envelope_for_package_with_records(status, None, true, Some(git_metadata))
+}
+
+fn native_js_structural_fact_patch(
+    status: &crate::js_facts::NativeJsFactsStatus,
+    base_facts_digest: &str,
+    git_metadata: &Value,
+) -> Result<Value, NativeProtocolError> {
+    let batch = native_js_batch_envelope_without_records(status, git_metadata)?;
+    let changed_paths = status
+        .changed_record_paths
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let manifest = status
+        .structural_records
+        .iter()
+        .map(|record| {
+            json!({
+                "relativePath": record["relativePath"],
+                "sourceHash": record["sourceHash"],
+                "sourceScope": record["sourceScope"],
+                "recordOrder": record["recordOrder"],
+            })
+        })
+        .collect::<Vec<_>>();
+    let changed_records = status
+        .structural_records
+        .iter()
+        .filter(|record| {
+            record
+                .get("relativePath")
+                .and_then(Value::as_str)
+                .is_some_and(|path| changed_paths.contains(path))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "schemaVersion": STRUCTURAL_FACT_PATCH_SCHEMA,
+        "projectId": status.project_identity.project_id,
+        "baseFactsDigest": base_facts_digest,
+        "projectRoot": status.project_root,
+        "batch": batch,
+        "manifest": manifest,
+        "changedRecords": changed_records,
+    }))
+}
+
 /// Assemble a graph envelope from native facts. Bounded/package scans retain
 /// the repository root as their identity anchor, but use the selected package
 /// manifest for package-owned metadata and commands. This prevents a parent
@@ -1035,6 +1300,26 @@ fn native_js_batch_envelope(
 fn native_js_batch_envelope_for_package(
     status: &crate::js_facts::NativeJsFactsStatus,
     package_path: Option<&str>,
+) -> Result<Value, NativeProtocolError> {
+    native_js_batch_envelope_for_package_with_records(status, package_path, true, None)
+}
+
+// Compact patch envelopes carry the full non-record contract but deliberately
+// omit parser records and factsDigest. The patch reconstruction routine moves
+// unchanged records out of its verified cache, then computes the same digest
+// as a complete StructuralFactBatch.
+fn native_js_batch_envelope_without_records(
+    status: &crate::js_facts::NativeJsFactsStatus,
+    git_metadata: &Value,
+) -> Result<Value, NativeProtocolError> {
+    native_js_batch_envelope_for_package_with_records(status, None, false, Some(git_metadata))
+}
+
+fn native_js_batch_envelope_for_package_with_records(
+    status: &crate::js_facts::NativeJsFactsStatus,
+    package_path: Option<&str>,
+    include_records: bool,
+    git_metadata: Option<&Value>,
 ) -> Result<Value, NativeProtocolError> {
     let scope = read_native_scope(&status.project_root).map_err(|message| NativeProtocolError {
         code: "native-source-facts-failed",
@@ -1046,7 +1331,9 @@ fn native_js_batch_envelope_for_package(
             code: "native-source-facts-failed",
             message: error.to_string(),
         })?;
-    let git = native_js_git_metadata(&status.project_root);
+    let git = git_metadata
+        .cloned()
+        .unwrap_or_else(|| native_js_git_metadata(&status.project_root));
     let manifest_path = package_path
         .map(|path| status.project_root.join(path).join("package.json"))
         .unwrap_or_else(|| status.project_root.join("package.json"));
@@ -1165,8 +1452,12 @@ fn native_js_batch_envelope_for_package(
     let mut batch = json!({
         "schemaVersion":STRUCTURAL_FACT_BATCH_SCHEMA,"projectId":status.project_identity.project_id,"packageCommands":status.entry_facts["packageCommands"],"entryMetadata":status.entry_facts["entryMetadata"],"entryEdgeMetadata":status.entry_facts["edgeMetadata"],"manualDescriptions":native_manual_descriptions(&status.project_root, &status.structural_records),
         "flowContext":{"graphVersion":0,"sourceRevision":git["revision"]},"flowEntries":{"primary":{"tests":scope.flow_entries_tests,"fixtures":scope.flow_entries_fixtures},"diagnostic":{"tests":true,"fixtures":true}},
-        "lifecycleContext":{"sourceFingerprint":source_fingerprint,"sourceRevision":git["revision"],"updatedAt":generated_at,"refresh":refresh,"coverage":coverage},"publicGraphContext":public_graph_context,"records":status.structural_records
+        "lifecycleContext":{"sourceFingerprint":source_fingerprint,"sourceRevision":git["revision"],"updatedAt":generated_at,"refresh":refresh,"coverage":coverage},"publicGraphContext":public_graph_context
     });
+    if !include_records {
+        return Ok(batch);
+    }
+    batch["records"] = Value::Array(status.structural_records.clone());
     let facts_digest = structural_facts_digest(
         batch.as_object().expect("native batch is an object"),
     )
@@ -1912,8 +2203,8 @@ fn native_edge_key(edge: &crate::structural_graph::StructuralGraphEdge) -> Strin
 /// JavaScript orders public graph nodes by display label. Entry ordering is
 /// therefore a property of the native structural projection, not a graph-order
 /// hint that the JavaScript oracle needs to send across the protocol boundary.
-/// The shared ASCII comparator matches the audited public-ID/label corpus;
-/// non-ASCII collation remains explicitly outside this shadow contract.
+/// The shared comparator preserves the audited ASCII punctuation rules and
+/// uses ICU-backed collation for non-ASCII labels and public IDs.
 fn native_entry_cmp(
     left: &&StructuralGraphNode,
     right: &&StructuralGraphNode,
@@ -4829,6 +5120,59 @@ fn native_public_graph_envelope(public_graph: &Value) -> Value {
     Value::Object(envelope)
 }
 
+// A handle-only refresh deliberately keeps the public collections in the
+// native process.  It is an explicit transport mode for consumers that will
+// immediately issue native SQLite queries, not a replacement for the normal
+// compatibility snapshot.  Keep the ordinary envelope because it carries
+// graph state, scan telemetry, and aggregate stats without duplicating the
+// potentially large node/edge/flow collections in Node.
+fn replace_public_graph_with_handle_envelope(
+    response: &mut Value,
+) -> Result<(), NativeProtocolError> {
+    let graph = response
+        .get("graph")
+        .cloned()
+        .or_else(|| response.pointer("/publicGraphReuse/envelope").cloned())
+        .or_else(|| response.pointer("/publicGraphPatch/envelope").cloned())
+        .ok_or_else(|| NativeProtocolError {
+            code: "native-public-graph-missing",
+            message: "Native persistent refresh produced no public graph representation."
+                .to_string(),
+        })?;
+    let envelope = native_public_graph_envelope(&graph);
+    let object = response
+        .as_object_mut()
+        .ok_or_else(|| NativeProtocolError {
+            code: "native-public-graph-invalid",
+            message: "Native persistent refresh result must be an object.".to_string(),
+        })?;
+    object.remove("graph");
+    object.remove("publicGraphReuse");
+    object.remove("publicGraphPatch");
+    object.insert("publicGraphEnvelope".to_string(), envelope);
+    object.insert(
+        "publicGraphTransport".to_string(),
+        json!({
+            "schemaVersion": "flopeek-native-public-graph-transport/v1",
+            "mode": "handle-only",
+            "limitation": "Public graph collections remain in the native SQLite session. Request an explicit compatibility snapshot before using JavaScript graph extensions or export surfaces.",
+        }),
+    );
+    Ok(())
+}
+
+fn requests_handle_only_public_graph(params: &Value) -> Result<bool, NativeProtocolError> {
+    match params.get("returnPublicGraph") {
+        None | Some(Value::Bool(true)) => Ok(false),
+        Some(Value::Bool(false)) => Ok(true),
+        Some(_) => Err(NativeProtocolError {
+            code: "invalid-params",
+            message: "refreshNativePersistentProject params.returnPublicGraph must be a boolean."
+                .to_string(),
+        }),
+    }
+}
+
 fn native_public_collection_key(value: &Value, is_edge: bool) -> Option<String> {
     if !is_edge {
         return value
@@ -5439,6 +5783,7 @@ fn versioned_native_lifecycle_params(
 fn reconstruct_structural_fact_patch(
     session: &mut NativeProtocolSession,
     params: &Value,
+    connection: &rusqlite::Connection,
 ) -> Result<(NativePersistentFacts, NativePersistentFacts, Value), NativeProtocolError> {
     let patch = params.as_object().ok_or_else(|| NativeProtocolError {
         code: "invalid-structural-fact-patch",
@@ -5468,12 +5813,7 @@ fn reconstruct_structural_fact_patch(
                 .to_string(),
         });
     }
-    let root = project_root(params)?;
-    let connection = open_native_store(&root).map_err(|error| NativeProtocolError {
-        code: "store-initialize-failed",
-        message: error.to_string(),
-    })?;
-    ensure_persistent_facts(session, &connection, &project_id, &base_digest)?;
+    ensure_persistent_facts(session, connection, &project_id, &base_digest)?;
     let mut batch = patch
         .get("batch")
         .and_then(Value::as_object)
@@ -5673,8 +6013,20 @@ fn persist_native_public_graph_patch(
     session: &mut NativeProtocolSession,
     params: &Value,
 ) -> Result<Value, NativeProtocolError> {
+    let root = project_root(params)?;
+    with_persistent_session_connection(session, &root, |session, connection| {
+        persist_native_public_graph_patch_using_connection(session, params, connection)
+    })
+}
+
+fn persist_native_public_graph_patch_using_connection(
+    session: &mut NativeProtocolSession,
+    params: &Value,
+    connection: &mut rusqlite::Connection,
+) -> Result<Value, NativeProtocolError> {
     let reconstruction_started = Instant::now();
-    let (mut next, previous, receipt) = reconstruct_structural_fact_patch(session, params)?;
+    let (mut next, previous, receipt) =
+        reconstruct_structural_fact_patch(session, params, connection)?;
     let reconstruction_ms = elapsed_ms(reconstruction_started);
     let changed_paths = params
         .get("changedRecords")
@@ -5722,12 +6074,14 @@ fn persist_native_public_graph_patch(
     });
     let persistence_params_ms = elapsed_ms(persistence_params_started);
     let native_lifecycle_started = Instant::now();
-    let mut result = match persist_native_public_graph_with_receipt(
+    let mut result = match persist_native_public_graph_with_receipt_using_connection(
         session,
         &mut persistence_params,
         receipt,
         false,
         Some(next.topology_digest.clone()),
+        None,
+        connection,
     ) {
         Ok(result) => result,
         Err(error) => {
@@ -6351,6 +6705,18 @@ fn refresh_native_session_graph(
             code: "invalid-structural-facts",
             message: "StructuralFactBatch/v1 receipt is missing factsDigest.".to_string(),
         })?;
+    let topology_digest = params
+        .as_object()
+        .ok_or_else(|| NativeProtocolError {
+            code: "invalid-structural-facts",
+            message: "StructuralFactBatch/v1 must be an object.".to_string(),
+        })
+        .and_then(|batch| {
+            structural_topology_digest(batch).map_err(|message| NativeProtocolError {
+                code: "invalid-structural-facts",
+                message,
+            })
+        })?;
     let previous = session.graphs.get(project_id).cloned();
     let unchanged = previous
         .as_ref()
@@ -6370,12 +6736,28 @@ fn refresh_native_session_graph(
     let mut graph = native_public_graph_snapshot(&payload)?;
     let snapshot_materialization_ms = elapsed_ms(snapshot_started);
     let delta_started = Instant::now();
+    let reuses_public_collections = previous
+        .as_ref()
+        .is_some_and(|previous| previous.topology_digest == topology_digest);
     let adjacent_delta = if unchanged {
         None
     } else {
         previous
             .as_ref()
-            .map(|previous| native_public_graph_delta(&previous.payload, &payload))
+            .map(|previous| {
+                if reuses_public_collections {
+                    let previous_graph = native_public_graph_snapshot(&previous.payload)?;
+                    native_public_graph_delta_with_reused_collections(
+                        &previous.payload,
+                        &previous_graph,
+                        &payload,
+                        &graph,
+                        &previous_graph,
+                    )
+                } else {
+                    native_public_graph_delta(&previous.payload, &payload)
+                }
+            })
             .transpose()?
     };
     let delta_ms = elapsed_ms(delta_started);
@@ -6401,20 +6783,33 @@ fn refresh_native_session_graph(
         "latestDelta": adjacent_delta.clone(),
         "limitation": "This graph is retained only in the native JSONL process for a cache-disabled session. It never creates repository metadata or a SQLite database and cannot resolve after the process closes.",
     });
-    session.graphs.insert(
-        project_id.to_string(),
-        NativeSessionGraph {
-            facts_digest: facts_digest.to_string(),
-            public_graph_version,
-            payload,
-        },
+    let session_graph = NativeSessionGraph {
+        facts_digest: facts_digest.to_string(),
+        topology_digest,
+        public_graph_version,
+        payload: Arc::new(payload),
+        query_batch: Arc::new(params.clone()),
+    };
+    session
+        .graphs
+        .insert(project_id.to_string(), session_graph.clone());
+    session.session_query_graphs.insert(
+        native_session_graph_key(project_id, public_graph_version),
+        session_graph,
     );
-    Ok(json!({
+    let mut response = json!({
         "schemaVersion": "flopeek-native-session-lifecycle/v1",
         "status": if unchanged { "reused" } else { "promoted" },
         "persistence": "session-memory",
         "publicGraphVersion": public_graph_version,
         "factsDigest": facts_digest,
+        "graphHandle": {
+            "schemaVersion": "flopeek-native-session-graph-handle/v1",
+            "projectId": project_id,
+            "factsDigest": facts_digest,
+            "persistence": "session-memory",
+            "publicGraphVersion": public_graph_version,
+        },
         "profile": {
             "schemaVersion": "flopeek-native-session-lifecycle-profile/v1",
             "factValidationMs": fact_validation_ms,
@@ -6424,9 +6819,22 @@ fn refresh_native_session_graph(
             "deltaMs": delta_ms,
             "totalMs": elapsed_ms(started),
         },
-        "graph": graph,
         "limitation": "Native cache-disabled lifecycle is process-local. JavaScript remains the public default and compatibility oracle until the rollout gate passes.",
-    }))
+    });
+    if reuses_public_collections {
+        // The public collections are immutable for this exact fact digest.
+        // Keep the cache-disabled contract compact on an explicit no-op just
+        // like the persistent SQLite lifecycle: Node owns the previous public
+        // snapshot and receives only a versioned envelope for its mutable
+        // state/analysis fields.
+        response["publicGraphReuse"] = json!({
+            "schemaVersion": "flopeek-native-public-graph-reuse/v1",
+            "envelope": native_public_graph_envelope(&graph),
+        });
+    } else {
+        response["graph"] = graph;
+    }
+    Ok(response)
 }
 
 fn get_native_structural_delta(params: &Value) -> Result<Value, NativeProtocolError> {
@@ -7349,8 +7757,14 @@ fn get_native_current_public_graph(params: &Value) -> Result<Value, NativeProtoc
         "nativeGraphVersion": current.graph_version,
         "publicGraphVersion": current.public_graph_version,
         "graph": graph,
-        "batch": payload.payload,
-        "limitation": "This fallback serves only the SQLite last-complete graph after recovery of incomplete builds. JavaScript graph.json is not read.",
+        "graphHandle": {
+            "schemaVersion": "flopeek-native-graph-handle/v1",
+            "projectId": project_id,
+            "factsDigest": current.material_fingerprint,
+            "persistence": "sqlite",
+            "publicGraphVersion": current.public_graph_version,
+        },
+        "limitation": "This fallback serves only the SQLite last-complete graph after recovery of incomplete builds. It returns a verified graph handle, never a duplicate StructuralFactBatch; JavaScript graph.json is not read.",
     }))
 }
 
@@ -7642,7 +8056,12 @@ fn handle_request(
             | "getChangeImpact"
     );
     if accepts_cached_fact_reference && request.params.get("batch").is_none() {
-        if let Err(error) = hydrate_cached_query_batch(session, &mut request.params) {
+        let hydrate = if request.params.get("sessionGraph").is_some() {
+            hydrate_session_query_batch(session, &mut request.params)
+        } else {
+            hydrate_cached_query_batch(session, &mut request.params)
+        };
+        if let Err(error) = hydrate {
             return (
                 error_response(Some(request.request_id), error.code, error.message),
                 false,
@@ -8035,7 +8454,7 @@ pub fn serve_jsonl<R: BufRead, W: Write>(reader: R, mut writer: W) -> Result<(),
 mod tests {
     use super::{
         NATIVE_PROTOCOL_VERSION, NativeProtocolSession, STRUCTURAL_FACT_BATCH_SCHEMA,
-        build_isolated_incremental_graph, hydrate_cached_query_batch,
+        build_isolated_incremental_graph, hydrate_cached_query_batch, hydrate_session_query_batch,
         isolated_structural_change_path, native_entry_source_nodes,
         refresh_native_js_session_graph, refresh_native_persistent_project, same_canonical_json,
         serve_jsonl, structural_facts_canonical_json, structural_facts_digest,
@@ -8175,6 +8594,105 @@ mod tests {
         assert_eq!(no_op["sourceRefresh"]["mode"], "no-op-session");
         assert_eq!(no_op["sourceRefresh"]["parsedFiles"], 0);
         assert_eq!(no_op["sourceRefresh"]["reusedFiles"], 1);
+        assert!(no_op.get("graph").is_none());
+        assert_eq!(
+            no_op["publicGraphReuse"]["schemaVersion"],
+            "flopeek-native-public-graph-reuse/v1"
+        );
+        assert!(no_op["publicGraphReuse"]["envelope"].get("nodes").is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn source_only_ephemeral_refresh_reuses_public_collections() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-source-only-session-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/main.ts"), "export const current = true;\n").unwrap();
+        let mut session = NativeProtocolSession::default();
+        let initial = refresh_native_js_session_graph(
+            &mut session,
+            &json!({
+                "projectRoot": root,
+                "sessionProjectId": "session:source-only",
+            }),
+        )
+        .unwrap();
+        fs::write(root.join("src/main.ts"), "\nexport const current = true;\n").unwrap();
+        let refreshed = refresh_native_js_session_graph(
+            &mut session,
+            &json!({
+                "projectRoot": root,
+                "sessionProjectId": "session:source-only",
+                "changedPaths": ["src/main.ts"],
+            }),
+        )
+        .unwrap();
+        assert_eq!(refreshed["status"], "promoted");
+        assert_eq!(refreshed["publicGraphVersion"], 2);
+        assert!(refreshed.get("graph").is_none());
+        assert_eq!(
+            refreshed["publicGraphReuse"]["schemaVersion"],
+            "flopeek-native-public-graph-reuse/v1"
+        );
+        assert!(
+            refreshed["publicGraphReuse"]["envelope"]
+                .get("nodes")
+                .is_none()
+        );
+        assert!(refreshed.get("receipt").is_none());
+        assert_ne!(
+            refreshed["graphHandle"]["factsDigest"], initial["graphHandle"]["factsDigest"],
+            "source identity advances even while public collections are reused"
+        );
+        assert_eq!(
+            refreshed["profile"]["schemaVersion"],
+            "flopeek-native-session-lifecycle-profile/v1"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ephemeral_source_graph_returns_a_handle_and_retains_its_query_batch_in_rust() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-session-handle-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/main.ts"), "export const handled = true;\n").unwrap();
+        let mut session = NativeProtocolSession::default();
+        let result = refresh_native_js_session_graph(
+            &mut session,
+            &json!({
+                "projectRoot": root,
+                "sessionProjectId": "session:handle",
+            }),
+        )
+        .unwrap();
+        assert!(result.get("batch").is_none());
+        assert_eq!(
+            result["graphHandle"]["schemaVersion"],
+            "flopeek-native-session-graph-handle/v1"
+        );
+        assert_eq!(result["graphHandle"]["persistence"], "session-memory");
+
+        let mut query_params = json!({ "sessionGraph": result["graphHandle"].clone() });
+        hydrate_session_query_batch(&session, &mut query_params).unwrap();
+        assert!(query_params.get("sessionGraph").is_none());
+        assert_eq!(
+            query_params["batch"]["schemaVersion"],
+            STRUCTURAL_FACT_BATCH_SCHEMA
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -8218,6 +8736,43 @@ mod tests {
     }
 
     #[test]
+    fn persistent_project_handle_only_transport_omits_public_collections() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-persistent-handle-only-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src/main.ts"),
+            "export const handleOnly = true;\n",
+        )
+        .unwrap();
+        let mut session = NativeProtocolSession::default();
+        let result = refresh_native_persistent_project(
+            &mut session,
+            &json!({ "projectRoot": root, "returnPublicGraph": false }),
+        )
+        .unwrap();
+        assert!(result.get("graph").is_none());
+        assert!(result.get("publicGraphReuse").is_none());
+        assert!(result.get("publicGraphPatch").is_none());
+        assert_eq!(result["publicGraphTransport"]["mode"], "handle-only");
+        assert!(result["publicGraphEnvelope"].is_object());
+        assert!(result["publicGraphEnvelope"].get("nodes").is_none());
+        assert!(result["publicGraphEnvelope"].get("edges").is_none());
+        assert_eq!(
+            result["graphHandle"]["schemaVersion"],
+            "flopeek-native-graph-handle/v1"
+        );
+        drop(session);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn persistent_native_project_reuses_one_sqlite_connection_for_changed_path_refresh() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -8236,6 +8791,7 @@ mod tests {
                 .unwrap();
         assert_eq!(initial["publicGraphVersion"], 1);
         assert_eq!(session.persistent_connections.len(), 1);
+        assert_eq!(session.persistent_git_metadata.len(), 1);
         let mut query = json!({
             "projectRoot": root,
             "projectId": initial["graphHandle"]["projectId"],
@@ -8244,6 +8800,7 @@ mod tests {
         hydrate_cached_query_batch(&mut session, &mut query).unwrap();
         assert!(query["batch"].is_object());
         assert_eq!(session.persistent_connections.len(), 1);
+        assert_eq!(session.persistent_git_metadata.len(), 1);
         fs::write(&source, "export const changed = true;\n").unwrap();
         let refreshed = refresh_native_persistent_project(
             &mut session,
@@ -8267,6 +8824,8 @@ mod tests {
             refreshed["receipt"]["profile"]["structuralRecordCacheWritePaths"],
             1
         );
+        assert_eq!(refreshed["receipt"]["profile"]["usedFactPatch"], true);
+        assert!(refreshed["receipt"]["profile"]["factPatchReconstructionMs"].is_number());
         drop(session);
         fs::remove_dir_all(root).unwrap();
     }

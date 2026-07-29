@@ -28,7 +28,7 @@ test("tagged Core releases verify source and package evidence before creating a 
   assert.match(workflow, /tags:\s*\n\s*- "v\*"/);
   assert.match(workflow, /fetch-depth:\s*0/);
   assert.match(workflow, /npm run verify:github-release -- --tag "\$GITHUB_REF_NAME"/);
-  for (const command of ["npm run test:public-source", "npm run test:package", "npm run audit:package", "npm run verify:clean-room"]) {
+  for (const command of ["npm run test:public-source", "npm run test:package", "npm run audit:package", "npm run verify:clean-room", "npm run verify:clean-room-native-platform"]) {
     assert.match(workflow, new RegExp(`- run: ${command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   }
   assert.match(workflow, /name: Publish native platform packages/);

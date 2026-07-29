@@ -103,6 +103,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
       - run: npm run verify:github-release -- --tag "$GITHUB_REF_NAME"
       - run: npm run check:support
       - run: npm run check:docs
@@ -110,10 +114,7 @@ jobs:
       - run: npm run test:package
       - run: npm run audit:package
       - run: npm run verify:clean-room
-      - uses: actions/download-artifact@v4
-        with:
-          path: release-assets
-          merge-multiple: true
+      - run: npm run verify:clean-room-native-platform -- --platform-tarball "$(find release-assets -name 'flopeek-native-linux-x64-gnu-*.tgz' -print -quit)"
       - name: Create prerelease
         if: contains(github.ref_name, '-')
         env:

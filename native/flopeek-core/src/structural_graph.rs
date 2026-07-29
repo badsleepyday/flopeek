@@ -4,10 +4,13 @@ use crate::identity::{
     public_schedule_node_id, public_symbol_node_id,
 };
 use crate::protocol::STRUCTURAL_FACT_BATCH_SCHEMA;
+use icu_collator::{Collator, CollatorBorrowed};
+use icu_locale_core::locale;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, OnceLock};
 
 pub const STRUCTURAL_GRAPH_SCHEMA: &str = "flopeek-native-structural-graph-shadow/v1";
 
@@ -20,6 +23,209 @@ pub struct StructuralGraphNode {
     pub path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
+}
+
+// The compatibility projection still exposes string IDs at the JSON boundary,
+// but graph assembly must not carry those long IDs once per edge.  Keep one
+// interned public spelling per node and use compact, contiguous IDs for the
+// internal adjacency set.  This is deliberately private: it is a memory-layout
+// improvement, not a new public graph schema.
+#[derive(Debug)]
+struct CompactStructuralGraphNode {
+    kind: Arc<str>,
+    node_type: Arc<str>,
+    path: Option<Arc<str>>,
+    metadata: Option<CompactNodeMetadata>,
+}
+
+// The public contract accepts metadata as JSON, but its common fields are
+// stable strings repeated across every file/symbol descendant. Keep those
+// typed and interned in the arena; retain only genuinely open-ended payloads
+// (evidence, contracts, adapter additions) as JSON until the boundary.
+#[derive(Debug)]
+struct CompactNodeMetadata {
+    stable: BTreeMap<&'static str, Arc<str>>,
+    methods: Option<Vec<Arc<str>>>,
+    remainder: serde_json::Map<String, Value>,
+}
+
+impl CompactNodeMetadata {
+    fn from_value(value: Value, intern: &mut BTreeMap<Arc<str>, Arc<str>>) -> Self {
+        let mut remainder = match value {
+            Value::Object(object) => object,
+            other => {
+                let mut object = serde_json::Map::new();
+                object.insert("_nativeMetadata".to_string(), other);
+                object
+            }
+        };
+        let mut stable = BTreeMap::new();
+        for field in [
+            "domain",
+            "feature",
+            "layer",
+            "sourceScope",
+            "language",
+            "label",
+            "detectedResponsibility",
+            "handlerId",
+            "handlerBinding",
+        ] {
+            if let Some(value) = remainder.remove(field) {
+                match value {
+                    Value::String(value) => {
+                        let interned = CompactStructuralGraph::intern(intern, &value);
+                        stable.insert(field, interned);
+                    }
+                    other => {
+                        remainder.insert(field.to_string(), other);
+                    }
+                }
+            }
+        }
+        let methods = match remainder.remove("methods") {
+            Some(Value::Array(values)) => {
+                match values.iter().map(Value::as_str).collect::<Option<Vec<_>>>() {
+                    Some(values) => Some(
+                        values
+                            .into_iter()
+                            .map(|value| CompactStructuralGraph::intern(intern, value))
+                            .collect(),
+                    ),
+                    None => {
+                        remainder.insert("methods".to_string(), Value::Array(values));
+                        None
+                    }
+                }
+            }
+            Some(other) => {
+                remainder.insert("methods".to_string(), other);
+                None
+            }
+            None => None,
+        };
+        Self {
+            stable,
+            methods,
+            remainder,
+        }
+    }
+
+    fn into_value(self) -> Value {
+        let mut value = self.remainder;
+        for (field, item) in self.stable {
+            value.insert(field.to_string(), Value::String(item.to_string()));
+        }
+        if let Some(methods) = self.methods {
+            value.insert(
+                "methods".to_string(),
+                Value::Array(
+                    methods
+                        .into_iter()
+                        .map(|item| Value::String(item.to_string()))
+                        .collect(),
+                ),
+            );
+        }
+        Value::Object(value)
+    }
+
+    fn insert_dynamic(&mut self, key: String, value: Value) {
+        self.remainder.insert(key, value);
+    }
+}
+
+#[derive(Debug, Default)]
+struct CompactStructuralGraph {
+    node_by_public_id: BTreeMap<Arc<str>, u32>,
+    public_node_ids: Vec<Arc<str>>,
+    nodes: Vec<CompactStructuralGraphNode>,
+    node_kind_intern: BTreeMap<Arc<str>, Arc<str>>,
+    node_type_intern: BTreeMap<Arc<str>, Arc<str>>,
+    path_intern: BTreeMap<Arc<str>, Arc<str>>,
+    metadata_string_intern: BTreeMap<Arc<str>, Arc<str>>,
+    // Edge kinds repeat far more often than nodes in a repository graph. Keep
+    // one interned spelling per kind while numeric endpoints stay contiguous.
+    edge_type_intern: BTreeMap<Arc<str>, Arc<str>>,
+    edges: BTreeSet<(u32, u32, Arc<str>)>,
+}
+
+impl CompactStructuralGraph {
+    fn intern(table: &mut BTreeMap<Arc<str>, Arc<str>>, value: &str) -> Arc<str> {
+        table.get(value).cloned().unwrap_or_else(|| {
+            let interned: Arc<str> = Arc::from(value);
+            table.insert(interned.clone(), interned.clone());
+            interned
+        })
+    }
+
+    fn insert_node(
+        &mut self,
+        id: String,
+        kind: &str,
+        node_type: &str,
+        path: Option<&str>,
+        metadata: Option<Value>,
+    ) {
+        if self.node_by_public_id.contains_key(id.as_str()) {
+            return;
+        }
+        let compact_id = u32::try_from(self.nodes.len())
+            .expect("native structural graph exceeds u32 node capacity");
+        let public_id: Arc<str> = Arc::from(id);
+        self.node_by_public_id.insert(public_id.clone(), compact_id);
+        self.public_node_ids.push(public_id);
+        self.nodes.push(CompactStructuralGraphNode {
+            kind: Self::intern(&mut self.node_kind_intern, kind),
+            node_type: Self::intern(&mut self.node_type_intern, node_type),
+            path: path.map(|path| Self::intern(&mut self.path_intern, path)),
+            metadata: metadata.map(|value| {
+                CompactNodeMetadata::from_value(value, &mut self.metadata_string_intern)
+            }),
+        });
+    }
+
+    fn contains_node(&self, id: &str) -> bool {
+        self.node_by_public_id.contains_key(id)
+    }
+
+    fn insert_edge(&mut self, source: &str, target: &str, edge_type: &str) {
+        let Some(&source) = self.node_by_public_id.get(source) else {
+            return;
+        };
+        let Some(&target) = self.node_by_public_id.get(target) else {
+            return;
+        };
+        let edge_type = Self::intern(&mut self.edge_type_intern, edge_type);
+        self.edges.insert((source, target, edge_type));
+    }
+
+    fn into_public_parts(self) -> (Vec<StructuralGraphNode>, Vec<StructuralGraphEdge>) {
+        let edges = self
+            .edges
+            .into_iter()
+            .map(|(source, target, edge_type)| StructuralGraphEdge {
+                source: self.public_node_ids[source as usize].to_string(),
+                target: self.public_node_ids[target as usize].to_string(),
+                edge_type: edge_type.to_string(),
+                confidence: None,
+                evidence: None,
+            })
+            .collect::<Vec<_>>();
+        let nodes = self
+            .public_node_ids
+            .into_iter()
+            .zip(self.nodes)
+            .map(|(id, node)| StructuralGraphNode {
+                id: id.to_string(),
+                kind: node.kind.to_string(),
+                node_type: node.node_type.to_string(),
+                path: node.path.map(|path| path.to_string()),
+                metadata: node.metadata.map(CompactNodeMetadata::into_value),
+            })
+            .collect::<Vec<_>>();
+        (nodes, edges)
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -158,31 +364,23 @@ fn optional<'a>(value: &'a serde_json::Map<String, Value>, key: &str) -> Option<
 }
 
 fn insert_node_with_metadata(
-    nodes: &mut BTreeMap<String, StructuralGraphNode>,
+    graph: &mut CompactStructuralGraph,
     id: String,
     kind: &str,
     node_type: &str,
     path: Option<&str>,
     metadata: Option<Value>,
 ) {
-    nodes
-        .entry(id.clone())
-        .or_insert_with(|| StructuralGraphNode {
-            id,
-            kind: kind.to_string(),
-            node_type: node_type.to_string(),
-            path: path.map(ToString::to_string),
-            metadata,
-        });
+    graph.insert_node(id, kind, node_type, path, metadata);
 }
 
 fn insert_edge(
-    edges: &mut BTreeSet<(String, String, String)>,
-    source: String,
-    target: String,
+    graph: &mut CompactStructuralGraph,
+    source: impl AsRef<str>,
+    target: impl AsRef<str>,
     edge_type: &str,
 ) {
-    edges.insert((edge_type.to_string(), source, target));
+    graph.insert_edge(source.as_ref(), target.as_ref(), edge_type);
 }
 
 fn symbol_metadata(
@@ -863,11 +1061,9 @@ fn edge_metadata(
 }
 
 // JavaScript's public compatibility projection orders IDs with
-// String#localeCompare. The current audited corpus contains portable ASCII IDs
-// and paths, for which this reproduces the observable punctuation ordering
-// (`_`, `-`, `.`, `/`) without receiving a topology order from JavaScript.
-// Non-ASCII public-ID ordering remains outside this shadow subset until an
-// explicit ICU-backed compatibility contract and fixtures are added.
+// String#localeCompare. ASCII keeps the established punctuation rules below;
+// non-ASCII values use the same ICU collation family as V8's default sort
+// locale. This avoids falling back to Unicode scalar ordering for public IDs.
 fn javascript_ascii_collation_key(value: &str) -> Vec<u32> {
     value
         .chars()
@@ -885,6 +1081,14 @@ fn javascript_ascii_collation_key(value: &str) -> Vec<u32> {
 }
 
 pub(crate) fn javascript_ascii_cmp(left: &str, right: &str) -> Ordering {
+    if !(left.is_ascii() && right.is_ascii())
+        && let Some(collator) = javascript_unicode_collator()
+    {
+        let order = collator.compare(left, right);
+        if order != Ordering::Equal {
+            return order;
+        }
+    }
     javascript_ascii_collation_key(left)
         .cmp(&javascript_ascii_collation_key(right))
         .then_with(|| left.cmp(right))
@@ -929,12 +1133,27 @@ fn javascript_ascii_locale_collation_key(value: &str) -> Vec<u32> {
 }
 
 pub(crate) fn javascript_ascii_locale_cmp(left: &str, right: &str) -> Ordering {
+    if !(left.is_ascii() && right.is_ascii())
+        && let Some(collator) = javascript_unicode_collator()
+    {
+        let order = collator.compare(left, right);
+        if order != Ordering::Equal {
+            return order;
+        }
+    }
     javascript_ascii_locale_collation_key(left)
         .cmp(&javascript_ascii_locale_collation_key(right))
         .then_with(|| {
             javascript_ascii_locale_case_key(left).cmp(&javascript_ascii_locale_case_key(right))
         })
         .then_with(|| left.cmp(right))
+}
+
+fn javascript_unicode_collator() -> Option<&'static CollatorBorrowed<'static>> {
+    static COLLATOR: OnceLock<Option<CollatorBorrowed<'static>>> = OnceLock::new();
+    COLLATOR
+        .get_or_init(|| Collator::try_new(locale!("en").into(), Default::default()).ok())
+        .as_ref()
 }
 
 fn traversal_edge_key(source: &str, target: &str, edge_type: &str) -> String {
@@ -1389,8 +1608,7 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
         .get("records")
         .and_then(Value::as_array)
         .ok_or("StructuralFactBatch/v1 requires records.")?;
-    let mut nodes = BTreeMap::new();
-    let mut edges = BTreeSet::new();
+    let mut graph = CompactStructuralGraph::default();
     let mut symbols = BTreeMap::new();
     let mut runtime_nodes = BTreeMap::new();
     let mut endpoints = BTreeMap::new();
@@ -1408,7 +1626,7 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
             .filter(|metadata| metadata.is_object())
             .cloned();
         insert_node_with_metadata(
-            &mut nodes,
+            &mut graph,
             file_id.clone(),
             "file",
             optional(record, "fileNodeType").unwrap_or("file"),
@@ -1459,7 +1677,7 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
                 .collect::<Result<Vec<_>, _>>()?;
             let package_id = format!("go-package:{package_path}");
             insert_node_with_metadata(
-                &mut nodes,
+                &mut graph,
                 package_id,
                 "package",
                 "package",
@@ -1492,7 +1710,7 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
                 symbol_id.clone(),
             );
             insert_node_with_metadata(
-                &mut nodes,
+                &mut graph,
                 symbol_id.clone(),
                 "symbol",
                 symbol_type,
@@ -1504,8 +1722,8 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
                     symbol_name,
                 )),
             );
-            insert_edge(&mut edges, symbol_id.clone(), file_id.clone(), "declares");
-            insert_edge(&mut edges, file_id.clone(), symbol_id, "contains");
+            insert_edge(&mut graph, symbol_id.clone(), file_id.clone(), "declares");
+            insert_edge(&mut graph, file_id.clone(), symbol_id, "contains");
         }
         for integration in result
             .get("integrations")
@@ -1524,7 +1742,7 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
                 runtime_id.clone(),
             );
             insert_node_with_metadata(
-                &mut nodes,
+                &mut graph,
                 runtime_id.clone(),
                 "integration",
                 integration_type,
@@ -1535,7 +1753,7 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
                     integration_type,
                 )),
             );
-            insert_edge(&mut edges, file_id.clone(), runtime_id, "initializes");
+            insert_edge(&mut graph, file_id.clone(), runtime_id, "initializes");
         }
         for endpoint in result
             .get("endpoints")
@@ -1566,7 +1784,7 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
                 .entry((method.to_string(), route.to_string()))
                 .or_insert_with(|| endpoint_id.clone());
             insert_node_with_metadata(
-                &mut nodes,
+                &mut graph,
                 endpoint_id.clone(),
                 "endpoint",
                 "endpoint",
@@ -1580,7 +1798,7 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
                     exact_handler,
                 )),
             );
-            insert_edge(&mut edges, endpoint_id, target, "handles");
+            insert_edge(&mut graph, endpoint_id, target, "handles");
         }
         for external_import in result
             .get("externalImports")
@@ -1599,14 +1817,14 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
                 .filter(|metadata| metadata.is_object())
                 .cloned();
             insert_node_with_metadata(
-                &mut nodes,
+                &mut graph,
                 external_id.clone(),
                 "external",
                 node_type,
                 None,
                 metadata,
             );
-            insert_edge(&mut edges, file_id.clone(), external_id, "uses");
+            insert_edge(&mut graph, file_id.clone(), external_id, "uses");
         }
         for command in result
             .get("frameworkCommands")
@@ -1623,11 +1841,11 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
             let target_type = required(command, "targetType")?;
             let command_path = optional(command, "path").unwrap_or(relative_path);
             let target_id = public_symbol_node_id(command_path, target_type, target_name);
-            if nodes.contains_key(&target_id) {
+            if graph.contains_node(&target_id) {
                 let command_id =
                     public_framework_command_node_id(command_path, adapter, command_name);
                 insert_node_with_metadata(
-                    &mut nodes,
+                    &mut graph,
                     command_id.clone(),
                     "command",
                     "command",
@@ -1637,7 +1855,7 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
                         .filter(|metadata| metadata.is_object())
                         .cloned(),
                 );
-                insert_edge(&mut edges, command_id, target_id, "declares-command-target");
+                insert_edge(&mut graph, command_id, target_id, "declares-command-target");
             }
         }
         for schedule in result
@@ -1670,11 +1888,11 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
                 .and_then(Value::as_i64);
             let target_id = public_symbol_node_id(relative_path, "function", task_name);
             if let (Some(line), Some(column)) = (line, column)
-                && nodes.contains_key(&target_id)
+                && graph.contains_node(&target_id)
             {
                 let schedule_id = public_schedule_node_id(relative_path, task_name, line, column);
                 insert_node_with_metadata(
-                    &mut nodes,
+                    &mut graph,
                     schedule_id.clone(),
                     "schedule",
                     "schedule",
@@ -1684,7 +1902,7 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
                         .filter(|metadata| metadata.is_object())
                         .cloned(),
                 );
-                insert_edge(&mut edges, schedule_id, target_id, "schedules");
+                insert_edge(&mut graph, schedule_id, target_id, "schedules");
             }
         }
     }
@@ -1701,10 +1919,10 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
         let script_name = required(command, "scriptName")?;
         let target_path = required(command, "targetPath")?;
         let target_id = public_file_node_id(target_path);
-        if nodes.contains_key(&target_id) {
+        if graph.contains_node(&target_id) {
             let command_id = public_package_command_node_id(manifest, script_name);
             insert_node_with_metadata(
-                &mut nodes,
+                &mut graph,
                 command_id.clone(),
                 "command",
                 "command",
@@ -1714,7 +1932,7 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
                     .filter(|metadata| metadata.is_object())
                     .cloned(),
             );
-            insert_edge(&mut edges, command_id, target_id, "declares-command-target");
+            insert_edge(&mut graph, command_id, target_id, "declares-command-target");
         }
     }
     for record in records {
@@ -1739,12 +1957,12 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
             let specifier = required(resolved_import, "specifier")?;
             let target_path = required(resolved_import, "targetPath")?;
             let target_id = public_file_node_id(target_path);
-            if nodes.contains_key(&target_id) {
+            if graph.contains_node(&target_id) {
                 resolved_imports.insert(
                     (relative_path.to_string(), specifier.to_string()),
                     target_path.to_string(),
                 );
-                insert_edge(&mut edges, file_id.clone(), target_id, "imports");
+                insert_edge(&mut graph, file_id.clone(), target_id, "imports");
             }
         }
         for resolved_package in result
@@ -1758,7 +1976,7 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
                 .ok_or("StructuralFactBatch/v1 resolvedPackages must be objects.")?;
             let package_path = required(resolved_package, "packagePath")?;
             let package_id = format!("go-package:{package_path}");
-            if nodes.contains_key(&package_id) {
+            if graph.contains_node(&package_id) {
                 for file in resolved_package
                     .get("files")
                     .and_then(Value::as_array)
@@ -1769,16 +1987,16 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
                         "StructuralFactBatch/v1 resolvedPackages.files must contain paths.",
                     )?;
                     let contained_file_id = public_file_node_id(file_path);
-                    if nodes.contains_key(&contained_file_id) {
+                    if graph.contains_node(&contained_file_id) {
                         insert_edge(
-                            &mut edges,
+                            &mut graph,
                             package_id.clone(),
                             contained_file_id,
                             "contains",
                         );
                     }
                 }
-                insert_edge(&mut edges, file_id.clone(), package_id, "imports");
+                insert_edge(&mut graph, file_id.clone(), package_id, "imports");
             }
         }
         for call in result
@@ -1853,7 +2071,7 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
                     .cloned(),
             };
             if let Some(target) = target {
-                insert_edge(&mut edges, source, target, "calls");
+                insert_edge(&mut graph, source, target, "calls");
             }
         }
         for action in result
@@ -1890,7 +2108,7 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
                 .get(&(relative_path.to_string(), instance.to_string()))
                 .cloned()
             {
-                insert_edge(&mut edges, source, target, action_type);
+                insert_edge(&mut graph, source, target, action_type);
             }
         }
         for request in result
@@ -1911,42 +2129,37 @@ pub fn build_structural_graph(batch: &Value) -> Result<StructuralGraphProjection
                 .get(&(method.to_string(), route.to_string()))
                 .cloned()
             {
-                insert_edge(&mut edges, file_id.clone(), target, "requests");
+                insert_edge(&mut graph, file_id.clone(), target, "requests");
             }
         }
     }
     let manual_descriptions = batch.get("manualDescriptions").and_then(Value::as_object);
-    for node in nodes.values_mut() {
-        if !matches!(node.kind.as_str(), "symbol" | "endpoint" | "integration") {
+    for (node_id, node) in graph.public_node_ids.iter().zip(graph.nodes.iter_mut()) {
+        if !matches!(node.kind.as_ref(), "symbol" | "endpoint" | "integration") {
             continue;
         }
-        let Some(metadata) = node.metadata.as_mut().and_then(Value::as_object_mut) else {
+        let Some(metadata) = node.metadata.as_mut() else {
             continue;
         };
-        metadata.insert(
+        metadata.insert_dynamic(
             "manualDescription".to_string(),
             manual_descriptions
-                .and_then(|descriptions| descriptions.get(&node.id))
+                .and_then(|descriptions| descriptions.get(node_id.as_ref()))
                 .cloned()
                 .unwrap_or_else(|| Value::String(String::new())),
         );
     }
-    let nodes: Vec<StructuralGraphNode> = nodes.into_values().collect();
     let record_edge_metadata = record_edge_metadata(batch);
-    let edges: Vec<StructuralGraphEdge> = edges
-        .into_iter()
-        .map(|(edge_type, source, target)| {
-            let (confidence, evidence) =
-                edge_metadata(batch, &record_edge_metadata, &source, &target, &edge_type);
-            StructuralGraphEdge {
-                source,
-                target,
-                edge_type,
-                confidence,
-                evidence,
-            }
-        })
-        .collect();
+    let (nodes, mut edges) = graph.into_public_parts();
+    for edge in &mut edges {
+        (edge.confidence, edge.evidence) = edge_metadata(
+            batch,
+            &record_edge_metadata,
+            &edge.source,
+            &edge.target,
+            &edge.edge_type,
+        );
+    }
     structural_graph_projection_from_parts(nodes, edges)
 }
 
@@ -1998,11 +2211,12 @@ pub fn structural_graph_projection_from_parts(
 #[cfg(test)]
 mod tests {
     use super::{
-        STRUCTURAL_GRAPH_SCHEMA, build_structural_graph, javascript_ascii_cmp,
+        CompactNodeMetadata, STRUCTURAL_GRAPH_SCHEMA, build_structural_graph, javascript_ascii_cmp,
         javascript_ascii_locale_cmp,
     };
     use crate::protocol::STRUCTURAL_FACT_BATCH_SCHEMA;
     use serde_json::json;
+    use std::collections::BTreeMap;
 
     #[test]
     fn assembles_javascript_public_ids_for_the_supported_shadow_subset() {
@@ -2094,5 +2308,24 @@ mod tests {
                 "submit",
             ]
         );
+    }
+
+    #[test]
+    fn compact_metadata_preserves_non_string_stable_fields_and_mixed_methods() {
+        let mut intern = BTreeMap::new();
+        let metadata = CompactNodeMetadata::from_value(
+            json!({
+                "label": "Order",
+                "handlerId": null,
+                "methods": ["submit", { "dynamic": true }],
+                "evidence": { "parser": "native" },
+            }),
+            &mut intern,
+        )
+        .into_value();
+        assert_eq!(metadata["label"], "Order");
+        assert!(metadata["handlerId"].is_null());
+        assert_eq!(metadata["methods"][1]["dynamic"], true);
+        assert_eq!(metadata["evidence"]["parser"], "native");
     }
 }

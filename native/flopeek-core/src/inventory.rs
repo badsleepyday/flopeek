@@ -135,7 +135,9 @@ pub struct NativeInventoryStatus {
     /// Ephemeral-only parser input retained from the same read used for the
     /// inventory hash. It is never serialized, persisted, or constructed by
     /// the durable inventory path.
-    pub ephemeral_js_source_texts: BTreeMap<String, String>,
+    /// Text already read during a cache-disabled inventory pass.  Strict-native
+    /// parsing borrows these buffers so cold scans do not read source twice.
+    pub ephemeral_source_texts: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -572,7 +574,7 @@ fn scan_native_inventory_with_options(
         removed_paths,
         source_batch_records: include_source_batch.then_some(source_batch_records),
         source_batch_omitted_files,
-        ephemeral_js_source_texts: BTreeMap::new(),
+        ephemeral_source_texts: BTreeMap::new(),
     })
 }
 
@@ -629,15 +631,19 @@ pub fn scan_native_ephemeral_inventory_with_paths(
     )?;
     candidates.sort_by(|left, right| left.path.cmp(&right.path));
     let mut records = Vec::with_capacity(candidates.len());
-    let mut ephemeral_js_source_texts = BTreeMap::new();
+    let mut ephemeral_source_texts = BTreeMap::new();
     for candidate in candidates {
         let source_path = root.join(&candidate.path);
         let bytes = fs::read(&source_path)
             .map_err(|error| format!("Unable to read {}: {error}", source_path.display()))?;
-        if is_native_js_ts_path(&candidate.path)
-            && let Ok(source) = std::str::from_utf8(&bytes).map(str::to_owned)
-        {
-            ephemeral_js_source_texts.insert(candidate.path.clone(), source);
+        if is_native_source_path(&candidate.path) {
+            // Match `read_source_text`: malformed source is still parseable
+            // with U+FFFD replacement, while the inventory bytes remain the
+            // authority for its original content hash.
+            ephemeral_source_texts.insert(
+                candidate.path.clone(),
+                String::from_utf8_lossy(&bytes).into_owned(),
+            );
         }
         records.push(InventoryRecord {
             candidate,
@@ -666,14 +672,17 @@ pub fn scan_native_ephemeral_inventory_with_paths(
         removed_paths: Vec::new(),
         source_batch_records: None,
         source_batch_omitted_files: 0,
-        ephemeral_js_source_texts,
+        ephemeral_source_texts,
     })
 }
 
-fn is_native_js_ts_path(path: &str) -> bool {
+fn is_native_source_path(path: &str) -> bool {
     matches!(
         path.rsplit('.').next().map(|extension| extension.to_ascii_lowercase()),
-        Some(extension) if matches!(extension.as_str(), "js" | "cjs" | "mjs" | "jsx" | "ts" | "tsx")
+        Some(extension) if matches!(
+            extension.as_str(),
+            "js" | "cjs" | "mjs" | "jsx" | "ts" | "tsx" | "py" | "php" | "rs" | "java" | "svelte" | "cs"
+        )
     )
 }
 
@@ -790,7 +799,8 @@ pub fn scan_native_incremental_manifest_with_source_batch(
 #[cfg(test)]
 mod tests {
     use super::{
-        discover_native_bounded_project, scan_native_inventory, scan_native_inventory_with_paths,
+        discover_native_bounded_project, scan_native_ephemeral_inventory_with_paths,
+        scan_native_inventory, scan_native_inventory_with_paths,
     };
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -849,6 +859,52 @@ mod tests {
                 .unwrap_err()
                 .starts_with("native-bounded-invalid-package-path")
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ephemeral_inventory_retains_all_native_source_text_with_node_utf8_replacement() {
+        let root = temporary_root();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/app.ts"), "export const app = true;\n").unwrap();
+        fs::write(
+            root.join("src/service.py"),
+            "def service():\n    return True\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src/legacy.php"),
+            b"<?php \x80 function legacy() {}\n",
+        )
+        .unwrap();
+        fs::write(root.join("README.md"), "not a native source adapter\n").unwrap();
+
+        let inventory =
+            scan_native_ephemeral_inventory_with_paths(&root, Some("session:source-texts"))
+                .unwrap();
+
+        assert_eq!(
+            inventory
+                .ephemeral_source_texts
+                .get("src/app.ts")
+                .map(String::as_str),
+            Some("export const app = true;\n")
+        );
+        assert_eq!(
+            inventory
+                .ephemeral_source_texts
+                .get("src/service.py")
+                .map(String::as_str),
+            Some("def service():\n    return True\n")
+        );
+        assert_eq!(
+            inventory
+                .ephemeral_source_texts
+                .get("src/legacy.php")
+                .map(String::as_str),
+            Some("<?php \u{fffd} function legacy() {}\n")
+        );
+        assert!(!inventory.ephemeral_source_texts.contains_key("README.md"));
         fs::remove_dir_all(root).unwrap();
     }
 

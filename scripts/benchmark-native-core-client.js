@@ -83,7 +83,7 @@ async function benchmarkCoreRoot(source, iteration, sandbox, nativeOptions = rel
   const native = createNativeCoreClient({ nativeOptions, sourceAuthority: "rust" });
   assert.equal(native.backendAuthority, "rust-sqlite", "Benchmark native side must use Rust+SQLite authority.");
   assert.equal(native.sourceAuthority, "rust", "Benchmark native side must use Rust source authority.");
-  assert.equal(native.parserHost, "rust-tree-sitter-js-ts/v13", "Benchmark must not retain a JavaScript parser host.");
+  assert.equal(native.parserHost, "rust-tree-sitter-source/v17", "Benchmark must not retain a JavaScript parser host.");
   assert.equal(native.factEnvelopeHost, "rust-native-structural-batch/v1", "Benchmark must use the complete StructuralFactBatch envelope constructed by Rust.");
   assert.equal(Object.hasOwn(native, "queryFallbacks"), false, "Benchmark native side must not expose a hidden JavaScript core query fallback.");
   const javascriptCoordinator = createScanCoordinator(jsRoot, { cache: !ephemeral, coreClient: javascript });

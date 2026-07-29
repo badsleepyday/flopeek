@@ -44,7 +44,7 @@ function analyzeGoFact(fact, relativePath) {
 
 function analyzeCSharpFact(fact, relativePath) {
   if (!fact) return analyzeInventory(relativePath, ".cs");
-  const evidence = (range) => ({ parser: "csharp-roslyn", file: relativePath, range });
+  const evidence = (range) => ({ parser: "csharp-static-ast", file: relativePath, range });
   return {
     imports: (fact.imports || []).map((item) => ({ specifier: item.specifier, evidence: evidence(item.range) })),
     endpoints: [],
@@ -53,7 +53,7 @@ function analyzeCSharpFact(fact, relativePath) {
     methods: fact.methods || [],
     symbols: (fact.symbols || []).map((symbol) => ({ type: symbol.type, name: symbol.name, methods: symbol.methods || [], evidence: evidence(symbol.range) })),
     analysis: {
-      parser: "csharp-roslyn",
+      parser: "csharp-static-ast",
       status: fact.status || "parse-failed",
       confidence: String(fact.status || "").startsWith("parsed") ? "exact" : "not-analyzed",
       diagnostics: Number(fact.diagnostics || 0),

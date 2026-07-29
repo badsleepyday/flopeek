@@ -23,7 +23,7 @@ const { cacheHygiene, pruneArtifactCache } = require("./artifact-cache");
 const { pruneGraphDeltas, readGraphDelta, readLatestGraphDelta } = require("./graph-state");
 const { discoverRepository } = require("./repository-discovery");
 const { activateOnWorkspaceHub, startWorkspaceServer } = require("./workspace-server");
-const { createSurfaceCoreRuntime } = require("./core-runtime");
+const { createSurfaceCoreRuntime, observeCoreRuntime } = require("./core-runtime");
 
 let core = null;
 let coreRuntime = null;
@@ -492,7 +492,7 @@ async function main() {
     // `--no-cache` is the safe inspection mode: it must not leave Flopeek
     // metadata behind merely to obtain a generated project identity.
     const graph = await core.scan(options.root, { persistIdentity: options.cache });
-    graph.analysis.coreRuntime = coreRuntime.selection;
+    graph.analysis.coreRuntime = observeCoreRuntime(coreRuntime.selection, core);
     graph.analysis.cacheState = options.cache
       ? summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-scan" }))
       : { status: "disabled", path: path.join(graph.project.root, ".flopeek", "graph.json"), diagnostics: [], contract: null, migrated: false };

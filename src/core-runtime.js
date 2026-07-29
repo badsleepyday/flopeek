@@ -47,6 +47,8 @@ function createNativeFallbackCoreClient(native, javascript) {
     // product orchestration can select the native bounded lifecycle without
     // mistaking this explicit fallback wrapper for a JavaScript core.
     get sourceAuthority() { return javascriptFallback ? null : nativeCore.sourceAuthority; },
+    get parserHost() { return javascriptFallback ? null : nativeCore.parserHost; },
+    get factEnvelopeHost() { return javascriptFallback ? null : nativeCore.factEnvelopeHost; },
     get fallback() {
       return javascriptFallback
         ? Object.freeze({ active: true, reason: "native-bootstrap-failed-before-authority" })
@@ -120,6 +122,37 @@ function createSurfaceCoreClient(options = {}) {
   return createSurfaceCoreRuntime(options).core;
 }
 
+// Selection is an intentional preflight decision; it cannot know whether a
+// native process will fail before its first authoritative promotion. Surface
+// hosts must therefore materialize this record after each scan. Otherwise a
+// requested native-experimental scan that actually used JavaScript fallback
+// would be presented as native, which defeats the visible-rollback contract.
+function observeCoreRuntime(selection, core) {
+  const fallback = core?.fallback;
+  const nativeActive = core?.implementation === "native-experimental" && !fallback?.active;
+  if (!nativeActive && !fallback?.active) return selection;
+  const observed = {
+    ...selection,
+    execution: Object.freeze({
+      selectedImplementation: nativeActive ? "native" : "javascript",
+      sourceAuthority: nativeActive ? core.sourceAuthority || null : null,
+      parserHost: nativeActive ? core.parserHost || null : null,
+      factEnvelopeHost: nativeActive ? core.factEnvelopeHost || null : null,
+      fallback: fallback || Object.freeze({ active: false, reason: null }),
+    }),
+  };
+  if (fallback?.active) {
+    observed.policySelectedImplementation = selection.selectedImplementation;
+    observed.selectedImplementation = "javascript";
+    observed.sourceAuthority = null;
+    observed.fallback = Object.freeze({
+      ...(selection.fallback || {}),
+      ...fallback,
+    });
+  }
+  return Object.freeze(observed);
+}
+
 // Keep activation and its machine-readable decision together so CLI, MCP,
 // server, workspace hosts, and ScanCoordinator can expose the same fallback
 // rather than silently reporting a JavaScript scan as a requested native one.
@@ -144,4 +177,4 @@ function createSurfaceCoreRuntime(options = {}) {
   return Object.freeze({ core, selection });
 }
 
-module.exports = { createConfiguredCoreClient, createNativeFallbackCoreClient, createSurfaceCoreClient, createSurfaceCoreRuntime };
+module.exports = { createConfiguredCoreClient, createNativeFallbackCoreClient, createSurfaceCoreClient, createSurfaceCoreRuntime, observeCoreRuntime };

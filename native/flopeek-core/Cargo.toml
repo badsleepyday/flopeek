@@ -4,17 +4,26 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 publish = false
-description = "Native compatibility wrapper baseline for Flopeek."
+description = "Flopeek strict Rust source, graph, query, and SQLite core."
 
 [dependencies]
 blake3 = "1.8.2"
+icu_collator = "=2.1.2"
+icu_locale_core = "=2.1.1"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
+rayon = "1.11.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.149", features = ["raw_value"] }
 sha2 = "0.10.9"
 syn = { version = "2.0.117", features = ["full", "visit"] }
 tree-sitter = "0.25.10"
+tree-sitter-c-sharp = "0.23.5"
+tree-sitter-java = "0.23.5"
 tree-sitter-javascript = "0.25.0"
+tree-sitter-php = "0.24.2"
+tree-sitter-python = "0.25.0"
+tree-sitter-rust = "0.24.2"
+tree-sitter-svelte-next = "0.1.1"
 tree-sitter-typescript = "0.23.2"
 time = { version = "0.3.36", features = ["formatting"] }
 uuid = { version = "1.10.0", features = ["v4"] }

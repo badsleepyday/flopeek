@@ -5,21 +5,10 @@ const path = require("node:path");
 const { createHash } = require("node:crypto");
 const { NATIVE_PROTOCOL_VERSION, NativeProtocolClient } = require("./native-protocol-client");
 const { createRepositoryScanner } = require("./scanner");
+const { nativePlatformPackageName } = require("./native-platform-targets");
 
 const NATIVE_MANIFEST_SCHEMA = "flopeek-native-incremental-manifest/v1";
 const NATIVE_RECORD_CACHE_SCHEMA = "flopeek-native-js-record-cache/v1";
-
-function nativePlatformPackageName(platform = process.platform, arch = process.arch) {
-  const target = {
-    "win32:x64": "@flopeek/native-win32-x64",
-    "win32:arm64": "@flopeek/native-win32-arm64",
-    "darwin:x64": "@flopeek/native-darwin-x64",
-    "darwin:arm64": "@flopeek/native-darwin-arm64",
-    "linux:x64": "@flopeek/native-linux-x64-gnu",
-    "linux:arm64": "@flopeek/native-linux-arm64-gnu",
-  }[`${platform}:${arch}`];
-  return target || null;
-}
 
 function resolvePlatformNativeBinary(resolve = require.resolve, platform = process.platform, arch = process.arch) {
   const packageName = nativePlatformPackageName(platform, arch);

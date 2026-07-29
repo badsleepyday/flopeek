@@ -12,6 +12,7 @@ const { createNativeCoreExtensionAdapter } = require("../../src/native-core-exte
 const { NativeProtocolClient } = require("../../src/native-protocol-client");
 const { scanRepository } = require("../../src/scanner");
 const { createCoreCompatibilityDigest } = require("../../src/core-compatibility");
+const { COLLATION_LOCALE } = require("../../src/collation");
 const { getAgentBootstrap, getChangedContexts, getEntryFlows, getNodeDetails, getRelatedTests, projectView } = require("../../src/graph-service");
 
 const ROOT = path.resolve(__dirname, "..", "..");
@@ -66,8 +67,12 @@ function observedNativeRequests(requests) {
     get closed() { return client.closed; },
     start: (...args) => client.start(...args),
     request: async (...args) => {
-      requests.push({ method: args[0], params: args[1] });
-      return client.request(...args);
+      const observed = { method: args[0], params: args[1], responseStats: null };
+      requests.push(observed);
+      const result = await client.request(...args);
+      observed.result = result;
+      observed.responseStats = client.getLastResponseStats();
+      return result;
     },
     close: (...args) => client.close(...args),
     getLastResponseStats: () => client.getLastResponseStats(),
@@ -493,7 +498,7 @@ test("strict Rust source authority parses and resolves a TypeScript graph withou
     fs.rmSync(root, { recursive: true, force: true });
   });
   assert.equal(native.sourceAuthority, "rust");
-  assert.equal(native.parserHost, "rust-tree-sitter-js-ts/v13");
+  assert.equal(native.parserHost, "rust-tree-sitter-source/v17");
   assert.equal(native.factEnvelopeHost, "rust-native-structural-batch/v1");
   const graph = await native.scan(root);
   const oracle = javascript.scan(root);
@@ -517,6 +522,140 @@ test("strict Rust source authority parses and resolves a TypeScript graph withou
   assert.equal(createCoreCompatibilityDigest(unchanged), createCoreCompatibilityDigest(unchangedOracle));
   assert.equal(unchanged.state.graphVersion, refreshed.state.graphVersion);
   assert.deepEqual(unchanged.analysis.refresh, unchangedOracle.analysis.refresh);
+});
+
+test("strict Rust source authority preserves registered inventory-only files in mixed repositories", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-inventory-only-"));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "inventory-only-source-example" }));
+  fs.writeFileSync(path.join(root, "src", "index.ts"), "export const run = () => true;\n");
+  fs.writeFileSync(path.join(root, "scripts", "deploy.sh"), "#!/usr/bin/env bash\necho deploy\n");
+  fs.writeFileSync(path.join(root, "Makefile"), "build:\n\techo build\n");
+  const requests = [];
+  const native = createNativeCoreClient({ native: observedNativeRequests(requests), sourceAuthority: "rust" });
+  const javascript = createJsCoreClient();
+  context.after(async () => {
+    await native.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const graph = await native.scan(root);
+  const oracle = javascript.scan(root);
+  assert.equal(createCoreCompatibilityDigest(graph), createCoreCompatibilityDigest(oracle));
+  assert.deepEqual(graph.stats, oracle.stats);
+  const shell = graph.nodes.find((node) => node.kind === "file" && node.path === "scripts/deploy.sh");
+  assert.equal(shell.analysis.parser, "inventory");
+  assert.equal(shell.analysis.status, "inventory-only");
+  assert.equal(shell.analysis.confidence, "not-analyzed");
+  assert.equal(shell.analysis.reason, "No structural adapter registered for .sh.");
+  assert.ok(requests.some((request) => request.method === "refreshNativePersistentProject"));
+  assert.equal(requests.some((request) => request.method === "nativeJsStructuralFacts"), false);
+});
+
+test("strict Rust ephemeral session incrementally updates inventory-only files without reconciliation", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-inventory-only-events-"));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src", "index.ts"), "export const run = () => true;\n");
+  const shellPath = "scripts/deploy.sh";
+  fs.writeFileSync(path.join(root, ...shellPath.split("/")), "#!/usr/bin/env bash\necho deploy\n");
+  const native = createNativeCoreClient({ native: nativeClient(), sourceAuthority: "rust", sessionId: "inventory-only-events" });
+  const javascript = createJsCoreClient();
+  const sessionOptions = { persistIdentity: false, sessionProjectId: "session:inventory-only-events" };
+  context.after(async () => {
+    await native.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  await native.scan(root, { persistIdentity: false });
+  javascript.scan(root, sessionOptions);
+
+  fs.appendFileSync(path.join(root, ...shellPath.split("/")), "echo changed\n");
+  let graph = await native.refresh(root, { persistIdentity: false, changedPaths: [shellPath] });
+  let oracle = javascript.refresh(root, { ...sessionOptions, changedPaths: [shellPath] });
+  assert.equal(createCoreCompatibilityDigest(graph), createCoreCompatibilityDigest(oracle));
+  assert.equal(graph.analysis.refresh.analyzedFiles, 1);
+  assert.equal(graph.nodes.find((node) => node.path === shellPath).analysis.status, "inventory-only");
+
+  const makefilePath = "Makefile";
+  fs.writeFileSync(path.join(root, makefilePath), "build:\n\techo build\n");
+  graph = await native.refresh(root, { persistIdentity: false, changedPaths: [makefilePath] });
+  oracle = javascript.refresh(root, { ...sessionOptions, changedPaths: [makefilePath] });
+  assert.equal(createCoreCompatibilityDigest(graph), createCoreCompatibilityDigest(oracle));
+  assert.equal(graph.analysis.refresh.analyzedFiles, 1);
+  assert.equal(graph.nodes.find((node) => node.path === makefilePath).language, "makefile");
+
+  fs.rmSync(path.join(root, ...shellPath.split("/")));
+  graph = await native.refresh(root, { persistIdentity: false, changedPaths: [shellPath] });
+  oracle = javascript.refresh(root, { ...sessionOptions, changedPaths: [shellPath] });
+  assert.equal(createCoreCompatibilityDigest(graph), createCoreCompatibilityDigest(oracle));
+  assert.equal(graph.analysis.refresh.removedFiles, 1);
+  assert.equal(graph.nodes.some((node) => node.path === shellPath), false);
+  assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
+});
+
+test("strict Rust persistent session incrementally updates inventory-only files through the native SQLite lifecycle", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-persistent-inventory-only-events-"));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src", "index.ts"), "export const run = () => true;\n");
+  const shellPath = "scripts/deploy.sh";
+  fs.writeFileSync(path.join(root, ...shellPath.split("/")), "#!/usr/bin/env bash\necho deploy\n");
+  const requests = [];
+  const native = createNativeCoreClient({ native: observedNativeRequests(requests), sourceAuthority: "rust" });
+  const javascript = createJsCoreClient();
+  context.after(async () => {
+    await native.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  await native.scan(root);
+  javascript.scan(root);
+
+  fs.appendFileSync(path.join(root, ...shellPath.split("/")), "echo changed\n");
+  let graph = await native.refresh(root, { changedPaths: [shellPath] });
+  let oracle = javascript.refresh(root, { changedPaths: [shellPath] });
+  assert.equal(createCoreCompatibilityDigest(graph), createCoreCompatibilityDigest(oracle));
+  assert.equal(graph.analysis.refresh.analyzedFiles, 1);
+  assert.equal(graph.nodes.find((node) => node.path === shellPath).analysis.status, "inventory-only");
+
+  const makefilePath = "Makefile";
+  fs.writeFileSync(path.join(root, makefilePath), "build:\n\techo build\n");
+  graph = await native.refresh(root, { changedPaths: [makefilePath] });
+  oracle = javascript.refresh(root, { changedPaths: [makefilePath] });
+  assert.equal(createCoreCompatibilityDigest(graph), createCoreCompatibilityDigest(oracle));
+  assert.equal(graph.nodes.find((node) => node.path === makefilePath).language, "makefile");
+
+  fs.rmSync(path.join(root, ...shellPath.split("/")));
+  graph = await native.refresh(root, { changedPaths: [shellPath] });
+  oracle = javascript.refresh(root, { changedPaths: [shellPath] });
+  assert.equal(createCoreCompatibilityDigest(graph), createCoreCompatibilityDigest(oracle));
+  assert.equal(graph.analysis.refresh.removedFiles, 1);
+  assert.equal(graph.nodes.some((node) => node.path === shellPath), false);
+  assert.ok(requests.filter((request) => request.method === "refreshNativePersistentProject").length >= 4);
+});
+
+test("strict Rust source authority preserves JavaScript Unicode file ordering", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-unicode-order-"));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  for (const filename of ["Ångström.ts", "ábc.ts", "emoji-😀.ts", "e\u0301clair.ts", "Éclair.ts"]) {
+    fs.writeFileSync(path.join(root, "src", filename), `export const value = ${JSON.stringify(filename)};\n`);
+  }
+  const native = createNativeCoreClient({ native: nativeClient(), sourceAuthority: "rust" });
+  const javascript = createJsCoreClient();
+  context.after(async () => {
+    await native.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const graph = await native.scan(root);
+  const oracle = javascript.scan(root);
+  assert.equal(COLLATION_LOCALE, "en");
+  assert.deepEqual(graph.nodes, oracle.nodes);
+  assert.equal(createCoreCompatibilityDigest(graph), createCoreCompatibilityDigest(oracle));
+  // This exercises the Rust query authority against the JavaScript public
+  // query implementation. The matches include both precomposed and
+  // decomposed Unicode file names, so their result order must not come from
+  // the host machine's ambient locale.
+  const query = { query: "clair", scope: "all" };
+  assert.deepEqual(await native.findNodes(graph, query), javascript.findNodes(oracle, query));
 });
 
 test("strict Rust persistent lifecycle keeps the fact batch inside the native session", async (context) => {
@@ -559,6 +698,101 @@ test("strict Rust persistent lifecycle keeps the fact batch inside the native se
   assert.equal(requests.some((request) => request.method === "getNativeCurrentPublicGraph"), false);
 });
 
+test("strict Rust handle-only scan keeps public graph collections out of Node", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-handle-only-"));
+  fs.cpSync(FIXTURE, root, {
+    recursive: true,
+    filter: (source) => path.basename(source) !== ".flopeek",
+  });
+  const requests = [];
+  const native = createNativeCoreClient({ native: observedNativeRequests(requests), sourceAuthority: "rust" });
+  context.after(async () => {
+    await native.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  const graph = await native.scan(root, { nativeGraphHandle: true });
+  assert.equal(graph.analysis.graphState.transport, "handle-only");
+  assert.equal(Object.hasOwn(graph, "nodes"), false);
+  assert.equal(Object.hasOwn(graph, "edges"), false);
+  const refresh = requests.find((request) => request.method === "refreshNativePersistentProject");
+  assert.equal(refresh.params.returnPublicGraph, false);
+  assert.equal(Object.hasOwn(refresh.result, "graph"), false);
+  assert.equal(Object.hasOwn(refresh.result, "publicGraphEnvelope"), true);
+  assert.equal(Object.hasOwn(refresh.result.publicGraphEnvelope, "nodes"), false);
+
+  const matches = await native.findNodes(graph, { query: "validation" });
+  assert.ok(matches.results.length > 0);
+  const query = requests.find((request) => request.method === "findNodes");
+  assert.equal(Object.hasOwn(query.params, "batch"), false);
+  const overview = await native.getProjectOverview(graph, { mode: "overview", scope: "application", level: "feature" });
+  assert.ok(overview?.nodes?.length >= 0);
+  const node = matches.results[0];
+  assert.equal((await native.getNode(graph, node.id)).node.id, node.id);
+  assert.ok((await native.getContextCard(graph, node.id))?.card);
+  const flows = await native.getEntryFlows(graph);
+  const flow = Array.isArray(flows) ? flows[0] : flows.items?.[0] || flows.flows?.[0];
+  assert.ok(flow, "fixture must expose an application flow");
+  const lens = await native.getFlowProjection(graph, flow.id);
+  assert.equal(lens.flow.id, flow.id);
+  assert.ok((await native.getFlowContextCard(graph, flow.id))?.card);
+  const resolved = await native.resolveContextRef(graph, lens.flow.contextRef);
+  assert.equal(resolved.status, "current");
+  assert.equal(resolved.card?.kind, "flow");
+
+  const materialized = await native.scan(root);
+  assert.ok(Array.isArray(materialized.nodes));
+  assert.ok(requests.some((request) => request.method === "getNativeCurrentPublicGraph"));
+});
+
+test("native last-complete recovery keeps the StructuralFactBatch in Rust", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-last-complete-handle-"));
+  fs.cpSync(FIXTURE, root, {
+    recursive: true,
+    filter: (source) => path.basename(source) !== ".flopeek",
+  });
+  const writer = createNativeCoreClient({ native: nativeClient(), sourceAuthority: "rust" });
+  const requests = [];
+  const reader = createNativeCoreClient({ native: observedNativeRequests(requests), sourceAuthority: "rust" });
+  context.after(async () => {
+    await writer.close();
+    await reader.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  const expected = await writer.scan(root);
+  const restored = await reader.getLastCompleteGraph(root);
+  assert.ok(restored);
+  assert.equal(createCoreCompatibilityDigest(restored), createCoreCompatibilityDigest(expected));
+  const recovery = requests.find((request) => request.method === "getNativeCurrentPublicGraph");
+  assert.ok(recovery);
+  assert.equal(Object.hasOwn(recovery.result, "batch"), false);
+  assert.equal(recovery.result.graphHandle.schemaVersion, "flopeek-native-graph-handle/v1");
+  await reader.findNodes(restored, { query: "submit" });
+  const query = requests.find((request) => request.method === "findNodes");
+  assert.equal(Object.hasOwn(query.params, "batch"), false);
+  assert.equal(query.params.factsDigest, recovery.result.graphHandle.factsDigest);
+});
+
+test("strict Rust no-cache handle-only scan keeps its public graph inside the native session", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-ephemeral-handle-"));
+  fs.cpSync(FIXTURE, root, { recursive: true, filter: (source) => path.basename(source) !== ".flopeek" });
+  const requests = [];
+  const native = createNativeCoreClient({ native: observedNativeRequests(requests), sourceAuthority: "rust" });
+  context.after(async () => { await native.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  const graph = await native.scan(root, { persistIdentity: false, nativeGraphHandle: true });
+  assert.equal(graph.analysis.graphState.transport, "handle-only");
+  assert.equal(Object.hasOwn(graph, "nodes"), false);
+  const refresh = requests.find((request) => request.method === "refreshNativeJsSessionGraph");
+  assert.equal(refresh.params.returnPublicGraph, false);
+  assert.equal(Object.hasOwn(refresh.result, "graph"), false);
+  assert.equal(Object.hasOwn(refresh.result.publicGraphEnvelope, "nodes"), false);
+  await native.findNodes(graph, { query: "validation" });
+  const query = requests.find((request) => request.method === "findNodes");
+  assert.equal(query.params.sessionGraph.schemaVersion, "flopeek-native-session-graph-handle/v1");
+  assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
+});
+
 test("strict Rust source authority supports a no-cache session without repository metadata", async (context) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-ephemeral-"));
   fs.cpSync(FIXTURE, root, {
@@ -579,7 +813,11 @@ test("strict Rust source authority supports a no-cache session without repositor
   assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
   assert.ok(requests.some((request) => request.method === "refreshNativeJsSessionGraph"));
   assert.equal(requests.some((request) => request.method === "nativeJsStructuralFacts"), false);
+  const firstRefresh = requests.find((request) => request.method === "refreshNativeJsSessionGraph");
+  const coldResponseBytes = firstRefresh.responseStats.responseBytes;
   const repeated = await native.refresh(root, { persistIdentity: false, changedPaths: [] });
+  const noOpRefresh = requests.filter((request) => request.method === "refreshNativeJsSessionGraph").at(-1);
+  const noOpResponseBytes = noOpRefresh.responseStats.responseBytes;
   assert.equal(repeated.state.graphVersion, graph.state.graphVersion);
   assert.deepEqual(repeated.analysis.refresh, {
     strategy: "incremental-content-analysis",
@@ -589,8 +827,18 @@ test("strict Rust source authority supports a no-cache session without repositor
     removedFiles: 0,
     changedPaths: [],
   });
-  assert.equal(requests.filter((request) => request.method === "refreshNativeJsSessionGraph").length, 1);
-  assert.equal(requests.filter((request) => request.method === "refreshNativeSessionGraph").length, 1);
+  assert.equal(requests.filter((request) => request.method === "refreshNativeJsSessionGraph").length, 2);
+  assert.equal(requests.filter((request) => request.method === "refreshNativeSessionGraph").length, 0);
+  assert.ok(noOpResponseBytes < coldResponseBytes, "no-op session refresh must omit immutable public graph collections from JSONL");
+  await native.findNodes(repeated, { query: "submit" });
+  const nativeQuery = requests.find((request) => request.method === "findNodes");
+  assert.ok(nativeQuery);
+  assert.equal(nativeQuery.params.batch, undefined);
+  assert.equal(nativeQuery.params.sessionGraph.schemaVersion, "flopeek-native-session-graph-handle/v1");
+  assert.equal(nativeQuery.params.sessionGraph.projectId, repeated.project.projectId);
+  assert.match(nativeQuery.params.sessionGraph.factsDigest, /^sha256:[a-f0-9]{64}$/);
+  assert.equal(nativeQuery.params.sessionGraph.persistence, "session-memory");
+  assert.equal(nativeQuery.params.sessionGraph.publicGraphVersion, repeated.state.graphVersion);
   assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
 });
 
@@ -717,14 +965,18 @@ test("strict Rust ephemeral identity matches JavaScript session identity when a 
   assert.equal(fs.existsSync(path.join(root, ".flopeek", "project.json")), false);
 });
 
-test("Rust JS/TS source authority preserves cold graph parity across every eligible baseline fixture", async (context) => {
+test("strict Rust source authority preserves cold graph parity across every eligible baseline fixture", async (context) => {
   const eligible = new Set([
     "commonjs-call-flow",
+    "django-management-command-flow",
+    "framework-command-flow",
     "legacy-handoff",
     "monorepo-package-selection",
     "next-request-flow",
     "node-cron-schedule-flow",
     "package-script-flow",
+    "php-package-flow",
+    "python-payment-flow",
     "typescript-order-flow",
   ]);
   const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-source-corpus-"));
@@ -747,24 +999,137 @@ test("Rust JS/TS source authority preserves cold graph parity across every eligi
     assert.deepEqual(graph.stats, oracle.stats, fixture.id);
     compared += 1;
   }
-  assert.equal(compared, 7);
+  assert.equal(compared, 11);
 });
 
-test("strict Rust source authority rejects an unpromoted adapter before graph promotion", async (context) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-source-unsupported-"));
+test("strict Rust source authority uses its Python adapter rather than the JavaScript parser host", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-source-python-"));
   fs.cpSync(path.join(ROOT, "test", "fixtures", "python-payment-flow"), root, {
     recursive: true,
     filter: (source) => path.basename(source) !== ".flopeek",
   });
-  const native = createNativeCoreClient({ native: nativeClient(), sourceAuthority: "rust" });
+  const requests = [];
+  const native = createNativeCoreClient({ native: observedNativeRequests(requests), sourceAuthority: "rust" });
+  const javascript = createJsCoreClient();
   context.after(async () => {
     await native.close();
     fs.rmSync(root, { recursive: true, force: true });
   });
-  await assert.rejects(native.scan(root), (error) => {
-    assert.equal(error.code, "native-source-adapter-unavailable");
-    assert.ok(error.unsupportedPaths.every((candidate) => candidate.endsWith(".py")));
-    return true;
+  const graph = await native.scan(root);
+  const oracle = javascript.scan(root);
+  assert.equal(createCoreCompatibilityDigest(graph), createCoreCompatibilityDigest(oracle));
+  assert.ok(requests.some((request) => request.method === "refreshNativePersistentProject"));
+  assert.equal(requests.some((request) => request.method === "nativeJsStructuralFacts"), false);
+});
+
+test("strict Rust source authority uses its PHP adapter rather than the JavaScript parser host", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-source-php-"));
+  fs.cpSync(path.join(ROOT, "test", "fixtures", "php-package-flow"), root, {
+    recursive: true,
+    filter: (source) => path.basename(source) !== ".flopeek",
   });
-  await assert.rejects(native.getLastCompleteGraph(root), { code: "missing-native-graph" });
+  const requests = [];
+  const native = createNativeCoreClient({ native: observedNativeRequests(requests), sourceAuthority: "rust" });
+  const javascript = createJsCoreClient();
+  context.after(async () => {
+    await native.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const graph = await native.scan(root);
+  const oracle = javascript.scan(root);
+  assert.equal(createCoreCompatibilityDigest(graph), createCoreCompatibilityDigest(oracle));
+  assert.ok(requests.some((request) => request.method === "refreshNativePersistentProject"));
+  assert.equal(requests.some((request) => request.method === "nativeJsStructuralFacts"), false);
+});
+
+test("strict Rust source authority resolves Rust crate, self, and super imports without the JavaScript parser host", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-source-rust-"));
+  fs.writeFileSync(path.join(root, "Cargo.toml"), "[package]\nname = \"rust-source-example\"\nversion = \"0.1.0\"\n");
+  fs.mkdirSync(path.join(root, "src", "area", "child"), { recursive: true });
+  fs.writeFileSync(path.join(root, "src", "lib.rs"), "mod helpers;\nmod area;\nuse crate::helpers::{parse as parse_value};\nuse crate::helpers::parse as parse_direct;\n\npub fn execute_root() { parse_value(); }\npub fn execute_direct() { parse_direct(); }\n");
+  fs.writeFileSync(path.join(root, "src", "helpers.rs"), "pub fn parse() {}\n");
+  fs.writeFileSync(path.join(root, "src", "area", "mod.rs"), "pub mod child;\npub mod shared;\n");
+  fs.writeFileSync(path.join(root, "src", "area", "child.rs"), "mod local;\nuse super::shared::normalize;\nuse self::local::normalize as normalize_local;\n\npub fn execute_child() { normalize(); }\npub fn execute_self() { normalize_local(); }\n");
+  fs.writeFileSync(path.join(root, "src", "area", "shared.rs"), "pub fn normalize() {}\n");
+  fs.writeFileSync(path.join(root, "src", "area", "child", "local.rs"), "pub fn normalize() {}\n");
+  const requests = [];
+  const native = createNativeCoreClient({ native: observedNativeRequests(requests), sourceAuthority: "rust" });
+  const javascript = createJsCoreClient();
+  context.after(async () => {
+    await native.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const graph = await native.scan(root);
+  const oracle = javascript.scan(root);
+  assert.equal(createCoreCompatibilityDigest(graph), createCoreCompatibilityDigest(oracle));
+  assert.deepEqual(graph.stats, oracle.stats);
+  assert.ok(requests.some((request) => request.method === "refreshNativePersistentProject"));
+  assert.equal(requests.some((request) => request.method === "nativeJsStructuralFacts"), false);
+});
+
+test("strict Rust source authority uses its Java adapter without turning Java standard imports into externals", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-source-java-"));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "java-source-example" }));
+  fs.writeFileSync(path.join(root, "src", "OrdersService.java"), "import java.util.List;\nimport com.acme.audit.Audit;\n\nclass OrdersService {\n  static boolean submit(String id) { return validate(id); }\n  static boolean validate(String id) { return id != null; }\n  void helper() {}\n}\n");
+  const requests = [];
+  const native = createNativeCoreClient({ native: observedNativeRequests(requests), sourceAuthority: "rust" });
+  const javascript = createJsCoreClient();
+  context.after(async () => {
+    await native.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const graph = await native.scan(root);
+  const oracle = javascript.scan(root);
+  assert.equal(createCoreCompatibilityDigest(graph), createCoreCompatibilityDigest(oracle));
+  assert.deepEqual(graph.stats, oracle.stats);
+  assert.ok(graph.nodes.some((node) => node.id === "external:com.acme.audit.Audit"));
+  assert.equal(graph.nodes.some((node) => node.id === "external:java.util.List"), false);
+  assert.ok(requests.some((request) => request.method === "refreshNativePersistentProject"));
+  assert.equal(requests.some((request) => request.method === "nativeJsStructuralFacts"), false);
+});
+
+test("strict Rust source authority uses its Svelte adapter without the JavaScript parser host", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-source-svelte-"));
+  fs.mkdirSync(path.join(root, "src", "routes"), { recursive: true });
+  fs.mkdirSync(path.join(root, "src", "lib"), { recursive: true });
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "svelte-source-example" }));
+  fs.writeFileSync(path.join(root, "src", "routes", "+page.svelte"), "<script context=\"module\">\n  import meta from '../lib/meta.js';\n</script>\n<script lang=\"ts\">\n  import Card from '../lib/Card.svelte';\n</script>\n<Card />\n");
+  fs.writeFileSync(path.join(root, "src", "lib", "Card.svelte"), "<h1>Card</h1>\n");
+  fs.writeFileSync(path.join(root, "src", "lib", "meta.js"), "export default { title: 'Card' };\n");
+  const requests = [];
+  const native = createNativeCoreClient({ native: observedNativeRequests(requests), sourceAuthority: "rust" });
+  const javascript = createJsCoreClient();
+  context.after(async () => {
+    await native.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const graph = await native.scan(root);
+  const oracle = javascript.scan(root);
+  assert.equal(createCoreCompatibilityDigest(graph), createCoreCompatibilityDigest(oracle));
+  assert.deepEqual(graph.stats, oracle.stats);
+  assert.equal(graph.nodes.find((node) => node.path === "src/routes/+page.svelte").analysis.parser, "svelte-static-ast");
+  assert.ok(graph.edges.some((edge) => edge.type === "imports" && edge.source === "file:src/routes/+page.svelte" && edge.target === "file:src/lib/Card.svelte"));
+  assert.ok(requests.some((request) => request.method === "refreshNativePersistentProject"));
+  assert.equal(requests.some((request) => request.method === "nativeJsStructuralFacts"), false);
+});
+
+test("strict Rust source authority uses its bundled C# adapter without the JavaScript parser host", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-source-csharp-"));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "csharp-source-example" }));
+  fs.writeFileSync(path.join(root, "src", "OrdersService.cs"), "using System;\nusing Acme.Data;\nnamespace Acme; public class OrdersService { public void Submit() {} private int Count() => 1; }");
+  const requests = [];
+  const native = createNativeCoreClient({ native: observedNativeRequests(requests), sourceAuthority: "rust" });
+  context.after(async () => {
+    await native.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const graph = await native.scan(root);
+  assert.equal(graph.nodes.find((node) => node.path === "src/OrdersService.cs").analysis.parser, "csharp-static-ast");
+  assert.deepEqual(graph.nodes.find((node) => node.id === "symbol:src/OrdersService.cs:class:OrdersService").methods, ["Submit", "Count"]);
+  assert.ok(graph.nodes.some((node) => node.id === "external:System"));
+  assert.ok(graph.nodes.some((node) => node.id === "external:Acme.Data"));
+  assert.ok(requests.some((request) => request.method === "refreshNativePersistentProject"));
+  assert.equal(requests.some((request) => request.method === "nativeJsStructuralFacts"), false);
 });

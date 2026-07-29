@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { CORE_MODE_SCHEMA, CoreModeError, requestedCoreMode, selectCoreMode } = require("../../src/core-mode");
-const { createConfiguredCoreClient, createSurfaceCoreClient, createSurfaceCoreRuntime } = require("../../src/core-runtime");
+const { createConfiguredCoreClient, createSurfaceCoreClient, createSurfaceCoreRuntime, observeCoreRuntime } = require("../../src/core-runtime");
 const { createJsCoreClient } = require("../../src/js-core-client");
 
 function completeEvidence() {
@@ -145,6 +145,65 @@ test("configured native core falls back to JavaScript only before native authori
   assert.equal(selected.implementation, "javascript");
   assert.deepEqual(selected.fallback, { active: true, reason: "native-bootstrap-failed-before-authority" });
   await selected.close();
+});
+
+test("surface runtime records an actual bootstrap fallback instead of only its native preflight selection", async () => {
+  const javascript = {
+    ...createJsCoreClient(),
+    scan: async () => ({ project: { projectId: "project:js-fallback" } }),
+  };
+  const nativeCore = {
+    ...javascript,
+    implementation: "native-experimental",
+    sourceAuthority: "rust",
+    scan: async () => { throw new Error("native bootstrap failed"); },
+  };
+  const runtime = createSurfaceCoreRuntime({
+    coreMode: "native-experimental",
+    nativeCore,
+    javascript,
+  });
+  await runtime.core.scan("ignored");
+  const observed = observeCoreRuntime(runtime.selection, runtime.core);
+  assert.equal(observed.requestedMode, "native-experimental");
+  assert.equal(observed.policySelectedImplementation, "native");
+  assert.equal(observed.selectedImplementation, "javascript");
+  assert.equal(observed.sourceAuthority, null);
+  assert.deepEqual(observed.execution, {
+    selectedImplementation: "javascript",
+    sourceAuthority: null,
+    parserHost: null,
+    factEnvelopeHost: null,
+    fallback: { active: true, reason: "native-bootstrap-failed-before-authority" },
+  });
+  assert.deepEqual(observed.fallback, {
+    reason: "native-bootstrap-failed-before-authority",
+    required: "automatic-javascript-fallback-required",
+    gateReasons: runtime.selection.gate.reasons,
+    active: true,
+  });
+  await runtime.core.close();
+});
+
+test("surface runtime exposes strict Rust source authority in its execution record", async () => {
+  const nativeCore = {
+    ...createJsCoreClient(),
+    implementation: "native-experimental",
+    sourceAuthority: "rust",
+    parserHost: "rust-tree-sitter-source/v17",
+    factEnvelopeHost: "rust-native-structural-batch/v1",
+  };
+  const runtime = createSurfaceCoreRuntime({ coreMode: "native-experimental", nativeCore });
+  const observed = observeCoreRuntime(runtime.selection, runtime.core);
+  assert.equal(observed.selectedImplementation, "native");
+  assert.deepEqual(observed.execution, {
+    selectedImplementation: "native",
+    sourceAuthority: "rust",
+    parserHost: "rust-tree-sitter-source/v17",
+    factEnvelopeHost: "rust-native-structural-batch/v1",
+    fallback: { active: false, reason: null },
+  });
+  await runtime.core.close();
 });
 
 test("configured native core does not create a JavaScript authority after native promotion", async () => {

@@ -7,6 +7,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { createHash } = require("node:crypto");
+const { nativePlatformPackageName } = require("../src/native-platform-targets");
 
 function argument(name) {
   const index = process.argv.indexOf(name);
@@ -23,14 +24,7 @@ const os = argument("--os");
 const cpu = argument("--cpu");
 const binary = argument("--binary");
 const output = argument("--output");
-const expectedPackage = {
-  "win32:x64": "@flopeek/native-win32-x64",
-  "win32:arm64": "@flopeek/native-win32-arm64",
-  "darwin:x64": "@flopeek/native-darwin-x64",
-  "darwin:arm64": "@flopeek/native-darwin-arm64",
-  "linux:x64": "@flopeek/native-linux-x64-gnu",
-  "linux:arm64": "@flopeek/native-linux-arm64-gnu",
-}[`${os}:${cpu}`];
+const expectedPackage = nativePlatformPackageName(os, cpu);
 if (!packageName || !os || !cpu || !binary || !output) {
   fail("Usage: package-native-platform --package @flopeek/native-… --os win32 --cpu x64 --binary path --output directory");
 } else if (packageName !== expectedPackage) {

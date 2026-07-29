@@ -12,6 +12,7 @@ const { readRepositoryScope } = require("./scope");
 const { advanceSessionGraph } = require("./session-graph-state");
 const { assertCoreClient } = require("./core-client");
 const { selectCoreMode } = require("./core-mode");
+const { observeCoreRuntime } = require("./core-runtime");
 const { createJsCoreClient } = require("./js-core-client");
 const { createNativeIncrementalSession, scanWithNativeIncremental } = require("./native-incremental-coordinator");
 
@@ -103,6 +104,7 @@ function createScanCoordinator(inputRoot, options = {}) {
   });
   const sessionProjectId = cacheEnabled ? null : `session:${randomUUID()}`;
   const core = assertCoreClient(options.coreClient || createJsCoreClient());
+  const effectiveCoreRuntime = () => observeCoreRuntime(coreMode, core);
   const nativeStorageAuthority = () => core.implementation === "native-experimental";
   let graph = null;
   let previousGraph = null;
@@ -185,7 +187,7 @@ function createScanCoordinator(inputRoot, options = {}) {
         allowed: status === "complete" && cacheEnabled,
         performed: details.cachePromoted === true,
       },
-      coreRuntime: details.coreRuntime || coreMode,
+      coreRuntime: details.coreRuntime || effectiveCoreRuntime(),
       refresh: details.refresh || null,
       failure: details.failure || null,
       limitations: [
@@ -273,7 +275,7 @@ function createScanCoordinator(inputRoot, options = {}) {
               discovery: nativeDiscovery,
               cachePromoted: false,
               refresh: graph.analysis.refresh,
-              coreRuntime: { ...coreMode, boundedNative: { status: "completed", sourceAuthority: "rust" } },
+              coreRuntime: { ...effectiveCoreRuntime(), boundedNative: { status: "completed", sourceAuthority: "rust" } },
             }),
           };
         }
@@ -378,7 +380,7 @@ function createScanCoordinator(inputRoot, options = {}) {
           refresh: graph.analysis.refresh,
           coreRuntime: nativeProfile
             ? {
-              ...coreMode,
+              ...effectiveCoreRuntime(),
               nativeShadow: {
                 status: "completed",
                 transport: nativeProfile.profile.transport,
@@ -395,13 +397,13 @@ function createScanCoordinator(inputRoot, options = {}) {
             }
             : coreMode.nativeShadow
               ? {
-                ...coreMode,
+                ...effectiveCoreRuntime(),
                 nativeShadow: {
                   status: "skipped",
                   reason: "cache-disabled-native-sqlite-prohibited",
                 },
               }
-            : coreMode,
+            : effectiveCoreRuntime(),
         }),
       };
     } catch (error) {
@@ -443,7 +445,7 @@ function createScanCoordinator(inputRoot, options = {}) {
     currentOutcome: () => outcome,
     bounded,
     cacheEnabled,
-    coreMode,
+    get coreMode() { return effectiveCoreRuntime(); },
     close: async () => {
       if (!nativeSession) return { closed: false, reason: "no-native-session" };
       const session = nativeSession;

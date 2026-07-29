@@ -18,6 +18,7 @@ const { persistGraphState } = require("./graph-state");
 const { advanceSessionGraph } = require("./session-graph-state");
 const { resolveProjectIdentity } = require("./project-identity");
 const { createFrameworkCommandFlowEntry, createHttpFlowEntry, createNodeCronScheduleFlowEntry, createPackageScriptFlowEntry, isSupportedFlowEntryNode } = require("./flow-entry");
+const { compareCollation } = require("./collation");
 
 const ADAPTER_REGISTRY = getAdapterRegistry();
 const RESOLVE_EXTENSIONS = ["", ".js", ".cjs", ".mjs", ".jsx", ".ts", ".tsx", ".svelte", ".vue", ".json"];
@@ -462,7 +463,7 @@ function staticTypeLiteralFields(sourceFile, typeNode, relativePath) {
       evidence: evidenceFor(sourceFile, member, relativePath, "typescript-ast"),
     });
   }
-  return fields.sort((left, right) => left.name.localeCompare(right.name));
+  return fields.sort((left, right) => compareCollation(left.name, right.name));
 }
 
 function staticObjectLiteralFields(sourceFile, object, relativePath) {
@@ -482,7 +483,7 @@ function staticObjectLiteralFields(sourceFile, object, relativePath) {
     }
     return null;
   }
-  return fields.sort((left, right) => left.name.localeCompare(right.name));
+  return fields.sort((left, right) => compareCollation(left.name, right.name));
 }
 
 function requestJsonTypeLiteral(call) {
@@ -576,7 +577,7 @@ function nextRouteHandlerContracts(sourceFile, relativePath, routeInfo) {
     });
     const requestFields = requestCandidates.length === 1 ? requestCandidates[0] : null;
     const responseVariants = [...new Map(variants.map((variant) => [`${variant.status}:${variant.fields.map((field) => `${field.name}:${field.type}:${field.required}`).join(",")}`, variant])).values()]
-      .sort((left, right) => left.status - right.status || left.fields.map((field) => field.name).join(",").localeCompare(right.fields.map((field) => field.name).join(",")));
+      .sort((left, right) => left.status - right.status || compareCollation(left.fields.map((field) => field.name).join(","), right.fields.map((field) => field.name).join(",")));
     contracts.set(handler.name, {
       schemaVersion: "flopeek-next-route-contract/v1",
       adapter: "next-route-handler",
@@ -1573,7 +1574,7 @@ function analyzeSvelte(content, relativePath, root) {
       if (value.type === "ImportDeclaration" && typeof value.source?.value === "string") {
         const start = typeof value.start === "number" ? value.start : 0;
         const end = typeof value.end === "number" ? value.end : start;
-        imports.push({ specifier: value.source.value, evidence: { parser: "svelte-compiler", file: relativePath, range: { start: positionFromOffset(content, start), end: positionFromOffset(content, end) } } });
+        imports.push({ specifier: value.source.value, evidence: { parser: "svelte-static-ast", file: relativePath, range: { start: positionFromOffset(content, start), end: positionFromOffset(content, end) } } });
       }
       for (const child of Object.values(value)) {
         if (Array.isArray(child)) child.forEach(visit);
@@ -1582,9 +1583,9 @@ function analyzeSvelte(content, relativePath, root) {
     };
     visit(ast.module);
     visit(ast.instance);
-    return { imports, endpoints: [], requests: [], calls: [], methods: [], symbols: [], analysis: { parser: "svelte-compiler", status: "parsed", confidence: "exact", diagnostics: 0 } };
+    return { imports, endpoints: [], requests: [], calls: [], methods: [], symbols: [], analysis: { parser: "svelte-static-ast", status: "parsed", confidence: "exact", diagnostics: 0 } };
   } catch (error) {
-    return { imports: [], endpoints: [], requests: [], calls: [], methods: [], symbols: [], analysis: { parser: "svelte-compiler", status: "parse-failed", confidence: "not-analyzed", reason: error.message } };
+    return { imports: [], endpoints: [], requests: [], calls: [], methods: [], symbols: [], analysis: { parser: "svelte-static-ast", status: "parse-failed", confidence: "not-analyzed", reason: error.message } };
   }
 }
 
@@ -1635,7 +1636,7 @@ function summarizeFileCoverage(records) {
     summary,
     byLanguage: [...byLanguage.values()]
       .map(({ parsers, ...languageSummary }) => ({ ...languageSummary, parsers: [...parsers].sort() }))
-      .sort((left, right) => left.language.localeCompare(right.language)),
+      .sort((left, right) => compareCollation(left.language, right.language)),
     interpretation: "Coverage counts syntax-tree analysis status, not runtime execution coverage or relationship precision.",
   };
 }
@@ -1771,7 +1772,7 @@ function createGoModuleResolver(root, sourcePaths = null) {
   const modules = repositoryFilesNamed("go.mod", root)
     .map((goModPath) => ({ modulePath: readGoModulePath(goModPath), directory: path.dirname(goModPath) }))
     .filter((entry) => entry.modulePath)
-    .sort((left, right) => right.modulePath.length - left.modulePath.length || left.modulePath.localeCompare(right.modulePath));
+    .sort((left, right) => right.modulePath.length - left.modulePath.length || compareCollation(left.modulePath, right.modulePath));
   const packageFiles = new Map();
   const goFiles = sourcePaths
     ? sourcePaths.map((relativePath) => path.resolve(root, relativePath)).filter((candidate) => extensionOf(candidate) === ".go")
@@ -1783,7 +1784,7 @@ function createGoModuleResolver(root, sourcePaths = null) {
     if (!packageFiles.has(directory)) packageFiles.set(directory, []);
     packageFiles.get(directory).push(absolutePath);
   }
-  for (const files of packageFiles.values()) files.sort((left, right) => left.localeCompare(right));
+  for (const files of packageFiles.values()) files.sort(compareCollation);
 
   return (specifier) => {
     const module = modules.find((entry) => specifier === entry.modulePath || specifier.startsWith(`${entry.modulePath}/`));
@@ -1808,7 +1809,7 @@ function parseProjectConfig(configPath) {
   const parsed = ts.parseJsonConfigFileContent(file.config, ts.sys, path.dirname(configPath), undefined, configPath);
   const paths = Object.entries(parsed.options.paths || {})
     .filter(([, targets]) => Array.isArray(targets) && targets.every((target) => typeof target === "string"))
-    .sort(([left], [right]) => right.replace("*", "").length - left.replace("*", "").length || left.localeCompare(right));
+    .sort(([left], [right]) => right.replace("*", "").length - left.replace("*", "").length || compareCollation(left, right));
   if (!paths.length && !parsed.options.baseUrl) return null;
   return { baseUrl: parsed.options.baseUrl || path.dirname(configPath), paths };
 }
@@ -2013,7 +2014,7 @@ function createBundlerAliasResolver(root) {
         .map((filename) => path.join(directory, filename))
         .filter((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile())
         .flatMap((configPath) => parseBundlerConfig(configPath, root))
-        .sort((left, right) => right.find.length - left.find.length || left.find.localeCompare(right.find));
+        .sort((left, right) => right.find.length - left.find.length || compareCollation(left.find, right.find));
       aliasCache.set(directory, aliases);
     }
     return aliasCache.get(directory);
@@ -2229,7 +2230,7 @@ function workspaceTargets(packageJson, subpath) {
       if (!subpath && isRootExportConditionMap(exportsField)) return exportTargets(exportsField);
       const wildcardKey = Object.keys(exportsField)
         .filter((candidate) => candidate.includes("*"))
-        .sort((left, right) => right.replace("*", "").length - left.replace("*", "").length || left.localeCompare(right))
+        .sort((left, right) => right.replace("*", "").length - left.replace("*", "").length || compareCollation(left, right))
         .find((candidate) => pathPatternMatch(candidate, key) !== null);
       if (wildcardKey) {
         const wildcardValue = pathPatternMatch(wildcardKey, key);
@@ -2309,7 +2310,7 @@ function packageImportTargets(packageJson, specifier) {
   if (Object.hasOwn(importsField, specifier)) return exportTargets(importsField[specifier]);
   const wildcardKey = Object.keys(importsField)
     .filter((candidate) => candidate.startsWith("#") && candidate.includes("*"))
-    .sort((left, right) => right.replace("*", "").length - left.replace("*", "").length || left.localeCompare(right))
+    .sort((left, right) => right.replace("*", "").length - left.replace("*", "").length || compareCollation(left, right))
     .find((candidate) => pathPatternMatch(candidate, specifier) !== null);
   if (!wildcardKey) return [];
   const wildcardValue = pathPatternMatch(wildcardKey, specifier);
@@ -2440,7 +2441,7 @@ function localPackageManifestPaths(root, records) {
       if (directory === root || path.dirname(directory) === directory) break;
     }
   }
-  return [...manifests].sort((left, right) => left.localeCompare(right));
+  return [...manifests].sort(compareCollation);
 }
 
 function packageScriptEntries(root, records, byRelativePath, descriptions) {
@@ -2452,7 +2453,7 @@ function packageScriptEntries(root, records, byRelativePath, descriptions) {
     const manifest = safelyReadJson(manifestPath, null);
     const manifestRelativePath = toPosix(path.relative(root, manifestPath));
     if (!manifest || typeof manifest.scripts !== "object" || Array.isArray(manifest.scripts) || manifest.scripts === null) continue;
-    for (const scriptName of Object.keys(manifest.scripts).sort((left, right) => left.localeCompare(right))) {
+    for (const scriptName of Object.keys(manifest.scripts).sort(compareCollation)) {
       const command = literalScriptTokens(manifest.scripts[scriptName]);
       if (command.status !== "supported") {
         unsupported.push({ manifest: manifestRelativePath, scriptName, reason: command.reason });
@@ -2857,9 +2858,9 @@ function structuralImportFacts(sourceRecords, graphContext, options = {}) {
       externalImports.push({ specifier: imported.specifier, nodeType: external.type, metadata });
     }
     factsByPath.set(record.relativePath, {
-      resolvedImports: resolvedImports.sort((left, right) => left.specifier.localeCompare(right.specifier) || left.targetPath.localeCompare(right.targetPath)),
-      resolvedPackages: resolvedPackages.sort((left, right) => left.specifier.localeCompare(right.specifier) || left.packagePath.localeCompare(right.packagePath)),
-      externalImports: externalImports.sort((left, right) => left.specifier.localeCompare(right.specifier) || left.nodeType.localeCompare(right.nodeType)),
+      resolvedImports: resolvedImports.sort((left, right) => compareCollation(left.specifier, right.specifier) || compareCollation(left.targetPath, right.targetPath)),
+      resolvedPackages: resolvedPackages.sort((left, right) => compareCollation(left.specifier, right.specifier) || compareCollation(left.packagePath, right.packagePath)),
+      externalImports: externalImports.sort((left, right) => compareCollation(left.specifier, right.specifier) || compareCollation(left.nodeType, right.nodeType)),
     });
   }
   if (profile) {
@@ -2867,7 +2868,7 @@ function structuralImportFacts(sourceRecords, graphContext, options = {}) {
       phase: "native-fact-import-resolution-breakdown",
       languages: [...resolutionProfile.values()]
         .map((entry) => ({ ...entry, milliseconds: Number(entry.milliseconds.toFixed(3)) }))
-        .sort((left, right) => right.milliseconds - left.milliseconds || left.language.localeCompare(right.language)),
+        .sort((left, right) => right.milliseconds - left.milliseconds || compareCollation(left.language, right.language)),
     });
   }
   return factsByPath;
@@ -2914,11 +2915,11 @@ function structuralEntryFacts(root, sourceRecords) {
   ].map((node) => {
     const { id, kind: _kind, type: _type, path: _path, ...metadata } = node;
     return [id, metadata];
-  }).sort(([left], [right]) => left.localeCompare(right)));
+  }).sort(([left], [right]) => compareCollation(left, right)));
   return {
     packageCommands: packageEntries.supported
       .map(({ manifest, scriptName, targetPath }) => ({ manifest, scriptName, targetPath }))
-      .sort((left, right) => left.manifest.localeCompare(right.manifest) || left.scriptName.localeCompare(right.scriptName)),
+      .sort((left, right) => compareCollation(left.manifest, right.manifest) || compareCollation(left.scriptName, right.scriptName)),
     entryMetadata,
     edgeMetadata: Object.fromEntries([
       ...packageEntries.edges,
@@ -2927,7 +2928,7 @@ function structuralEntryFacts(root, sourceRecords) {
     ].map((edge) => [
       `${edge.source}\u0000${edge.target}\u0000${edge.type}`,
       { confidence: edge.confidence, evidence: edge.evidence },
-    ]).sort(([left], [right]) => left.localeCompare(right))),
+    ]).sort(([left], [right]) => compareCollation(left, right))),
     entryPoints: {
       schemaVersion: "flopeek-static-entry-inventory/v1",
       supported: {
@@ -3052,7 +3053,7 @@ function structuralEdgeFacts(sourceRecords, importFacts, entryFacts) {
     }
   }
   for (const [key, value] of Object.entries(entryFacts?.edgeMetadata || {})) metadata.set(key, value);
-  return Object.fromEntries([...metadata.entries()].sort(([left], [right]) => left.localeCompare(right)));
+  return Object.fromEntries([...metadata.entries()].sort(([left], [right]) => compareCollation(left, right)));
 }
 
 // Public envelope fields are parser/resolver/session facts, not graph
@@ -3322,7 +3323,7 @@ function buildGraphFromRecords(root, sourceRecords, refresh = null, graphContext
   edges.push(...scheduleEntries.edges);
 
   const uniqueEdges = [...new Map(edges.map((edge) => [`${edge.source}|${edge.target}|${edge.type}`, edge])).values()];
-  const sortedNodes = nodes.sort((left, right) => left.label.localeCompare(right.label));
+  const sortedNodes = nodes.sort((left, right) => compareCollation(left.label, right.label));
   const coverage = summarizeFileCoverage(records);
   if (publicEnvelope) {
     const graph = {
@@ -3766,7 +3767,7 @@ function createRepositoryScanner(inputRoot, options = {}) {
     });
     return {
       root,
-      sourceRecords: [...records.values()].sort((left, right) => left.relativePath.localeCompare(right.relativePath)),
+      sourceRecords: [...records.values()].sort((left, right) => compareCollation(left.relativePath, right.relativePath)),
       refresh,
       graphContext,
       repositoryScope,
@@ -3808,7 +3809,7 @@ function createRepositoryScanner(inputRoot, options = {}) {
 
   const snapshotRecords = () => [...records.values()]
     .map(({ absolutePath: _absolutePath, ...record }) => record)
-    .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+    .sort((left, right) => compareCollation(left.relativePath, right.relativePath));
 
   const sourceBatchStatus = () => ({ ...sourceBatchStats, pending: initialSourceContents.size });
   return { root, prepare, assemble, scan, snapshotRecords, sourceBatchStatus };

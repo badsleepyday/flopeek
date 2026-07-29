@@ -7,7 +7,7 @@ use std::path::{Component, Path, PathBuf};
 use crate::js_facts::js_locale_compare;
 
 const RESOLVE_EXTENSIONS: &[&str] = &[
-    "", ".js", ".cjs", ".mjs", ".jsx", ".ts", ".tsx", ".svelte", ".vue", ".json",
+    "", ".js", ".cjs", ".mjs", ".jsx", ".ts", ".tsx", ".py", ".rs", ".svelte", ".vue", ".json",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,6 +87,82 @@ fn resolve_relative(
         .unwrap_or_else(|| Path::new(""));
     let base = normalize_relative(&parent.join(specifier))?;
     resolve_file(&base, known_paths).or_else(|| resolve_file(without_extension(&base), known_paths))
+}
+
+fn resolve_python_relative(
+    from_path: &str,
+    specifier: &str,
+    known_paths: &BTreeSet<String>,
+) -> Option<String> {
+    let dots = specifier.bytes().take_while(|byte| *byte == b'.').count();
+    if dots == 0 {
+        return None;
+    }
+    let mut directory = Path::new(from_path).parent()?.to_path_buf();
+    for _ in 1..dots {
+        directory = directory.parent()?.to_path_buf();
+    }
+    let module = specifier[dots..].replace('.', "/");
+    let base = normalize_relative(&directory.join(module))?;
+    resolve_file(&base, known_paths).or_else(|| resolve_file(without_extension(&base), known_paths))
+}
+
+fn rust_module_directory(from_path: &str) -> Option<PathBuf> {
+    let source = Path::new(from_path);
+    let parent = source.parent()?.to_path_buf();
+    let stem = source.file_stem()?.to_string_lossy();
+    if matches!(stem.as_ref(), "lib" | "main" | "mod") {
+        Some(parent)
+    } else {
+        Some(parent.join(stem.as_ref()))
+    }
+}
+
+fn resolve_rust_import(
+    _root: &Path,
+    from_path: &str,
+    specifier: &str,
+    known_paths: &BTreeSet<String>,
+) -> Option<String> {
+    let segments = specifier
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let first = *segments.first()?;
+    if !["crate", "self", "super"].contains(&first) {
+        return None;
+    }
+    let (base, consumed) = match first {
+        "crate" => (PathBuf::from("src"), 1),
+        "self" => (rust_module_directory(from_path)?, 1),
+        "super" => {
+            let supers = segments
+                .iter()
+                .take_while(|segment| **segment == "super")
+                .count();
+            let mut module = rust_module_directory(from_path)?;
+            for _ in 0..supers {
+                module = module.parent()?.to_path_buf();
+            }
+            (module, supers)
+        }
+        _ => return None,
+    };
+    let remaining = &segments[consumed..];
+    for length in (1..=remaining.len()).rev() {
+        let mut candidate = base.clone();
+        for segment in &remaining[..length] {
+            candidate.push(segment);
+        }
+        let candidate = normalize_relative(&candidate)?;
+        if let Some(resolved) = resolve_file(&candidate, known_paths) {
+            return Some(resolved);
+        }
+    }
+    if remaining.is_empty() {
+        return resolve_file(&normalize_relative(&base)?, known_paths);
+    }
+    None
 }
 
 fn read_json(path: &Path) -> Option<Value> {
@@ -272,6 +348,10 @@ fn is_node_builtin(specifier: &str) -> bool {
     .contains(&name)
 }
 
+fn is_java_standard_library(specifier: &str) -> bool {
+    specifier.starts_with("java.") || specifier.starts_with("javax.")
+}
+
 fn external_import(specifier: &str, dev_packages: &BTreeSet<String>) -> NativeExternalImport {
     let name = package_name(specifier);
     let dependency_kind = dependency_kind(specifier, dev_packages);
@@ -375,6 +455,15 @@ fn resolve_configured_alias(
     None
 }
 
+fn resolve_python_module(specifier: &str, known_paths: &BTreeSet<String>) -> Option<String> {
+    if specifier.starts_with('.') || !specifier.contains('.') {
+        return None;
+    }
+    let module = specifier.replace('.', "/");
+    resolve_file(&module, known_paths)
+        .or_else(|| resolve_file(&format!("src/{module}"), known_paths))
+}
+
 pub fn resolve_native_js_imports(
     root: &Path,
     facts: &BTreeMap<String, NativeJsFacts>,
@@ -391,10 +480,22 @@ pub fn resolve_native_js_imports(
             };
             for imported in &fact.structural.imports {
                 let specifier = imported.specifier.as_str();
-                let resolved = if specifier.starts_with('.') {
-                    resolve_relative(path, specifier, known_paths)
+                let resolved = if path.ends_with(".rs") {
+                    resolve_rust_import(root, path, specifier, known_paths)
+                } else if specifier.starts_with('.') {
+                    if path.ends_with(".py") {
+                        resolve_python_relative(path, specifier, known_paths)
+                    } else {
+                        resolve_relative(path, specifier, known_paths)
+                    }
                 } else {
-                    resolve_configured_alias(root, specifier, known_paths)
+                    resolve_configured_alias(root, specifier, known_paths).or_else(|| {
+                        if path.ends_with(".py") {
+                            resolve_python_module(specifier, known_paths)
+                        } else {
+                            None
+                        }
+                    })
                 };
                 if let Some(target_path) = resolved {
                     result.resolved_imports.push(NativeResolvedImport {
@@ -404,7 +505,10 @@ pub fn resolve_native_js_imports(
                 // The JavaScript scanner never turns an unresolved relative
                 // import (for example a CSS asset outside its resolver
                 // extensions) into an external dependency node.
-                } else if !specifier.starts_with('.') && !is_node_builtin(specifier) {
+                } else if !specifier.starts_with('.')
+                    && !is_node_builtin(specifier)
+                    && !is_java_standard_library(specifier)
+                {
                     result
                         .external_imports
                         .push(external_import(specifier, &dev_packages));

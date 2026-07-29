@@ -43,6 +43,7 @@ const { getActiveBranchGitEvidence: buildActiveBranchGitEvidence } = require("./
 const { getGitContextContinuity: buildGitContextContinuity } = require("./git-context-continuity");
 const { getGraphDelta } = require("./graph-delta");
 const { getRelatedImplementations: buildRelatedImplementations } = require("./related-implementations");
+const { compareCollation } = require("./collation");
 
 function optionValue(options, key, fallback = null) {
   if (options && typeof options.get === "function") return options.get(key) || fallback;
@@ -127,7 +128,7 @@ function aggregateProjection(graph, sourceNodes, mode, scope, keyForNode = featu
     groupMap.get(key).push(node);
   }
   const memberToSummary = new Map();
-  const nodes = [...groupMap.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([key, members]) => {
+  const nodes = [...groupMap.entries()].sort(([left], [right]) => compareCollation(left, right)).map(([key, members]) => {
     const id = options.idForKey ? options.idForKey(key) : `${options.idPrefix || "feature"}:${key}`;
     members.forEach((member) => memberToSummary.set(member.id, id));
     const types = [...new Set(members.map((member) => member.type))].sort();
@@ -341,7 +342,7 @@ function projectionNodeOrder(focusId) {
   return (left, right) => {
     if (left.id === focusId) return -1;
     if (right.id === focusId) return 1;
-    return left.id.localeCompare(right.id);
+    return compareCollation(left.id, right.id);
   };
 }
 
@@ -353,7 +354,7 @@ function boundedProjection(projection, options = {}) {
   const nodeIds = new Set(nodes.map((node) => node.id));
   const allEdges = projection.edges
     .filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target))
-    .sort((left, right) => String(left.id || `${left.source}\u0000${left.target}\u0000${left.type}`).localeCompare(String(right.id || `${right.source}\u0000${right.target}\u0000${right.type}`)));
+    .sort((left, right) => compareCollation(String(left.id || `${left.source}\u0000${left.target}\u0000${left.type}`), String(right.id || `${right.source}\u0000${right.target}\u0000${right.type}`)));
   const edges = allEdges.slice(0, maxEdges);
   const omittedNodes = allNodes.slice(maxNodes).map((node) => node.id);
   const omittedEdges = allEdges.slice(maxEdges).map((edge) => edge.id || `${edge.source}\u0000${edge.target}\u0000${edge.type}`);
@@ -418,9 +419,9 @@ function agentEntryInventory(graph) {
       })),
     },
     unsupported: {
-      packageScriptReasonCounts: Object.fromEntries([...reasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right))),
-      djangoManagementCommandReasonCounts: Object.fromEntries([...frameworkCommandReasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right))),
-      nodeCronScheduleReasonCounts: Object.fromEntries([...scheduleReasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right))),
+      packageScriptReasonCounts: Object.fromEntries([...reasonCounts.entries()].sort(([left], [right]) => compareCollation(left, right))),
+      djangoManagementCommandReasonCounts: Object.fromEntries([...frameworkCommandReasonCounts.entries()].sort(([left], [right]) => compareCollation(left, right))),
+      nodeCronScheduleReasonCounts: Object.fromEntries([...scheduleReasonCounts.entries()].sort(([left], [right]) => compareCollation(left, right))),
     },
     limitations: inventory.limitations || [],
   };
@@ -634,7 +635,7 @@ function findNodes(graph, options = {}) {
   const results = graph.nodes
     .filter((node) => isVisibleInScope(node, scope))
     .filter((node) => [node.label, node.path, node.feature, node.domain, node.type].filter(Boolean).join(" ").toLowerCase().includes(text))
-    .sort((left, right) => (typeRank[left.type] ?? 99) - (typeRank[right.type] ?? 99) || left.label.localeCompare(right.label))
+    .sort((left, right) => (typeRank[left.type] ?? 99) - (typeRank[right.type] ?? 99) || compareCollation(left.label, right.label))
     .slice(0, 12)
     .map(memberSummary);
   return { query: text, scope, results };
@@ -957,7 +958,7 @@ function getSemanticReviewQueue(graph, options = {}) {
       },
     };
   }).filter((item) => status === "all" || item.queueStatus === status)
-    .sort((left, right) => left.flow.title.localeCompare(right.flow.title) || left.flow.id.localeCompare(right.flow.id));
+    .sort((left, right) => compareCollation(left.flow.title, right.flow.title) || compareCollation(left.flow.id, right.flow.id));
   return {
     schemaVersion: "flopeek-semantic-review-queue/v1",
     status,
@@ -1108,7 +1109,7 @@ function getVerifiedSemanticMemory(graph, options = {}) {
       reason: resolution.reason,
     });
   }
-  records.sort((left, right) => Number(right.reusable) - Number(left.reusable) || right.verifiedAt.localeCompare(left.verifiedAt) || left.flow.id.localeCompare(right.flow.id));
+  records.sort((left, right) => Number(right.reusable) - Number(left.reusable) || compareCollation(right.verifiedAt, left.verifiedAt) || compareCollation(left.flow.id, right.flow.id));
   return {
     schemaVersion: "flopeek-verified-semantic-memory/v1",
     project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion },
@@ -1367,7 +1368,7 @@ function historicalDeletedDependents(previousGraph, deletedPaths, currentNodesBy
       queue.push({ id: dependent.id, distance: current.distance + 1 });
     }
   }
-  return { deletedNodes: deletedNodes.sort((left, right) => left.path.localeCompare(right.path)), seeds, truncated: queue.length > 0 };
+  return { deletedNodes: deletedNodes.sort((left, right) => compareCollation(left.path, right.path)), seeds, truncated: queue.length > 0 };
 }
 
 function buildChangeImpact(graph, changedPaths, options = {}) {
@@ -1424,7 +1425,7 @@ function buildChangeImpact(graph, changedPaths, options = {}) {
   }
   const nodes = [...impacted.entries()]
     .map(([id, distance]) => impactNode(nodesById.get(id), distance, historicalDependentIds.has(id) ? "historical-dependent" : undefined))
-    .sort((left, right) => left.distance - right.distance || left.label.localeCompare(right.label));
+    .sort((left, right) => left.distance - right.distance || compareCollation(left.label, right.label));
   const recommendedTests = nodes.filter((node) => node.type === "test");
   const affectedEndpoints = nodes.filter((node) => node.kind === "endpoint");
   const dependencies = new Map();
@@ -1448,7 +1449,7 @@ function buildChangeImpact(graph, changedPaths, options = {}) {
   }
   const dependencyNodes = [...dependencies.entries()]
     .map(([id, distance]) => dependencyNode(nodesById.get(id), distance))
-    .sort((left, right) => left.distance - right.distance || left.label.localeCompare(right.label));
+    .sort((left, right) => left.distance - right.distance || compareCollation(left.label, right.label));
   return {
     changedPaths: paths,
     matchedPaths,

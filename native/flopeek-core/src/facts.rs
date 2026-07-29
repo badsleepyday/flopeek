@@ -1,10 +1,10 @@
 use crate::inventory::scan_native_inventory;
 use crate::project_identity::ProjectIdentity;
+use crate::source_text::read_source_text;
 use crate::store::open_native_store;
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use syn::visit::{self, Visit};
 use syn::{Expr, ExprPath, File, ImplItem, Item, TraitItem, UseTree};
@@ -403,7 +403,7 @@ pub fn scan_native_rust_facts(input_root: &Path) -> Result<NativeRustFactsStatus
             })?
         } else {
             parsed_files += 1;
-            let content = fs::read_to_string(project_root.join(path))
+            let content = read_source_text(project_root.join(path))
                 .map_err(|error| format!("Unable to read Rust source {path}: {error}"))?;
             let parsed = parse_rust_file(&content);
             connection

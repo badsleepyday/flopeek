@@ -5,23 +5,28 @@ use crate::inventory::{
 use crate::js_batch::{
     build_native_js_entry_facts, build_native_js_entry_facts_for_manifests,
     build_native_js_structural_records, build_native_js_structural_records_with_source_hashes,
-    native_public_source_hash,
+    native_public_source_hash, normalize_structural_record_orders,
 };
 use crate::js_resolver::{NativeJsResolutionFacts, resolve_native_js_imports};
 use crate::project_identity::{ProjectIdentity, resolve_ephemeral_project_identity};
 use crate::scope::read_native_scope;
+use crate::source_text::read_source_text;
 use crate::store::open_native_store;
+use icu_collator::{Collator, CollatorBorrowed};
+use icu_locale_core::locale;
+use rayon::prelude::*;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use tree_sitter::{Language, Node, Parser};
 
 pub const NATIVE_JS_FACTS_SCHEMA: &str = "flopeek-native-js-facts/v2";
 // This must advance when a cached fact's observable structural semantics change.
-pub const NATIVE_JS_ADAPTER_VERSION: &str = "native-tree-sitter-js-ts/v13";
+pub const NATIVE_JS_ADAPTER_VERSION: &str = "native-tree-sitter-source/v17";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeJsFacts {
@@ -47,6 +52,8 @@ pub struct NativeJsStructuralFacts {
     pub endpoints: Vec<NativeJsEndpoint>,
     pub requests: Vec<NativeJsRequest>,
     pub integrations: Vec<serde_json::Value>,
+    pub framework_commands: Vec<serde_json::Value>,
+    pub unsupported_framework_commands: Vec<serde_json::Value>,
     pub runtime_actions: Vec<serde_json::Value>,
     pub schedules: Vec<NativeJsSchedule>,
     pub unsupported_schedules: Vec<NativeJsUnsupportedSchedule>,
@@ -121,6 +128,10 @@ pub struct NativeJsEndpoint {
     pub handler_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contract: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detected_responsibility: Option<String>,
     pub evidence: NativeJsEvidence,
 }
 
@@ -153,6 +164,8 @@ pub struct NativeJsAnalysis {
     pub status: String,
     pub confidence: String,
     pub diagnostics: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -194,8 +207,96 @@ pub struct NativeJsFactsStatus {
     /// contract values and avoid reopening unchanged sources on refresh.
     pub source_hashes: BTreeMap<String, String>,
     pub resolution: BTreeMap<String, NativeJsResolutionFacts>,
+    /// Session-local reverse import index.  It lets an ordinary changed-path
+    /// refresh locate direct resolution dependents without walking every
+    /// cached resolver result.  It is derived from `resolution`, never
+    /// persisted, and is rebuilt conservatively whenever membership changes.
+    pub reverse_importers: BTreeMap<String, BTreeSet<String>>,
+    /// The inverse membership is retained so replacing one importer's
+    /// resolution can remove its old reverse edges without scanning the whole
+    /// reverse index.
+    pub importer_targets: BTreeMap<String, BTreeSet<String>>,
     pub structural_records: Vec<serde_json::Value>,
     pub entry_facts: serde_json::Value,
+}
+
+fn native_resolution_indexes(
+    resolution: &BTreeMap<String, NativeJsResolutionFacts>,
+) -> (
+    BTreeMap<String, BTreeSet<String>>,
+    BTreeMap<String, BTreeSet<String>>,
+) {
+    let mut reverse_importers = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut importer_targets = BTreeMap::<String, BTreeSet<String>>::new();
+    for (importer, facts) in resolution {
+        let targets = facts
+            .resolved_imports
+            .iter()
+            .map(|item| item.target_path.clone())
+            .collect::<BTreeSet<_>>();
+        for target in &targets {
+            reverse_importers
+                .entry(target.clone())
+                .or_default()
+                .insert(importer.clone());
+        }
+        if !targets.is_empty() {
+            importer_targets.insert(importer.clone(), targets);
+        }
+    }
+    (reverse_importers, importer_targets)
+}
+
+fn update_native_resolution_indexes(
+    status: &mut NativeJsFactsStatus,
+    refreshed_paths: &BTreeSet<String>,
+    rebuild: bool,
+) {
+    if rebuild {
+        (status.reverse_importers, status.importer_targets) =
+            native_resolution_indexes(&status.resolution);
+        return;
+    }
+    for importer in refreshed_paths {
+        let Some(old_targets) = status.importer_targets.remove(importer) else {
+            continue;
+        };
+        let mut empty_targets = Vec::new();
+        for target in old_targets {
+            if let Some(importers) = status.reverse_importers.get_mut(&target) {
+                importers.remove(importer);
+                if importers.is_empty() {
+                    empty_targets.push(target);
+                }
+            }
+        }
+        for target in empty_targets {
+            status.reverse_importers.remove(&target);
+        }
+    }
+    for importer in refreshed_paths {
+        let targets = status
+            .resolution
+            .get(importer)
+            .map(|facts| {
+                facts
+                    .resolved_imports
+                    .iter()
+                    .map(|item| item.target_path.clone())
+                    .collect::<BTreeSet<_>>()
+            })
+            .unwrap_or_default();
+        for target in &targets {
+            status
+                .reverse_importers
+                .entry(target.clone())
+                .or_default()
+                .insert(importer.clone());
+        }
+        if !targets.is_empty() {
+            status.importer_targets.insert(importer.clone(), targets);
+        }
+    }
 }
 
 /// Return a truthful lifecycle projection for an explicit no-op event. The
@@ -251,7 +352,7 @@ pub fn refresh_native_js_facts_session(
         if normalized == ".flopeek/config.json" || normalized.ends_with('/') {
             return Err(format!("native-session-reconcile-required:{normalized}"));
         }
-        if language_for_path(&normalized).is_none() {
+        if !native_fact_supported_path(&normalized) {
             return Err(format!("native-session-reconcile-required:{normalized}"));
         }
         let absolute = previous.project_root.join(&normalized);
@@ -280,7 +381,7 @@ pub fn refresh_native_js_facts_session(
             removed_paths.push(path.clone());
             continue;
         }
-        let source = fs::read_to_string(&absolute).map_err(|error| {
+        let source = read_source_text(&absolute).map_err(|error| {
             format!("Unable to read JavaScript/TypeScript source {path}: {error}")
         })?;
         let fact = parse_native_js_facts(path, &source).ok_or_else(|| {
@@ -321,16 +422,15 @@ pub fn refresh_native_js_facts_session(
     // unresolved relative imports may now bind, so their resolution requires
     // a pass over the existing facts, but still never reparses or rereads
     // their source bodies.
-    let mut affected_resolution_paths = next
-        .resolution
+    let mut affected_resolution_paths = changed
         .iter()
-        .filter(|(_, resolution)| {
-            resolution
-                .resolved_imports
-                .iter()
-                .any(|import| changed.contains(&import.target_path))
+        .flat_map(|path| {
+            next.reverse_importers
+                .get(path)
+                .into_iter()
+                .flatten()
+                .cloned()
         })
-        .map(|(path, _)| path.clone())
         .collect::<BTreeSet<_>>();
     affected_resolution_paths.extend(
         changed
@@ -338,7 +438,8 @@ pub fn refresh_native_js_facts_session(
             .filter(|path| next.facts.contains_key(*path))
             .cloned(),
     );
-    if !added_paths.is_empty() || !removed_paths.is_empty() {
+    let membership_changed = !added_paths.is_empty() || !removed_paths.is_empty();
+    if membership_changed {
         // Candidate membership changes recordOrder for subsequent files. Keep
         // the public batch deterministic by rebuilding records from cached
         // facts/hashes, not by reparsing or rereading every source file.
@@ -368,6 +469,7 @@ pub fn refresh_native_js_facts_session(
         Some(&next.source_hashes),
     )?;
     let refreshed_paths = affected_facts.keys().cloned().collect::<BTreeSet<_>>();
+    update_native_resolution_indexes(&mut next, &refreshed_paths, membership_changed);
     next.structural_records.retain(|record| {
         match record
             .get("relativePath")
@@ -381,12 +483,7 @@ pub fn refresh_native_js_facts_session(
         }
     });
     next.structural_records.extend(refreshed_records);
-    next.structural_records.sort_by_key(|record| {
-        record
-            .get("recordOrder")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(u64::MAX)
-    });
+    normalize_structural_record_orders(&mut next.structural_records);
     if entry_facts_affected || !added_paths.is_empty() || !removed_paths.is_empty() {
         next.entry_facts =
             build_native_js_entry_facts(&next.project_root, &next.facts, &next.structural_records);
@@ -482,8 +579,89 @@ fn language_for_path(path: &str) -> Option<Language> {
         "js" | "cjs" | "mjs" | "jsx" => Some(tree_sitter_javascript::LANGUAGE.into()),
         "ts" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
         "tsx" => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+        "cs" => Some(tree_sitter_c_sharp::LANGUAGE.into()),
+        "java" => Some(tree_sitter_java::LANGUAGE.into()),
+        "php" => Some(tree_sitter_php::LANGUAGE_PHP.into()),
+        "py" => Some(tree_sitter_python::LANGUAGE.into()),
+        "rs" => Some(tree_sitter_rust::LANGUAGE.into()),
+        "svelte" => Some(tree_sitter_svelte_next::LANGUAGE.into()),
         _ => None,
     }
+}
+
+/// Extensions that Flopeek registers for inventory, but for which the native
+/// source authority deliberately has no structural parser.  These must remain
+/// visible as inventory-only records, rather than making a mixed repository
+/// look unsupported or silently disappearing from the native graph.  `.go`
+/// is intentionally absent: it has a structural JS adapter today, so claiming
+/// it as inventory-only here would be a lossy downgrade, not native parity.
+fn inventory_only_adapter_name(path: &str) -> Option<&'static str> {
+    let filename = path.rsplit('/').next()?.to_ascii_lowercase();
+    if filename == "makefile" {
+        return Some("makefile");
+    }
+    match filename.rsplit('.').next()? {
+        "asm" => Some("assembly"),
+        "astro" => Some("astro"),
+        "bash" | "sh" | "zsh" => Some("shell"),
+        "c" => Some("c"),
+        "cc" | "cpp" | "cxx" => Some("cpp"),
+        "h" => Some("headers"),
+        "kt" | "kts" => Some("kotlin"),
+        "rb" => Some("ruby"),
+        "scala" => Some("scala"),
+        "swift" => Some("swift"),
+        "vue" => Some("vue"),
+        _ => None,
+    }
+}
+
+fn native_fact_supported_path(path: &str) -> bool {
+    language_for_path(path).is_some() || inventory_only_adapter_name(path).is_some()
+}
+
+fn inventory_only_native_facts(path: &str) -> Option<NativeJsFacts> {
+    inventory_only_adapter_name(path)?;
+    let filename = path.rsplit('/').next().unwrap_or(path);
+    let extension = filename
+        .rfind('.')
+        .map(|index| filename[index..].to_string())
+        .unwrap_or_else(|| ".makefile".to_string());
+    let subject = match extension.as_str() {
+        ".makefile" => "Makefile build-control files",
+        ".asm" => "assembly source files",
+        _ => extension.as_str(),
+    };
+    Some(NativeJsFacts {
+        schema_version: NATIVE_JS_FACTS_SCHEMA.to_string(),
+        parser: "inventory".to_string(),
+        status: "inventory-only".to_string(),
+        diagnostics: 0,
+        imports: Vec::new(),
+        symbols: Vec::new(),
+        direct_calls: Vec::new(),
+        structural: NativeJsStructuralFacts {
+            imports: Vec::new(),
+            symbols: Vec::new(),
+            calls: Vec::new(),
+            endpoints: Vec::new(),
+            requests: Vec::new(),
+            integrations: Vec::new(),
+            framework_commands: Vec::new(),
+            unsupported_framework_commands: Vec::new(),
+            runtime_actions: Vec::new(),
+            schedules: Vec::new(),
+            unsupported_schedules: Vec::new(),
+            methods: Vec::new(),
+            analysis: NativeJsAnalysis {
+                parser: "inventory".to_string(),
+                status: "inventory-only".to_string(),
+                confidence: "not-analyzed".to_string(),
+                diagnostics: 0,
+                reason: Some(format!("No structural adapter registered for {subject}.")),
+            },
+        },
+    })
 }
 
 fn source_text(node: Node<'_>, source: &str) -> Option<String> {
@@ -577,6 +755,18 @@ fn js_locale_char_weight(character: char) -> (u8, u32) {
 }
 
 pub(crate) fn js_locale_compare(left: &str, right: &str) -> Ordering {
+    // V8's default `String#localeCompare` delegates non-ASCII ordering to ICU.
+    // Retain the audited ASCII compatibility path below: ICU punctuation
+    // tailoring is intentionally different from the current JavaScript scanner
+    // contract for names such as `_app`, `404`, and `foo.js`.
+    if !(left.is_ascii() && right.is_ascii())
+        && let Some(collator) = javascript_unicode_collator()
+    {
+        let order = collator.compare(left, right);
+        if order != Ordering::Equal {
+            return order;
+        }
+    }
     let mut left_characters = left.chars();
     let mut right_characters = right.chars();
     loop {
@@ -605,6 +795,13 @@ pub(crate) fn js_locale_compare(left: &str, right: &str) -> Ordering {
         }
     }
     Ordering::Equal
+}
+
+fn javascript_unicode_collator() -> Option<&'static CollatorBorrowed<'static>> {
+    static COLLATOR: OnceLock<Option<CollatorBorrowed<'static>>> = OnceLock::new();
+    COLLATOR
+        .get_or_init(|| Collator::try_new(locale!("en").into(), Default::default()).ok())
+        .as_ref()
 }
 
 fn evidence(path: &str, source: &str, node: Node<'_>) -> NativeJsEvidence {
@@ -1130,6 +1327,8 @@ fn collect_structural(
                         handler_name: Some(name.clone()),
                         handler_type: Some("function".to_string()),
                         contract: Some(unavailable_next_contract(&name, request_name.as_deref())),
+                        confidence: None,
+                        detected_responsibility: None,
                         evidence: evidence(path, source, exported_declaration_evidence_node(node)),
                     });
                 }
@@ -1214,6 +1413,8 @@ fn collect_structural(
                         handler_name: None,
                         handler_type: None,
                         contract: None,
+                        confidence: None,
+                        detected_responsibility: None,
                         evidence: evidence(path, source, node),
                     });
                 }
@@ -1352,6 +1553,8 @@ fn structural_facts(path: &str, source: &str, root: Node<'_>) -> NativeJsStructu
         endpoints: Vec::new(),
         requests: Vec::new(),
         integrations: Vec::new(),
+        framework_commands: Vec::new(),
+        unsupported_framework_commands: Vec::new(),
         runtime_actions: Vec::new(),
         schedules: Vec::new(),
         unsupported_schedules: Vec::new(),
@@ -1366,6 +1569,7 @@ fn structural_facts(path: &str, source: &str, root: Node<'_>) -> NativeJsStructu
             .to_string(),
             confidence: "exact".to_string(),
             diagnostics,
+            reason: None,
         },
     };
     collect_structural(
@@ -1436,6 +1640,27 @@ fn collect_facts(
 }
 
 pub fn parse_native_js_facts(path: &str, source: &str) -> Option<NativeJsFacts> {
+    if let Some(facts) = inventory_only_native_facts(path) {
+        return Some(facts);
+    }
+    if path.rsplit('.').next()?.eq_ignore_ascii_case("cs") {
+        return crate::csharp_facts::parse_native_csharp_facts(path, source);
+    }
+    if path.rsplit('.').next()?.eq_ignore_ascii_case("java") {
+        return crate::java_facts::parse_native_java_facts(path, source);
+    }
+    if path.rsplit('.').next()?.eq_ignore_ascii_case("php") {
+        return crate::php_facts::parse_native_php_facts(path, source);
+    }
+    if path.rsplit('.').next()?.eq_ignore_ascii_case("rs") {
+        return crate::rust_facts::parse_native_rust_facts(path, source);
+    }
+    if path.rsplit('.').next()?.eq_ignore_ascii_case("svelte") {
+        return crate::svelte_facts::parse_native_svelte_facts(path, source);
+    }
+    if path.rsplit('.').next()?.eq_ignore_ascii_case("py") {
+        return crate::python_facts::parse_native_python_facts(path, source);
+    }
     let language = language_for_path(path)?;
     let mut parser = Parser::new();
     if parser.set_language(&language).is_err() {
@@ -1500,7 +1725,7 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| error.to_string())?
             .into_iter()
-            .filter(|(path, _)| language_for_path(path).is_some())
+            .filter(|(path, _)| native_fact_supported_path(path))
             .collect::<Vec<_>>()
     };
     let mut known_records = {
@@ -1555,39 +1780,50 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
             .map(|(path, source_hash, payload)| ((path, source_hash), payload))
             .collect::<BTreeMap<_, _>>()
     };
+    // Parsing and cached-fact decoding are independent per source file. Keep
+    // collection order deterministic by first collecting the indexed Rayon
+    // results and merging them in candidate order below; SQLite remains a
+    // single writer transaction after the parallel work completes.
+    let parsed_candidates = candidates
+        .par_iter()
+        .map(|(path, source_hash)| {
+            let cached = cached_facts
+                .get(&(path.clone(), source_hash.clone()))
+                .cloned();
+            if let Some(payload) = cached {
+                let fact = serde_json::from_str(&payload).map_err(|error| {
+                    format!("Invalid cached native JavaScript parser fact for {path}: {error}")
+                })?;
+                Ok((path.clone(), source_hash.clone(), fact, None))
+            } else {
+                let source = read_source_text(project_root.join(path)).map_err(|error| {
+                    format!("Unable to read JavaScript/TypeScript source {path}: {error}")
+                })?;
+                let fact = parse_native_js_facts(path, &source).ok_or_else(|| {
+                    format!("No native JavaScript/TypeScript parser is registered for {path}.")
+                })?;
+                let payload = serde_json::to_string(&fact).map_err(|error| error.to_string())?;
+                Ok((path.clone(), source_hash.clone(), fact, Some(payload)))
+            }
+        })
+        .collect::<Vec<Result<(String, String, NativeJsFacts, Option<String>), String>>>();
     let mut parsed_files = 0;
     let mut reused_files = 0;
     let mut failed_files = 0;
     let mut facts = BTreeMap::new();
     let mut parser_cache_misses = Vec::new();
-    for (path, source_hash) in &candidates {
-        let cached = cached_facts
-            .get(&(path.clone(), source_hash.clone()))
-            .cloned();
-        let fact = if let Some(payload) = cached {
-            reused_files += 1;
-            serde_json::from_str(&payload).map_err(|error| {
-                format!("Invalid cached native JavaScript parser fact for {path}: {error}")
-            })?
-        } else {
+    for parsed in parsed_candidates {
+        let (path, source_hash, fact, cache_miss) = parsed?;
+        if let Some(payload) = cache_miss {
             parsed_files += 1;
-            let source = fs::read_to_string(project_root.join(path)).map_err(|error| {
-                format!("Unable to read JavaScript/TypeScript source {path}: {error}")
-            })?;
-            let parsed = parse_native_js_facts(path, &source).ok_or_else(|| {
-                format!("No native JavaScript/TypeScript parser is registered for {path}.")
-            })?;
-            parser_cache_misses.push((
-                path.clone(),
-                source_hash.clone(),
-                serde_json::to_string(&parsed).map_err(|error| error.to_string())?,
-            ));
-            parsed
-        };
+            parser_cache_misses.push((path.clone(), source_hash, payload));
+        } else {
+            reused_files += 1;
+        }
         if fact.status == "parse-failed" {
             failed_files += 1;
         }
-        facts.insert(path.clone(), fact);
+        facts.insert(path, fact);
     }
     // Parser cache mutation is one transaction per scan, not two implicit
     // transactions per parsed file. This keeps the inventory's cache contract
@@ -1624,13 +1860,15 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
         removed
     };
     let resolution = resolve_native_js_imports(&project_root, &facts, &known_paths);
-    let structural_records = build_native_js_structural_records(
+    let (reverse_importers, importer_targets) = native_resolution_indexes(&resolution);
+    let mut structural_records = build_native_js_structural_records(
         &project_root,
         &facts,
         &resolution,
         &source_scopes,
         &record_orders,
     )?;
+    normalize_structural_record_orders(&mut structural_records);
     let entry_facts = build_native_js_entry_facts(&project_root, &facts, &structural_records);
     Ok(NativeJsFactsStatus {
         project_root,
@@ -1662,9 +1900,41 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
             })
             .collect(),
         resolution,
+        reverse_importers,
+        importer_targets,
         structural_records,
         entry_facts,
     })
+}
+
+fn parse_native_js_paths_parallel(
+    project_root: &Path,
+    paths: &[String],
+    prefetched_sources: &BTreeMap<String, String>,
+) -> Result<Vec<(String, String, NativeJsFacts)>, String> {
+    let parsed = paths
+        .par_iter()
+        .map(|path| {
+            let parse = |source: &str| -> Result<(String, String, NativeJsFacts), String> {
+                let fact = parse_native_js_facts(path, source).ok_or_else(|| {
+                    format!("No native JavaScript/TypeScript parser is registered for {path}.")
+                })?;
+                Ok((path.clone(), native_public_source_hash(source), fact))
+            };
+            match prefetched_sources.get(path) {
+                // The inventory already owns this text. Parse/hash it by reference so
+                // cold no-cache scans do not duplicate every source buffer per worker.
+                Some(source) => parse(source),
+                None => {
+                    let source = read_source_text(project_root.join(path)).map_err(|error| {
+                        format!("Unable to read JavaScript/TypeScript source {path}: {error}")
+                    })?;
+                    parse(&source)
+                }
+            }
+        })
+        .collect::<Vec<Result<(String, String, NativeJsFacts), String>>>();
+    parsed.into_iter().collect()
 }
 
 // Strict native --no-cache path. It deliberately bypasses both the inventory
@@ -1674,7 +1944,7 @@ pub fn scan_native_js_facts_ephemeral(
     input_root: &Path,
     session_project_id: Option<&str>,
 ) -> Result<NativeJsFactsStatus, String> {
-    let mut inventory = scan_native_ephemeral_inventory_with_paths(input_root, session_project_id)?;
+    let inventory = scan_native_ephemeral_inventory_with_paths(input_root, session_project_id)?;
     let project_root = inventory.project_root.clone();
     let project_identity = inventory.project_identity.clone();
     let scope = read_native_scope(&project_root)?;
@@ -1699,34 +1969,29 @@ pub fn scan_native_js_facts_ephemeral(
         .enumerate()
         .map(|(order, (path, _))| (path.clone(), order))
         .collect::<BTreeMap<_, _>>();
-    let mut parsed_files = 0;
     let mut failed_files = 0;
     let mut facts = BTreeMap::new();
     let mut source_hashes = BTreeMap::new();
-    let mut ephemeral_js_source_texts = std::mem::take(&mut inventory.ephemeral_js_source_texts);
-    for path in known_paths
+    let source_paths = known_paths
         .iter()
-        .filter(|path| language_for_path(path).is_some())
-    {
-        parsed_files += 1;
-        let source = match ephemeral_js_source_texts.remove(path) {
-            Some(source) => source,
-            // Keep the existing read/error contract for invalid UTF-8 input.
-            None => fs::read_to_string(project_root.join(path)).map_err(|error| {
-                format!("Unable to read JavaScript/TypeScript source {path}: {error}")
-            })?,
-        };
-        let fact = parse_native_js_facts(path, &source).ok_or_else(|| {
-            format!("No native JavaScript/TypeScript parser is registered for {path}.")
-        })?;
-        source_hashes.insert(path.clone(), native_public_source_hash(&source));
+        .filter(|path| native_fact_supported_path(path))
+        .cloned()
+        .collect::<Vec<_>>();
+    let parsed_sources = parse_native_js_paths_parallel(
+        &project_root,
+        &source_paths,
+        &inventory.ephemeral_source_texts,
+    )?;
+    for (path, source_hash, fact) in parsed_sources {
+        source_hashes.insert(path.clone(), source_hash);
         if fact.status == "parse-failed" {
             failed_files += 1;
         }
-        facts.insert(path.clone(), fact);
+        facts.insert(path, fact);
     }
     let resolution = resolve_native_js_imports(&project_root, &facts, &known_paths);
-    let structural_records = build_native_js_structural_records_with_source_hashes(
+    let (reverse_importers, importer_targets) = native_resolution_indexes(&resolution);
+    let mut structural_records = build_native_js_structural_records_with_source_hashes(
         &project_root,
         &facts,
         &resolution,
@@ -1734,13 +1999,14 @@ pub fn scan_native_js_facts_ephemeral(
         &record_orders,
         Some(&source_hashes),
     )?;
+    normalize_structural_record_orders(&mut structural_records);
     let entry_facts = build_native_js_entry_facts(&project_root, &facts, &structural_records);
     Ok(NativeJsFactsStatus {
         project_root,
         project_identity,
         initial_scan: true,
         adapter_version: NATIVE_JS_ADAPTER_VERSION.to_string(),
-        parsed_files,
+        parsed_files: source_paths.len(),
         reused_files: 0,
         failed_files,
         removed_facts: 0,
@@ -1757,6 +2023,8 @@ pub fn scan_native_js_facts_ephemeral(
         facts,
         source_hashes,
         resolution,
+        reverse_importers,
+        importer_targets,
         structural_records,
         entry_facts,
     })
@@ -1795,29 +2063,27 @@ pub fn scan_native_js_facts_ephemeral_bounded(
         .enumerate()
         .map(|(order, (path, _))| (path.clone(), order))
         .collect::<BTreeMap<_, _>>();
-    let mut parsed_files = 0;
     let mut failed_files = 0;
     let mut facts = BTreeMap::new();
     let mut source_hashes = BTreeMap::new();
-    for path in known_paths
+    let source_paths = known_paths
         .iter()
-        .filter(|path| language_for_path(path).is_some())
-    {
-        parsed_files += 1;
-        let source = fs::read_to_string(project_root.join(path)).map_err(|error| {
-            format!("Unable to read JavaScript/TypeScript source {path}: {error}")
-        })?;
-        let fact = parse_native_js_facts(path, &source).ok_or_else(|| {
-            format!("No native JavaScript/TypeScript parser is registered for {path}.")
-        })?;
-        source_hashes.insert(path.clone(), native_public_source_hash(&source));
+        .filter(|path| native_fact_supported_path(path))
+        .cloned()
+        .collect::<Vec<_>>();
+    let prefetched_sources = BTreeMap::new();
+    let parsed_sources =
+        parse_native_js_paths_parallel(&project_root, &source_paths, &prefetched_sources)?;
+    for (path, source_hash, fact) in parsed_sources {
+        source_hashes.insert(path.clone(), source_hash);
         if fact.status == "parse-failed" {
             failed_files += 1;
         }
-        facts.insert(path.clone(), fact);
+        facts.insert(path, fact);
     }
     let resolution = resolve_native_js_imports(&project_root, &facts, &known_paths);
-    let structural_records = build_native_js_structural_records_with_source_hashes(
+    let (reverse_importers, importer_targets) = native_resolution_indexes(&resolution);
+    let mut structural_records = build_native_js_structural_records_with_source_hashes(
         &project_root,
         &facts,
         &resolution,
@@ -1825,6 +2091,7 @@ pub fn scan_native_js_facts_ephemeral_bounded(
         &record_orders,
         Some(&source_hashes),
     )?;
+    normalize_structural_record_orders(&mut structural_records);
     let allowed_manifests = discovery
         .package_path
         .as_ref()
@@ -1852,7 +2119,7 @@ pub fn scan_native_js_facts_ephemeral_bounded(
         project_identity,
         initial_scan: true,
         adapter_version: NATIVE_JS_ADAPTER_VERSION.to_string(),
-        parsed_files,
+        parsed_files: source_paths.len(),
         reused_files: 0,
         failed_files,
         removed_facts: 0,
@@ -1869,6 +2136,8 @@ pub fn scan_native_js_facts_ephemeral_bounded(
         facts,
         source_hashes,
         resolution,
+        reverse_importers,
+        importer_targets,
         structural_records,
         entry_facts,
     };
@@ -1881,6 +2150,7 @@ mod tests {
         js_locale_compare, parse_native_js_facts, refresh_native_js_facts_session,
         scan_native_js_facts, scan_native_js_facts_ephemeral,
     };
+    use crate::js_batch::native_public_source_hash;
     use std::fs;
 
     #[test]
@@ -1941,6 +2211,30 @@ mod tests {
         .unwrap();
         assert_eq!(jsx.structural.analysis.diagnostics, 0);
         assert_eq!(jsx.structural.analysis.status, "parsed");
+    }
+
+    #[test]
+    fn preserves_registered_unparsed_files_as_inventory_only_facts() {
+        let shell =
+            parse_native_js_facts("scripts/deploy.sh", "#!/usr/bin/env bash\necho deploy\n")
+                .expect("shell files must retain their registered inventory record");
+        assert_eq!(shell.status, "inventory-only");
+        assert_eq!(shell.structural.analysis.parser, "inventory");
+        assert_eq!(shell.structural.analysis.confidence, "not-analyzed");
+        assert_eq!(
+            shell.structural.analysis.reason.as_deref(),
+            Some("No structural adapter registered for .sh.")
+        );
+        assert!(shell.structural.imports.is_empty());
+
+        let makefile = parse_native_js_facts("ops/Makefile", "build:\n\techo build\n")
+            .expect("Makefile must retain its registered inventory record");
+        assert_eq!(makefile.status, "inventory-only");
+        assert_eq!(
+            makefile.structural.analysis.reason.as_deref(),
+            Some("No structural adapter registered for Makefile build-control files.")
+        );
+        assert!(parse_native_js_facts("cmd/server.go", "package main").is_none());
     }
 
     #[test]
@@ -2019,6 +2313,34 @@ mod tests {
     }
 
     #[test]
+    fn strict_native_scan_keeps_malformed_utf8_source_as_a_parseable_record() {
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-malformed-source-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("application")).unwrap();
+        fs::write(
+            root.join("application/legacy.php"),
+            b"<?php \x80 function legacy() { return true; }\n",
+        )
+        .unwrap();
+
+        let status = scan_native_js_facts(&root).unwrap();
+        assert_eq!(status.parsed_files, 1);
+        assert_eq!(status.failed_files, 0);
+        assert_eq!(
+            status.facts["application/legacy.php"].parser,
+            "tree-sitter-php"
+        );
+        assert_eq!(
+            status.source_hashes["application/legacy.php"],
+            native_public_source_hash("<?php \u{fffd} function legacy() { return true; }\n")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn ephemeral_scan_keeps_inventory_and_parser_facts_out_of_the_repository() {
         let root = std::env::temp_dir().join(format!(
             "flopeek-native-js-ephemeral-{}",
@@ -2032,6 +2354,44 @@ mod tests {
         assert_eq!(status.reused_files, 0);
         assert_eq!(status.project_identity.source, "session");
         assert!(!root.join(".flopeek").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ephemeral_scan_keeps_registered_inventory_only_files_in_the_public_batch() {
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-inventory-only-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("scripts")).unwrap();
+        fs::write(
+            root.join("src/index.ts"),
+            "export const run = () => true;\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("scripts/deploy.sh"),
+            "#!/usr/bin/env bash\necho deploy\n",
+        )
+        .unwrap();
+        fs::write(root.join("Makefile"), "build:\n\techo build\n").unwrap();
+        let status = scan_native_js_facts_ephemeral(&root, Some("session:inventory-only")).unwrap();
+        assert_eq!(status.candidate_files, 3);
+        assert_eq!(status.structural_records.len(), 3);
+        assert_eq!(
+            status.facts["scripts/deploy.sh"].structural.analysis.status,
+            "inventory-only"
+        );
+        assert_eq!(
+            status.facts["Makefile"]
+                .structural
+                .analysis
+                .reason
+                .as_deref(),
+            Some("No structural adapter registered for Makefile build-control files.")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -2136,6 +2496,56 @@ mod tests {
                 .get("src/importer.ts")
                 .is_some_and(|facts| facts.resolved_imports.is_empty())
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn incremental_session_replaces_only_the_changed_importers_reverse_targets() {
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-js-reverse-index-replace-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/first.ts"), "export const first = true;\n").unwrap();
+        fs::write(root.join("src/second.ts"), "export const second = true;\n").unwrap();
+        fs::write(
+            root.join("src/importer.ts"),
+            "import { first } from './first'; export const value = first;\n",
+        )
+        .unwrap();
+        let initial =
+            scan_native_js_facts_ephemeral(&root, Some("session:reverse-index-replace")).unwrap();
+        assert_eq!(
+            initial.reverse_importers["src/first.ts"]
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec!["src/importer.ts"]
+        );
+        fs::write(
+            root.join("src/importer.ts"),
+            "import { second } from './second'; export const value = second;\n",
+        )
+        .unwrap();
+        let refreshed =
+            refresh_native_js_facts_session(&initial, &["src/importer.ts".to_string()]).unwrap();
+        assert!(!refreshed.reverse_importers.contains_key("src/first.ts"));
+        assert_eq!(
+            refreshed.reverse_importers["src/second.ts"]
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec!["src/importer.ts"]
+        );
+        assert_eq!(
+            refreshed.importer_targets["src/importer.ts"]
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec!["src/second.ts"]
+        );
+        assert_eq!(refreshed.changed_record_paths, vec!["src/importer.ts"]);
         fs::remove_dir_all(root).unwrap();
     }
 }

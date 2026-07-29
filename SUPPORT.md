@@ -16,14 +16,14 @@ Registry schema: `flopeek-adapter-capabilities/v1`. This table is generated from
 
 | Adapter | Languages/extensions/filenames | Parser | Availability | Structure | Imports | Direct calls | Required toolchain |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| csharp | csharp / .cs | csharp-roslyn | toolchain-conditional | exact-static | exact-static | unsupported | .NET SDK with Roslyn assemblies |
+| csharp | csharp / .cs | csharp-static-ast | bundled | exact-static | exact-static | unsupported | None |
 | go | go / .go | go-parser | toolchain-conditional | exact-static | exact-static | supported-subset | Go toolchain |
 | inventory | assembly, astro, c, cpp, headers, kotlin, makefile, ruby, scala, shell, swift, vue / .asm .astro .bash .c .cc .cpp .cxx .h .kt .kts .rb .scala .sh .swift .vue .zsh Makefile | inventory | inventory-only | inventory-only | unsupported | unsupported | None |
 | java | java / .java | tree-sitter-java | bundled | exact-static | exact-static | supported-subset | None |
 | php | php / .php | php-parser | bundled | exact-static | exact-static | supported-subset | None |
 | python | python / .py | python-lezer | bundled | exact-static | supported-subset | supported-subset | None |
 | rust | rust / .rs | tree-sitter-rust | bundled | exact-static | supported-subset | supported-subset | None |
-| svelte | svelte / .svelte | svelte-compiler | bundled | exact-static | supported-subset | supported-subset | None |
+| svelte | svelte / .svelte | svelte-static-ast | bundled | exact-static | supported-subset | supported-subset | None |
 | typescript | javascript, jsx, tsx, typescript / .cjs .js .jsx .mjs .ts .tsx | typescript-ast | bundled | exact-static | exact-static | supported-subset | None |
 
 The registry describes proven static parser capabilities, not runtime execution, relationship recall outside audited slices, dynamic dispatch, dependency injection, reflection, or target configuration execution.

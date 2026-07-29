@@ -27,11 +27,24 @@ class NativeProtocolClient {
     this.pending = new Map();
     this.nextRequestNumber = 0;
     this.lastResponseStats = null;
+    this.lastStartStats = null;
+    this.startPromise = null;
     this.closed = false;
   }
 
   async start() {
+    if (this.startPromise) return this.startPromise;
     if (this.child && !this.closed) return this;
+    const startedAt = process.hrtime.bigint();
+    this.startPromise = this.#start(startedAt);
+    try {
+      return await this.startPromise;
+    } finally {
+      this.startPromise = null;
+    }
+  }
+
+  async #start(startedAt) {
     this.child = null;
     this.lines?.close();
     this.lines = null;
@@ -62,6 +75,24 @@ class NativeProtocolClient {
       child.once("spawn", onSpawn);
       child.once("error", onError);
     });
+    const spawnedMilliseconds = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+    try {
+      // A spawned process is not necessarily ready to serve JSONL yet. Probe
+      // the protocol before exposing the session so cold scans never fold
+      // binary initialization into an unrelated source-analysis phase.
+      const health = await this.request("health");
+      if (!health || typeof health !== "object" || Array.isArray(health)) {
+        throw new NativeProtocolClientError("invalid-response", "Native protocol health response is invalid.");
+      }
+      this.lastStartStats = Object.freeze({
+        spawnedMilliseconds,
+        readyMilliseconds: Number(process.hrtime.bigint() - startedAt) / 1_000_000,
+        healthRequestId: this.lastResponseStats?.requestId || null,
+      });
+    } catch (error) {
+      await this.abort("Native protocol failed its startup health check.");
+      throw error;
+    }
     return this;
   }
 
@@ -153,6 +184,10 @@ class NativeProtocolClient {
 
   getLastResponseStats() {
     return this.lastResponseStats ? { ...this.lastResponseStats } : null;
+  }
+
+  getLastStartStats() {
+    return this.lastStartStats ? { ...this.lastStartStats } : null;
   }
 
   #handleLine(line) {

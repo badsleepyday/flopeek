@@ -567,7 +567,7 @@ test("C# Roslyn analysis extracts usings, class declarations, and methods", () =
       assert.equal(graph.nodes.some((node) => node.id === "external:System"), false);
       return;
     }
-    assert.equal(file.analysis.parser, "csharp-roslyn");
+    assert.equal(file.analysis.parser, "csharp-static-ast");
     assert.equal(file.analysis.status, "parsed");
     assert.deepEqual(service.methods, ["Submit", "Count"]);
     assert.ok(graph.nodes.some((node) => node.id === "external:System"));

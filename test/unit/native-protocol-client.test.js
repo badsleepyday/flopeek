@@ -26,12 +26,20 @@ test("persistent native protocol client preserves one session and reports typed 
     fs.rmSync(projectRoot, { recursive: true, force: true });
   });
 
+  const [firstStart, secondStart] = await Promise.all([client.start(), client.start()]);
+  assert.equal(firstStart, client);
+  assert.equal(secondStart, client);
+  const startStats = client.getLastStartStats();
+  assert.ok(startStats.spawnedMilliseconds >= 0);
+  assert.ok(startStats.readyMilliseconds >= startStats.spawnedMilliseconds);
+  assert.equal(startStats.healthRequestId, "native-1");
   await client.start();
+  assert.equal(client.getLastStartStats().healthRequestId, "native-1");
   const health = await client.request("health");
   assert.equal(health.implementation, "rust");
   assert.equal(health.publicNodeIdsEnabled, true);
   assert.deepEqual(health.adapterCapabilities, getAdapterRegistry());
-  assert.deepEqual(client.getLastResponseStats().requestId, "native-1");
+  assert.deepEqual(client.getLastResponseStats().requestId, "native-2");
   assert.ok(client.getLastResponseStats().requestBytes > 0);
   assert.ok(client.getLastResponseStats().responseBytes > 0);
   assert.ok(client.getLastResponseStats().parseMilliseconds >= 0);
