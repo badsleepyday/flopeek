@@ -7,9 +7,13 @@ const { scanRepositoryBounded } = require("./bounded-scan");
 const { readGraphCacheResult, summarizeCacheResult } = require("./graph-cache");
 const { resolveProjectIdentity } = require("./project-identity");
 const { readGitMetadata } = require("./git-metadata");
-const { createRepositoryScanner, writeGraphCache } = require("./scanner");
+const { writeGraphCache } = require("./scanner");
 const { readRepositoryScope } = require("./scope");
 const { advanceSessionGraph } = require("./session-graph-state");
+const { assertCoreClient } = require("./core-client");
+const { selectCoreMode } = require("./core-mode");
+const { createJsCoreClient } = require("./js-core-client");
+const { createNativeIncrementalSession, scanWithNativeIncremental } = require("./native-incremental-coordinator");
 
 const SCAN_OUTCOME_SCHEMA = "flopeek-scan-outcome/v1";
 
@@ -93,14 +97,17 @@ function createScanCoordinator(inputRoot, options = {}) {
   const packageScoped = hasPackageScope(options);
   const cacheEnabled = options.cache !== false && !packageScoped;
   const bounded = hasBounds(options) || packageScoped;
-  const sessionProjectId = cacheEnabled ? null : `session:${randomUUID()}`;
-  let scanner = bounded ? null : createRepositoryScanner(root, {
-    persistIdentity: cacheEnabled,
-    sessionProjectId,
+  const coreMode = selectCoreMode({
+    mode: options.coreMode,
+    rolloutEvidence: options.nativeRolloutEvidence,
   });
+  const sessionProjectId = cacheEnabled ? null : `session:${randomUUID()}`;
+  const core = assertCoreClient(options.coreClient || createJsCoreClient());
+  const nativeStorageAuthority = () => core.implementation === "native-experimental";
   let graph = null;
   let previousGraph = null;
   let activeController = null;
+  let nativeSession = null;
   let outcome = {
     schemaVersion: SCAN_OUTCOME_SCHEMA,
     operationId: null,
@@ -119,6 +126,7 @@ function createScanCoordinator(inputRoot, options = {}) {
     discovery: null,
     activeGraph: graphIdentity(null, "none", "unavailable", root),
     cachePromotion: { allowed: false, performed: false },
+    coreRuntime: coreMode,
     limitations: [],
   };
 
@@ -128,9 +136,24 @@ function createScanCoordinator(inputRoot, options = {}) {
     if (typeof options.onProgress === "function") options.onProgress({ phase, outcome });
   };
 
-  const fallbackGraph = () => {
+  const fallbackGraph = async () => {
     if (graph) return { graph, source: "last-complete-memory" };
     if (!cacheEnabled) return { graph: null, source: "none" };
+    if (nativeStorageAuthority()) {
+      // A first native promotion can fail before SQLite has a complete graph.
+      // Fallback must preserve the original scan failure rather than masking it
+      // with the expected no-complete-graph query response.
+      let sqliteGraph = null;
+      try {
+        sqliteGraph = await core.getLastCompleteGraph(root);
+      } catch (error) {
+        if (error?.code !== "missing-native-graph") throw error;
+      }
+      if (sqliteGraph?.analysis) sqliteGraph.analysis.cacheState = nativeSqliteCacheState(root, sqliteGraph);
+      return sqliteGraph
+        ? { graph: sqliteGraph, source: "last-complete-native-sqlite" }
+        : { graph: null, source: "none" };
+    }
     const configuredProjectId = readRepositoryScope(root).projectId;
     const expectedProjectId = resolveProjectIdentity(root, configuredProjectId, { persist: false }).projectId;
     const cached = readGraphCacheResult(root, { expectedProjectId });
@@ -162,6 +185,7 @@ function createScanCoordinator(inputRoot, options = {}) {
         allowed: status === "complete" && cacheEnabled,
         performed: details.cachePromoted === true,
       },
+      coreRuntime: details.coreRuntime || coreMode,
       refresh: details.refresh || null,
       failure: details.failure || null,
       limitations: [
@@ -230,7 +254,7 @@ function createScanCoordinator(inputRoot, options = {}) {
           },
         });
         if (result.status !== "complete") {
-          const active = fallbackGraph();
+          const active = await fallbackGraph();
           graph = active.graph;
           return {
             graph,
@@ -267,13 +291,35 @@ function createScanCoordinator(inputRoot, options = {}) {
         };
       }
 
-      graph = scanner.scan(changedPaths);
+      let nativeProfile = null;
+      if (coreMode.nativeShadow && cacheEnabled) {
+        if (!nativeSession) nativeSession = createNativeIncrementalSession(options.native, { cwd: options.nativeCwd });
+        const nativeResult = await scanWithNativeIncremental(root, {
+          session: nativeSession,
+          persistIdentity: cacheEnabled,
+          onProfile: options.onNativeProfile,
+        });
+        graph = nativeResult.graph;
+        nativeProfile = nativeResult.native;
+      } else {
+        graph = await core.refresh(root, {
+          changedPaths,
+          persistIdentity: cacheEnabled,
+          signal: controller.signal,
+          onProfile: options.onCoreProfile,
+          ...(cacheEnabled ? {} : { sessionProjectId }),
+        });
+      }
       const effectiveChangedPaths = Array.isArray(graph.analysis?.refresh?.changedPaths)
         ? graph.analysis.refresh.changedPaths
         : changedPaths;
-      graph.analysis.cacheState = cacheEnabled
-        ? summarizeCacheResult(writeGraphCache(root, graph, { reason, changedPaths: effectiveChangedPaths }))
-        : disabledCacheState(root, "cache-disabled");
+      const nativeSqlite = cacheEnabled && nativeStorageAuthority()
+        && graph.analysis?.graphState?.persistence === "sqlite";
+      graph.analysis.cacheState = nativeSqlite
+        ? nativeSqliteCacheState(root, graph)
+        : cacheEnabled
+          ? summarizeCacheResult(writeGraphCache(root, graph, { reason, changedPaths: effectiveChangedPaths }))
+          : disabledCacheState(root, "cache-disabled");
       graph.analysis.derivedCacheInvalidation = cacheEnabled
         ? invalidateArtifactCache(root, graph, effectiveChangedPaths || [], { topologyChanged: Boolean(graph.analysis.latestDelta?.topologyChanged) })
         : { status: "disabled", events: [], diagnostics: [] };
@@ -285,16 +331,43 @@ function createScanCoordinator(inputRoot, options = {}) {
         outcome: finalize(operationId, startedAt, "complete", null, active, {
           cachePromoted: cacheEnabled,
           refresh: graph.analysis.refresh,
+          coreRuntime: nativeProfile
+            ? {
+              ...coreMode,
+              nativeShadow: {
+                status: "completed",
+                transport: nativeProfile.profile.transport,
+                sessionScope: nativeProfile.profile.sessionScope,
+                sessionReused: nativeProfile.profile.sessionReused,
+                protocolRequests: nativeProfile.profile.protocolRequests,
+                changedFiles: nativeProfile.manifest.changedFiles,
+                reusedFiles: nativeProfile.manifest.reusedFiles,
+                nativeSessionStartMs: nativeProfile.profile.nativeSessionStartMs,
+                nativeManifestMs: nativeProfile.profile.nativeManifestMs,
+                nativeRecordLoadMs: nativeProfile.profile.nativeRecordLoadMs,
+                nativeRecordStoreMs: nativeProfile.profile.nativeRecordStoreMs,
+              },
+            }
+            : coreMode.nativeShadow
+              ? {
+                ...coreMode,
+                nativeShadow: {
+                  status: "skipped",
+                  reason: "cache-disabled-native-sqlite-prohibited",
+                },
+              }
+            : coreMode,
         }),
       };
     } catch (error) {
-      const active = fallbackGraph();
+      const active = await fallbackGraph();
       graph = active.graph;
+      const cancelled = controller.signal.aborted || error?.code === "FLOPEEK_NATIVE_SCAN_CANCELLED";
       return {
         graph,
         previousGraph,
         boundedResult: null,
-        outcome: finalize(operationId, startedAt, "failed", error?.code || "scan-failed", active, {
+        outcome: finalize(operationId, startedAt, cancelled ? "cancelled" : "failed", cancelled ? "cancelled" : error?.code || "scan-failed", active, {
           failure: {
             name: error?.name || "Error",
             code: typeof error?.code === "string" ? error.code : null,
@@ -310,7 +383,7 @@ function createScanCoordinator(inputRoot, options = {}) {
 
   const cancel = () => {
     if (!activeController) return { accepted: false, reason: "no-scan-running", outcome };
-    if (!bounded) return { accepted: false, reason: "unbounded-scan-is-not-interruptible", outcome };
+    if (!bounded && !nativeStorageAuthority()) return { accepted: false, reason: "unbounded-scan-is-not-interruptible", outcome };
     activeController.abort();
     return { accepted: true, reason: "abort-requested", operationId: outcome.operationId, outcome };
   };
@@ -325,6 +398,30 @@ function createScanCoordinator(inputRoot, options = {}) {
     currentOutcome: () => outcome,
     bounded,
     cacheEnabled,
+    coreMode,
+    close: async () => {
+      if (!nativeSession) return { closed: false, reason: "no-native-session" };
+      const session = nativeSession;
+      nativeSession = null;
+      await session.close();
+      return { closed: true, reason: "closed" };
+    },
+  };
+}
+
+function nativeSqliteCacheState(root, graph) {
+  const state = graph?.analysis?.graphState || null;
+  return {
+    status: "native-sqlite",
+    reason: "native-core-authoritative",
+    path: path.join(root, ".flopeek", "native-core.sqlite3"),
+    diagnostics: [],
+    contract: "flopeek-native-graph-state/v1",
+    migrated: false,
+    graphVersion: state?.graphVersion ?? graph?.state?.graphVersion ?? null,
+    state,
+    delta: state?.latestDelta || null,
+    limitation: "The native SQLite graph is authoritative for this coordinator. JavaScript graph.json is not read or written on this path.",
   };
 }
 

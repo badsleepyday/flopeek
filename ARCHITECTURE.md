@@ -588,6 +588,51 @@ explicit unavailable result.
 
 The scanner integration suite is large and should be split into faster feedback lanes as the architecture is modularized.
 
+### Native-core strangler boundary
+
+The current `flopeek-core-client/v3` facade gives an unbounded scan coordinator
+one explicit `scan`/`refresh`/`getLastCompleteGraph`/`close` lifecycle. Native
+mode uses Rust+SQLite as its sole graph and core-query authority; it cannot
+construct or accept `JsCoreClient`. JavaScript remains the parser host behind
+`StructuralFactBatch/v1`, while named extension adapters only decorate or
+present already-native results. The strict stage-7 source path is narrower:
+Rust owns inventory, JS/TS parsing, import resolution, source hashes, and
+structural-record ordering, and rejects unpromoted adapters instead of invoking
+a JavaScript parser. A temporary JavaScript formatter still creates the public
+envelope and entry metadata from those Rust facts. It is reported as
+`factEnvelopeHost: javascript-transition-formatter` and is not yet eligible for
+an end-to-end native benchmark or native-default rollout. MCP and HTTP share that same client instance with their coordinator. Legacy delivery
+and extension calls remain separate adapters. `native/flopeek-core --native-serve` exposes the persistent
+`flopeek-native-protocol/v1` JSONL bootstrap with request IDs and typed errors.
+`StructuralFactBatch/v1` has no source-body transport. A separate bounded
+manifest-only `sourceBatch` may transfer current changed UTF-8 text once to the
+JavaScript parser, then is discarded. It is accepted only when the inventory
+size and nanosecond modification stamp still match the file; otherwise the
+parser rereads disk. It is not accepted by StructuralFactBatch, SQLite, or the
+record cache. The native incremental coordinator uses one such
+session for its manifest, JavaScript-record load, and record-store requests;
+it does not turn that per-scan session into a cross-command daemon. Its
+`StructuralFactBatch/v1` receipt is shadow-only:
+it neither emits public IDs nor promotes a public graph. After an exact native
+structural shadow comparison, an explicit dogfood option may persist that
+non-public projection through the native SQLite building/complete lifecycle;
+the persisted SHA-256 projection digest and structural-facts fingerprint are
+cache evidence only. Native shadow queries now cover related tests, current and
+retained change impact, Flow Lens, node/flow Context Cards, Context Ref
+resolution, adjacent public deltas, and changed contexts. Their exact corpus
+fixtures are compatibility gates, not a public cutover: CLI, HTTP, MCP, and
+Viewer still receive the JavaScript CoreClient result. SQLite delta retention is
+manual and dry-run-first; it deletes neither a graph version nor the latest
+adjacent delta. Native historical impact may read only a complete SQLite version
+whose persisted projection digest still verifies; it is cache evidence, not a
+public cache cutover. The native queries remain opt-in until their async
+protocol boundary, exact corpus parity, prior graph/delta behavior from SQLite
+where applicable, and explicit fallback behavior are promoted through the
+CoreClient contract. See
+[ADR-024](docs/adr/ADR-024-native-core-strangler-contract.md) for the required
+parity, authority, and rollback gates before native graph assembly or SQLite
+promotion can become observable.
+
 ### Evidence boundaries
 
 - Fixture precision/recall applies only to declared expected relationships.
@@ -1100,7 +1145,8 @@ Do not report incremental parser speed as total end-to-end live-update latency. 
 10. Expose planned overlays and Plan Refs through CLI, HTTP, MCP, and an explicit opt-in Viewer Continue mode with exact non-redirecting resolution, append-only manual reconciliation, deterministic bounded comparison, read-only divergence, and a bounded agent continuation packet (current).
 11. Complete cross-surface dogfooding and stabilization.
 12. Preserve the JavaScript core as the dogfooding and compatibility oracle while a native core matches the pinned static-fact contract.
-13. Evaluate storage backend and permissioned integrations at measured scale.
+13. Follow [ADR-024](docs/adr/ADR-024-native-core-strangler-contract.md): keep public JavaScript IDs and Context Ref semantics authoritative, move one bounded responsibility through shadow parity at a time, and promote SQLite only through a complete validated transaction.
+14. Evaluate additional storage backend changes and permissioned integrations only after the native-core promotion gates are measured.
 
 ## Architecture invariants
 

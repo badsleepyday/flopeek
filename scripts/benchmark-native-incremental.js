@@ -82,6 +82,10 @@ function assertEquivalent(js, native, state, rootLabel) {
   assert.deepEqual(native.stats, js.stats, `Native incremental scan stats diverged from JS on ${rootLabel} during ${state}.`);
 }
 
+function executionOrder(iteration, stateIndex) {
+  return (iteration + stateIndex) % 2 === 0 ? ["js", "native"] : ["native", "js"];
+}
+
 function benchmarkRoot(source, iteration, sandbox) {
   const label = path.basename(source);
   const jsRoot = path.join(sandbox, `${label}-js-${iteration}`);
@@ -89,19 +93,29 @@ function benchmarkRoot(source, iteration, sandbox) {
   copyRepository(source, jsRoot);
   copyRepository(source, nativeRoot);
   const samples = {};
-  for (const [state, mutate] of [
+  for (const [stateIndex, [state, mutate]] of [
     ["cold", null],
     ["unchanged", null],
     ["oneFileChange", (root) => fs.appendFileSync(sourceFiles(root)[0], "\n")],
-  ]) {
+  ].entries()) {
     if (mutate) {
       mutate(jsRoot);
       mutate(nativeRoot);
     }
-    const js = run(JS_RUNNER, jsRoot);
-    const native = run(NATIVE_RUNNER, nativeRoot);
+    const order = executionOrder(iteration, stateIndex);
+    const results = {};
+    for (const implementation of order) {
+      results[implementation] = implementation === "js"
+        ? run(JS_RUNNER, jsRoot)
+        : run(NATIVE_RUNNER, nativeRoot);
+    }
+    const { js, native } = results;
     assertEquivalent(js.output, native.output, state, label);
-    samples[state] = { jsMs: Number(js.elapsedMs.toFixed(3)), nativeMs: Number(native.elapsedMs.toFixed(3)) };
+    samples[state] = {
+      jsMs: Number(js.elapsedMs.toFixed(3)),
+      nativeMs: Number(native.elapsedMs.toFixed(3)),
+      executionOrder: order,
+    };
   }
   return samples;
 }
@@ -119,6 +133,7 @@ function summarize(label, samples) {
       jsMedianMs: Number(jsMedianMs.toFixed(3)),
       nativeMedianMs: Number(nativeMedianMs.toFixed(3)),
       speedupNativeVsJavaScript: Number((jsMedianMs / nativeMedianMs).toFixed(3)),
+      executionOrders: samples.map((sample) => sample[state].executionOrder),
     };
   }
   return { repository: label, states };
@@ -134,12 +149,13 @@ function main() {
     });
     process.stdout.write(`${JSON.stringify({
       schemaVersion: "flopeek-native-incremental-benchmark/v1",
-      mode: "cold-command-envelope-with-cross-process-cache",
+      mode: "cold-command-envelope-with-persistent-native-session-and-cross-process-cache",
       iterations,
       rows,
       parity: "Every JS/native pair must have equal flopeek-core-compatibility/v1 SHA-256 digest and equal graph statistics before its timing is retained.",
       isolation: "Each implementation receives an independent disposable copy. Target repositories are read-only; generated Flopeek metadata exists only in the disposable copies.",
-      limitation: "This measures the current Rust inventory plus SQLite-backed JavaScript parser-record reuse. It is not a whole-product native-parser benchmark, a universal speed guarantee, or runtime-behavior evidence.",
+      ordering: "JS/native execution order alternates by iteration and scan state. The per-sample order is retained with each state so filesystem-cache order cannot be hidden by a single aggregate.",
+      limitation: "The native side keeps one JSONL process for its manifest/load/store requests within each scan command, then closes it. This measures the current Rust inventory plus SQLite-backed JavaScript parser-record reuse; it is not a whole-product native-parser benchmark, a cross-command daemon benchmark, a universal speed guarantee, or runtime-behavior evidence.",
     }, null, 2)}\n`);
   } finally {
     fs.rmSync(sandbox, { recursive: true, force: true });
@@ -148,4 +164,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { benchmarkRoot, copyRepository, parseArguments, summarize };
+module.exports = { benchmarkRoot, copyRepository, executionOrder, parseArguments, sourceFiles, summarize };

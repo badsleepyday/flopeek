@@ -61,6 +61,26 @@ Current public preview package version: `0.2.1-beta.3`.
 | SDLC workflow engine and local Work ledger | `partial` | Durable work records, planned windows, append-only actual events, Agile/Waterfall/custom definitions, evidence-gated transitions, a read-only Viewer inspector, immutable continuation checkpoints, immutable planned overlays/Plan Refs with CLI/HTTP/MCP parity, an opt-in Viewer Continue mode, append-only human reconciliation records, deterministic baseline/plan/current comparison, read-only divergence, and declared dependency readiness are current. Checkpoint editing and external evidence authority remain. |
 | Public distribution | `partial` | The unscoped `flopeek@0.2.1-beta.3` package is published on npm with the `beta` dist-tag and verified through a clean-room install. A tagged GitHub beta release, stable channel, and documented upgrade policy remain. |
 
+## Native-core re-engineering charter
+
+Status: `in progress`. This is the current P0 delivery constraint, not a second
+roadmap. See [ADR-024](docs/adr/ADR-024-native-core-strangler-contract.md).
+
+Flopeek is migrating through a strangler boundary: JavaScript remains the
+compatibility oracle while Rust replaces bounded internal responsibilities and
+SQLite becomes authoritative only after an explicit promotion gate. The active
+core loop is discovery, bounded scanning, structural facts, deterministic graph
+construction, entry flows, graph lifecycle, Context Ref freshness, impact, and
+related tests.
+
+Until native-core promotion, do not add languages/framework adapters, MCP tools,
+workflow/planning features, semantic/runtime features, WebGL work,
+multi-project behavior, or external integrations. Preserve existing extension
+behavior as compatibility surfaces; security, integrity, compatibility, and
+necessary release fixes remain allowed. Every native slice must retain public
+JavaScript IDs and pass the applicable canonical parity fixture before it can
+become authoritative.
+
 ## Agile operating model
 
 ### Iteration policy

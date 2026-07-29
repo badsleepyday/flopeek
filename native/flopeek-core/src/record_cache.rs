@@ -1,5 +1,6 @@
 use crate::store::open_native_store;
 use rusqlite::{OptionalExtension, params, params_from_iter};
+use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -90,6 +91,56 @@ fn load_records(
     }))
 }
 
+fn load_records_raw(
+    connection: &rusqlite::Connection,
+    project_pk: i64,
+    paths: &[String],
+) -> Result<Box<RawValue>, String> {
+    if paths.is_empty() {
+        return RawValue::from_string(format!(
+            r#"{{"schemaVersion":"{NATIVE_JS_RECORD_CACHE_SCHEMA}","operation":"load","records":[]}}"#
+        ))
+        .map_err(|error| error.to_string());
+    }
+    let placeholders = std::iter::repeat_n("?", paths.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT cache.path, cache.payload_json
+         FROM js_file_records cache
+         INNER JOIN inventory_files inventory
+           ON inventory.project_pk = cache.project_pk
+          AND inventory.path = cache.path
+          AND inventory.content_hash = cache.source_hash
+         WHERE cache.project_pk = ? AND cache.path IN ({placeholders})
+         ORDER BY cache.path"
+    );
+    let mut parameters = Vec::with_capacity(paths.len() + 1);
+    parameters.push(rusqlite::types::Value::Integer(project_pk));
+    parameters.extend(paths.iter().cloned().map(rusqlite::types::Value::Text));
+    let mut statement = connection
+        .prepare(&sql)
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map(params_from_iter(parameters), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| error.to_string())?;
+    let mut records = Vec::new();
+    for row in rows {
+        let (path, payload_json) = row.map_err(|error| error.to_string())?;
+        let quoted_path = serde_json::to_string(&path).map_err(|error| error.to_string())?;
+        records.push(format!(
+            r#"{{"path":{quoted_path},"record":{payload_json}}}"#
+        ));
+    }
+    RawValue::from_string(format!(
+        r#"{{"schemaVersion":"{NATIVE_JS_RECORD_CACHE_SCHEMA}","operation":"load","records":[{}]}}"#,
+        records.join(",")
+    ))
+    .map_err(|error| error.to_string())
+}
+
 fn store_records(
     connection: &mut rusqlite::Connection,
     project_pk: i64,
@@ -100,6 +151,18 @@ fn store_records(
         .map_err(|error| error.to_string())?;
     let now = now_millis()?;
     let mut stored = 0usize;
+    let mut upsert = transaction
+        .prepare(
+            "INSERT INTO js_file_records(project_pk, path, source_hash, payload_json, updated_at_ms)
+             SELECT ?1, ?2, inventory.content_hash, ?3, ?4
+             FROM inventory_files AS inventory
+             WHERE inventory.project_pk = ?1 AND inventory.path = ?2
+             ON CONFLICT(project_pk, path) DO UPDATE SET
+               source_hash = excluded.source_hash,
+               payload_json = excluded.payload_json,
+               updated_at_ms = excluded.updated_at_ms",
+        )
+        .map_err(|error| error.to_string())?;
     for item in records {
         let object = item
             .as_object()
@@ -116,30 +179,17 @@ fn store_records(
         let record = object
             .get("record")
             .ok_or("JS record cache entry record is required.")?;
-        let source_hash: Option<String> = transaction
-            .query_row(
-                "SELECT content_hash FROM inventory_files WHERE project_pk = ?1 AND path = ?2",
-                params![project_pk, path],
-                |row| row.get(0),
-            )
-            .optional()
+        let written = upsert
+            .execute(params![
+                project_pk,
+                path,
+                serde_json::to_string(record).map_err(|error| error.to_string())?,
+                now
+            ])
             .map_err(|error| error.to_string())?;
-        let Some(source_hash) = source_hash else {
-            continue;
-        };
-        transaction
-            .execute(
-                "INSERT INTO js_file_records(project_pk, path, source_hash, payload_json, updated_at_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT(project_pk, path) DO UPDATE SET
-                   source_hash = excluded.source_hash,
-                   payload_json = excluded.payload_json,
-                   updated_at_ms = excluded.updated_at_ms",
-                params![project_pk, path, source_hash, serde_json::to_string(record).map_err(|error| error.to_string())?, now],
-            )
-            .map_err(|error| error.to_string())?;
-        stored += 1;
+        stored += written;
     }
+    drop(upsert);
     transaction.commit().map_err(|error| error.to_string())?;
     Ok(json!({
         "schemaVersion": NATIVE_JS_RECORD_CACHE_SCHEMA,
@@ -148,9 +198,7 @@ fn store_records(
     }))
 }
 
-pub fn handle_native_js_record_cache(root: &Path, input: &str) -> Result<Value, String> {
-    let request: Value = serde_json::from_str(input)
-        .map_err(|error| format!("Native JS record cache input must be JSON: {error}"))?;
+pub fn handle_native_js_record_cache_value(root: &Path, request: &Value) -> Result<Value, String> {
     let object = request
         .as_object()
         .ok_or("Native JS record cache input must be an object.")?;
@@ -199,6 +247,52 @@ pub fn handle_native_js_record_cache(root: &Path, input: &str) -> Result<Value, 
         }
         _ => Err("Native JS record cache operation must be load or store.".to_string()),
     }
+}
+
+pub fn load_native_js_record_cache_raw(
+    root: &Path,
+    request: &Value,
+) -> Result<Box<RawValue>, String> {
+    let object = request
+        .as_object()
+        .ok_or("Native JS record cache input must be an object.")?;
+    if object.get("schemaVersion").and_then(Value::as_str) != Some(NATIVE_JS_RECORD_CACHE_SCHEMA) {
+        return Err("Native JS record cache input has an unsupported schemaVersion.".to_string());
+    }
+    let project_id = object
+        .get("projectId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or("Native JS record cache input projectId is required.")?;
+    if object.get("operation").and_then(Value::as_str) != Some("load") {
+        return Err("Native JS raw record cache supports only load operations.".to_string());
+    }
+    let paths = object
+        .get("paths")
+        .and_then(Value::as_array)
+        .ok_or("Native JS record cache load requires paths.")?
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::to_string)
+                .ok_or("Native JS record cache paths must be strings.")
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if paths.iter().any(|path| !valid_relative_path(path)) {
+        return Err(
+            "Native JS record cache paths must be safe repository-relative paths.".to_string(),
+        );
+    }
+    let connection = open_native_store(root).map_err(|error| error.to_string())?;
+    let project_pk = project_pk(&connection, project_id)?;
+    load_records_raw(&connection, project_pk, &paths)
+}
+
+pub fn handle_native_js_record_cache(root: &Path, input: &str) -> Result<Value, String> {
+    let request: Value = serde_json::from_str(input)
+        .map_err(|error| format!("Native JS record cache input must be JSON: {error}"))?;
+    handle_native_js_record_cache_value(root, &request)
 }
 
 #[cfg(test)]

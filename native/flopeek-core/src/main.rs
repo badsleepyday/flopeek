@@ -3,12 +3,14 @@ use flopeek_native_core::graph::scan_native_rust_graph;
 use flopeek_native_core::inventory::{
     scan_native_incremental_manifest, scan_native_inventory, scan_native_inventory_with_paths,
 };
+use flopeek_native_core::js_facts::scan_native_js_facts;
+use flopeek_native_core::protocol::serve_jsonl;
 use flopeek_native_core::record_cache::handle_native_js_record_cache;
 use flopeek_native_core::store::initialize_native_store;
 use serde_json::json;
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::io::Read;
+use std::io::{BufWriter, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -61,6 +63,9 @@ fn native_status(root: PathBuf) -> Result<(), String> {
             "schemaVersion": store.schema_version,
             "journalMode": store.journal_mode,
             "foreignKeysEnabled": store.foreign_keys_enabled,
+            "synchronousMode": store.synchronous_mode,
+            "busyTimeoutMs": store.busy_timeout_ms,
+            "quickCheck": store.quick_check,
         },
         "identity": {
             "schemaVersion": "flopeek-native-node-identity/v1",
@@ -203,6 +208,30 @@ fn native_rust_facts(root: PathBuf) -> Result<(), String> {
     Ok(())
 }
 
+fn native_js_facts(root: PathBuf) -> Result<(), String> {
+    let result = scan_native_js_facts(&root)?;
+    let payload = json!({
+        "schemaVersion": "flopeek-native-js-facts/v2",
+        "mode": "native-js-ts-parser-shadow",
+        "projectRoot": result.project_root,
+        "projectId": result.project_identity.project_id,
+        "adapterVersion": result.adapter_version,
+        "parsedFiles": result.parsed_files,
+        "reusedFiles": result.reused_files,
+        "failedFiles": result.failed_files,
+        "removedFacts": result.removed_facts,
+        "facts": result.facts,
+        "resolution": result.resolution,
+        "structuralRecords": result.structural_records,
+        "limitation": "This is a Rust-owned JavaScript/TypeScript parser and resolver candidate. It remains shadow-only until the complete adapter, StructuralFactBatch, graph, query, and other-language compatibility gates pass."
+    });
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?
+    );
+    Ok(())
+}
+
 fn native_rust_graph(root: PathBuf) -> Result<(), String> {
     let result = scan_native_rust_graph(&root)?;
     let payload = json!({
@@ -263,6 +292,22 @@ fn delegate(arguments: Vec<OsString>) -> Result<i32, String> {
 
 fn run() -> Result<i32, String> {
     let arguments: Vec<OsString> = env::args_os().skip(1).collect();
+    if arguments
+        .first()
+        .is_some_and(|argument| equals(argument, "--native-serve"))
+    {
+        if arguments.len() != 1 {
+            return Err("--native-serve does not accept positional arguments.".to_string());
+        }
+        // `serve_jsonl` deliberately flushes after every response so a
+        // persistent request never waits behind a later line. Buffer the
+        // serializer's many small writes first, otherwise Windows stdout can
+        // turn a compact response into hundreds of synchronous pipe writes.
+        let stdout = std::io::stdout();
+        let writer = BufWriter::with_capacity(128 * 1024, stdout.lock());
+        serve_jsonl(std::io::stdin().lock(), writer)?;
+        return Ok(0);
+    }
     if arguments
         .first()
         .is_some_and(|argument| equals(argument, "--native-status"))
@@ -366,6 +411,21 @@ fn run() -> Result<i32, String> {
             repository_root(None)?
         };
         native_rust_facts(root)?;
+        return Ok(0);
+    }
+    if arguments
+        .first()
+        .is_some_and(|argument| equals(argument, "--native-js-facts"))
+    {
+        if arguments.len() > 2 {
+            return Err("--native-js-facts accepts at most one repository path.".to_string());
+        }
+        let root = if let Some(path) = arguments.get(1) {
+            PathBuf::from(path)
+        } else {
+            repository_root(None)?
+        };
+        native_js_facts(root)?;
         return Ok(0);
     }
     delegate(arguments)

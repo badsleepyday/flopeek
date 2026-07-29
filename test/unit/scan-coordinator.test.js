@@ -8,15 +8,24 @@ const path = require("node:path");
 const test = require("node:test");
 const { createContextRef } = require("../../src/context-card");
 const { resolveContextRef } = require("../../src/graph-service");
+const { createJsCoreClient } = require("../../src/js-core-client");
 const { createScanCoordinator } = require("../../src/scan-coordinator");
 const { scanRepository, writeGraphCache } = require("../../src/scanner");
 
+const ROOT = path.join(__dirname, "..", "..");
 const SOURCE = path.join(__dirname, "..", "fixtures", "typescript-order-flow");
+const MANIFEST = path.join(ROOT, "native", "flopeek-core", "Cargo.toml");
+const NATIVE = { command: "cargo", args: ["run", "--quiet", "--manifest-path", MANIFEST, "--"] };
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-scan-coordinator-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.cpSync(SOURCE, root, { recursive: true });
+  fs.cpSync(SOURCE, root, {
+    recursive: true,
+    // A fixture is source input, never a carrier for a developer-local cache.
+    // This keeps the cache-disabled contract independent of prior test runs.
+    filter: (source) => path.basename(source) !== ".flopeek",
+  });
   return root;
 }
 
@@ -185,6 +194,83 @@ test("unbounded coordinator exposes the same terminal outcome around incremental
   assert.equal(second.outcome.activeGraph.graphVersion, 2);
 });
 
+test("unbounded coordinator refreshes through its injected CoreClient", async (t) => {
+  const root = fixture(t);
+  const javascript = createJsCoreClient();
+  const refreshCalls = [];
+  const coreClient = {
+    ...javascript,
+    refresh: (targetRoot, options) => {
+      refreshCalls.push({ targetRoot, options: { ...options } });
+      return javascript.refresh(targetRoot, options);
+    },
+  };
+  const onCoreProfile = () => {};
+  const coordinator = createScanCoordinator(root, { cache: false, coreClient, onCoreProfile });
+  await coordinator.refresh(null, "initial");
+  const changedPath = changeService(root);
+  await coordinator.refresh([changedPath], "filesystem");
+  assert.equal(refreshCalls.length, 2);
+  assert.equal(refreshCalls[0].targetRoot, root);
+  assert.equal(refreshCalls[0].options.persistIdentity, false);
+  assert.equal(refreshCalls[0].options.onProfile, onCoreProfile);
+  assert.equal(refreshCalls[0].options.sessionProjectId, refreshCalls[1].options.sessionProjectId);
+  assert.deepEqual(refreshCalls[1].options.changedPaths, [changedPath]);
+});
+
+test("native mode request is observable and falls back to JavaScript before the rollout gate passes", async (t) => {
+  const root = fixture(t);
+  const coordinator = createScanCoordinator(root, { cache: false, coreMode: "native" });
+  const result = await coordinator.refresh(null, "native-gate-probe");
+  assert.equal(result.outcome.status, "complete");
+  assert.equal(result.outcome.coreRuntime.requestedMode, "native");
+  assert.equal(result.outcome.coreRuntime.selectedImplementation, "javascript");
+  assert.equal(result.outcome.coreRuntime.fallback.reason, "native-rollout-gate-blocked");
+  assert.equal(coordinator.coreMode, result.outcome.coreRuntime);
+});
+
+test("shadow mode never creates native SQLite state when the public cache is disabled", async (t) => {
+  const root = fixture(t);
+  const coordinator = createScanCoordinator(root, { cache: false, coreMode: "shadow" });
+  const result = await coordinator.refresh(null, "shadow-cache-disabled");
+  assert.equal(result.outcome.status, "complete");
+  assert.equal(result.outcome.coreRuntime.requestedMode, "shadow");
+  assert.deepEqual(result.outcome.coreRuntime.nativeShadow, {
+    status: "skipped",
+    reason: "cache-disabled-native-sqlite-prohibited",
+  });
+  assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
+});
+
+test("shadow mode routes cache-enabled unbounded scans through one persistent native JSONL session", async (t) => {
+  const root = fixture(t);
+  const coordinator = createScanCoordinator(root, { cache: true, coreMode: "shadow", native: NATIVE });
+  t.after(() => coordinator.close());
+  const result = await coordinator.refresh(null, "shadow-persistent-session");
+  assert.equal(result.outcome.status, "complete");
+  assert.equal(result.outcome.coreRuntime.requestedMode, "shadow");
+  assert.equal(result.outcome.coreRuntime.selectedImplementation, "javascript");
+  assert.equal(result.outcome.coreRuntime.nativeShadow.status, "completed");
+  assert.equal(result.outcome.coreRuntime.nativeShadow.transport, "persistent-jsonl");
+  assert.equal(result.outcome.coreRuntime.nativeShadow.sessionScope, "caller");
+  assert.equal(result.outcome.coreRuntime.nativeShadow.sessionReused, false);
+  assert.equal(result.outcome.coreRuntime.nativeShadow.protocolRequests, 3);
+  assert.ok(result.outcome.coreRuntime.nativeShadow.nativeManifestMs >= 0);
+  assert.ok(result.outcome.coreRuntime.nativeShadow.nativeRecordLoadMs >= 0);
+  assert.equal(fs.existsSync(path.join(root, ".flopeek", "native-core.sqlite3")), true);
+});
+
+test("shadow coordinator reuses one native session across refreshes", async (t) => {
+  const root = fixture(t);
+  const coordinator = createScanCoordinator(root, { cache: true, coreMode: "shadow", native: NATIVE });
+  t.after(() => coordinator.close());
+  const first = await coordinator.refresh(null, "shadow-first");
+  const second = await coordinator.refresh(null, "shadow-second");
+  assert.equal(first.outcome.coreRuntime.nativeShadow.sessionReused, false);
+  assert.equal(second.outcome.coreRuntime.nativeShadow.sessionReused, true);
+  assert.deepEqual(await coordinator.close(), { closed: true, reason: "closed" });
+});
+
 test("bounded coordinator publishes queryable running state and accepts cancellation without a graph", async (t) => {
   const root = fixture(t);
   for (let index = 0; index < 80; index += 1) {
@@ -218,4 +304,35 @@ test("bounded coordinator publishes queryable running state and accepts cancella
   assert.equal(result.outcome.cachePromotion.performed, false);
   assert.equal(result.graph, null);
   assert.equal(coordinator.isRunning(), false);
+});
+
+test("unbounded native coordinator forwards cancellation to the native CoreClient without promoting a graph", async (t) => {
+  const root = fixture(t);
+  const javascript = createJsCoreClient();
+  let receivedSignal = null;
+  const native = {
+    ...javascript,
+    implementation: "native-experimental",
+    refresh: async (_root, options) => new Promise((resolve, reject) => {
+      receivedSignal = options.signal;
+      options.signal.addEventListener("abort", () => {
+        const error = new Error("native request cancelled");
+        error.code = "FLOPEEK_NATIVE_SCAN_CANCELLED";
+        reject(error);
+      }, { once: true });
+    }),
+    getLastCompleteGraph: async () => null,
+  };
+  const coordinator = createScanCoordinator(root, { cache: true, coreClient: native });
+  const pending = coordinator.refresh(null, "native-cancel-test");
+  await new Promise((resolve) => setImmediate(resolve));
+  const cancellation = coordinator.cancel();
+  const result = await pending;
+  assert.equal(cancellation.accepted, true);
+  assert.equal(cancellation.reason, "abort-requested");
+  assert.equal(receivedSignal.aborted, true);
+  assert.equal(result.outcome.status, "cancelled");
+  assert.equal(result.outcome.cachePromotion.performed, false);
+  assert.equal(result.graph, null);
+  assert.equal(fs.existsSync(path.join(root, ".flopeek", "graph.json")), false);
 });

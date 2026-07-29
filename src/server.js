@@ -11,6 +11,7 @@ const { readGraphCacheResult, summarizeCacheResult } = require("./graph-cache");
 const { createScanCoordinator } = require("./scan-coordinator");
 const { listServeWorkspace, registerServeWorkspace, unregisterServeWorkspace } = require("./serve-workspace");
 const { parseFlowLensMaxStepsQuery } = require("./flow-lens-options");
+const { createSurfaceCoreClient } = require("./core-runtime");
 
 const PUBLIC_DIRECTORY = path.join(__dirname, "..", "public");
 const VENDOR_ASSETS = new Map([
@@ -26,7 +27,6 @@ const MIME_TYPES = {
 };
 const MAX_REQUEST_BODY_BYTES = 1_000_000;
 const WATCH_IGNORED_DIRECTORIES = new Set([".flopeek", ".flowpeek", ".git", ".next", ".nuxt", ".project-flow", ".turbo", "build", "coverage", "dist", "node_modules", "out", "target", "vendor"]);
-
 function send(response, statusCode, body, contentType = "application/json; charset=utf-8") {
   response.writeHead(statusCode, { "content-type": contentType, "cache-control": "no-store" });
   response.end(typeof body === "string" || Buffer.isBuffer(body) ? body : JSON.stringify(body));
@@ -167,6 +167,14 @@ async function listenOnAvailablePort(server, requestedPort, options = {}) {
 
 async function startServer(options) {
   let root = fs.realpathSync(options.root);
+  const ownsCoreClient = !options.coreClient;
+  const core = options.coreClient || createSurfaceCoreClient(options);
+  let closeCorePromise = null;
+  const closeOwnedCore = () => {
+    if (!ownsCoreClient) return Promise.resolve();
+    if (!closeCorePromise) closeCorePromise = Promise.resolve(core.close?.());
+    return closeCorePromise;
+  };
   let coordinator = null;
   let graph = null;
   let previousGraph = null;
@@ -186,6 +194,7 @@ async function startServer(options) {
     }
   };
   const createCoordinator = (targetRoot = root, coordinatorOptions = {}) => createScanCoordinator(targetRoot, {
+    coreClient: coordinatorOptions.coreClient || core,
     cache: options.cache,
     timeBudgetMs: options.timeBudgetMs,
     maxFiles: options.maxFiles,
@@ -198,13 +207,13 @@ async function startServer(options) {
   });
   coordinator = createCoordinator();
   const elapsedMilliseconds = (startedAt) => Number(process.hrtime.bigint() - startedAt) / 1_000_000;
-  const broadcastGraphUpdate = (reason, refreshStartedAt = null) => {
+  const broadcastGraphUpdate = async (reason, refreshStartedAt = null) => {
     const contextStartedAt = process.hrtime.bigint();
     const delta = previousGraph
       ? graph.analysis.latestDelta || getGraphDelta(previousGraph, graph, { limit: 20 })
       : getGraphDelta(null, graph, { limit: 20 });
     const changedContexts = delta.schemaVersion
-      ? getChangedContexts(graph, { fromVersion: delta.fromGraphVersion, toVersion: delta.toGraphVersion })
+      ? await core.getChangedContexts(graph, { fromVersion: delta.fromGraphVersion, toVersion: delta.toGraphVersion })
       : null;
     const changedContextMs = elapsedMilliseconds(contextStartedAt);
     const previousNodeIds = new Set(previousGraph?.nodes?.map((node) => node.id));
@@ -239,7 +248,7 @@ async function startServer(options) {
       const failure = result.outcome.failure?.message || result.outcome.reason || "No complete graph is available.";
       throw new Error(`Flopeek scan ${result.outcome.status}: ${failure}`);
     }
-    if (reason && result.outcome.status === "complete") broadcastGraphUpdate(reason, refreshStartedAt);
+    if (reason && result.outcome.status === "complete") await broadcastGraphUpdate(reason, refreshStartedAt);
     return graph;
   };
   const scanFailureMessage = (currentOutcome) => {
@@ -350,7 +359,7 @@ async function startServer(options) {
         return delta ? send(response, 200, delta) : send(response, 404, { error: "No matching graph delta was found." });
       }
       if (request.method === "GET" && url.pathname === "/api/changed-contexts") {
-        return send(response, 200, getChangedContexts(currentGraph(), { fromVersion: url.searchParams.get("fromVersion"), toVersion: url.searchParams.get("toVersion") }));
+        return send(response, 200, await core.getChangedContexts(currentGraph(), { fromVersion: url.searchParams.get("fromVersion"), toVersion: url.searchParams.get("toVersion") }));
       }
       if (request.method === "GET" && url.pathname === "/api/related-implementations") {
         const contextRef = url.searchParams.get("contextRef");
@@ -362,9 +371,9 @@ async function startServer(options) {
         if (!flowId) throw requestError(400, "A flow query parameter is required.");
         return send(response, 200, getFlowComparison(currentGraph(), flowId, { fromVersion: url.searchParams.get("fromVersion"), toVersion: url.searchParams.get("toVersion") }));
       }
-      if (request.method === "GET" && url.pathname === "/api/view") return send(response, 200, projectView(currentGraph(), url.searchParams));
-      if (request.method === "GET" && url.pathname === "/api/agent-bootstrap") return send(response, 200, getAgentBootstrap(currentGraph()));
-      if (request.method === "GET" && url.pathname === "/api/agent-context") return send(response, 200, projectView(currentGraph(), url.searchParams).aiContext);
+      if (request.method === "GET" && url.pathname === "/api/view") return send(response, 200, await core.getProjectOverview(currentGraph(), url.searchParams));
+      if (request.method === "GET" && url.pathname === "/api/agent-bootstrap") return send(response, 200, await core.getScanStatus(currentGraph()));
+      if (request.method === "GET" && url.pathname === "/api/agent-context") return send(response, 200, (await core.getProjectOverview(currentGraph(), url.searchParams)).aiContext);
       if (request.method === "POST" && url.pathname === "/api/handoff-context") {
         const body = await readBody(request);
         return send(response, 200, getHandoffContext(currentGraph(), body));
@@ -526,13 +535,13 @@ async function startServer(options) {
       if (request.method === "GET" && url.pathname === "/api/semantic-review-queue") return send(response, 200, getSemanticReviewQueue(currentGraph(), { status: url.searchParams.get("status") || "suggested" }));
       if (request.method === "GET" && url.pathname === "/api/brief") return send(response, 200, getDurableBrief(currentGraph(), url.searchParams.get("kind") || "project", url.searchParams.get("id"), url.searchParams.get("format") || "json"));
       if (request.method === "GET" && url.pathname === "/api/brief-manifests") return send(response, 200, listDurableBriefManifests(currentGraph(), { kind: url.searchParams.get("kind"), contextId: url.searchParams.get("contextId") }));
-      if (request.method === "GET" && url.pathname === "/api/search") return send(response, 200, findNodes(currentGraph(), url.searchParams));
+      if (request.method === "GET" && url.pathname === "/api/search") return send(response, 200, await core.findNodes(currentGraph(), url.searchParams));
       if (request.method === "GET" && url.pathname === "/api/project") return send(response, 200, currentGraph().project);
       if (request.method === "GET" && url.pathname === "/api/flows") return send(response, 200, currentGraph().flows);
-      if (request.method === "GET" && url.pathname === "/api/entry-flows") return send(response, 200, getEntryFlows(currentGraph(), url.searchParams.get("query") || "", url.searchParams.get("scope") || "application"));
+      if (request.method === "GET" && url.pathname === "/api/entry-flows") return send(response, 200, await core.getEntryFlows(currentGraph(), url.searchParams.get("query") || "", url.searchParams.get("scope") || "application"));
       if (request.method === "GET" && url.pathname === "/api/flow-lens") {
         const requestedMaxSteps = parseFlowLensMaxStepsQuery(url.searchParams.get("maxSteps"));
-        const lens = getFlowProjection(currentGraph(), url.searchParams.get("flow"), url.searchParams.get("scope") || "application", { maxSteps: requestedMaxSteps });
+        const lens = await core.getFlowProjection(currentGraph(), url.searchParams.get("flow"), url.searchParams.get("scope") || "application", { maxSteps: requestedMaxSteps });
         return lens ? send(response, 200, lens) : send(response, 404, { error: "Detected flow not found in the selected scope." });
       }
       if (request.method === "GET" && url.pathname === "/api/flow-suggestion") {
@@ -579,17 +588,17 @@ async function startServer(options) {
         if (!contextRef) throw requestError(400, "A contextRef query parameter is required.");
         return send(response, 200, getGitContextContinuity(currentGraph(), contextRef, { from: url.searchParams.get("from") || "HEAD~1", to: url.searchParams.get("to") || "HEAD" }));
       }
-      if (request.method === "GET" && url.pathname === "/api/impact") return send(response, 200, getChangeImpact(currentGraph(), url.searchParams.getAll("path"), { maxDepth: url.searchParams.get("maxDepth"), previousGraph }));
+      if (request.method === "GET" && url.pathname === "/api/impact") return send(response, 200, await core.getChangeImpact(currentGraph(), url.searchParams.getAll("path"), { maxDepth: url.searchParams.get("maxDepth"), previousGraph }));
       if (request.method === "GET" && url.pathname === "/api/export/mermaid") return send(response, 200, { mermaid: graphToMermaid(currentGraph()) });
       if (request.method === "GET" && url.pathname === "/api/context-card") {
-        const card = getContextCard(currentGraph(), url.searchParams.get("id"), url.searchParams.get("format") || "json");
+        const card = await core.getContextCard(currentGraph(), url.searchParams.get("id"), url.searchParams.get("format") || "json");
         return card ? send(response, 200, card) : send(response, 404, { error: "Node not found." });
       }
       if (request.method === "GET" && url.pathname === "/api/context/resolve") {
-        return send(response, 200, resolveContextRef(currentGraph(), url.searchParams.get("ref")));
+        return send(response, 200, await core.resolveContextRef(currentGraph(), url.searchParams.get("ref")));
       }
       if (request.method === "GET" && url.pathname === "/api/node") {
-        const detail = getNodeDetails(currentGraph(), url.searchParams.get("id"));
+        const detail = await core.getNode(currentGraph(), url.searchParams.get("id"));
         return detail ? send(response, 200, detail) : send(response, 404, { error: "Node not found." });
       }
       if (request.method === "POST" && url.pathname === "/api/scan") {
@@ -627,7 +636,7 @@ async function startServer(options) {
             });
           }
           broadcast("scan-status", { phase: "terminal", ...coordinator.currentOutcome() });
-          broadcastGraphUpdate("manual-root-switch");
+          await broadcastGraphUpdate("manual-root-switch");
           return send(response, 200, graph);
         }
         return sendManualScanResult(response);
@@ -746,6 +755,7 @@ async function startServer(options) {
     for (const response of eventStreams) response.end();
     eventStreams.clear();
     if (serveWorkspaceRegistration) unregisterServeWorkspace(serveWorkspaceRegistration.record.instanceId, { registryRoot: options.registryRoot });
+    closeOwnedCore().catch(() => {});
   });
 
   portBinding = await listenOnAvailablePort(server, options.port, options);
@@ -763,6 +773,7 @@ async function startServer(options) {
     await new Promise((resolve) => setImmediate(resolve));
   } catch (error) {
     await new Promise((resolve) => server.close(resolve));
+    await closeOwnedCore();
     throw error;
   }
   return {
@@ -776,6 +787,10 @@ async function startServer(options) {
     project: graph.project,
     serveWorkspace: serveWorkspaceRegistration?.workspace || null,
     serveInstance: serveWorkspaceRegistration?.record || null,
+    close: async () => {
+      if (server.listening) await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await closeOwnedCore();
+    },
   };
 }
 

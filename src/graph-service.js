@@ -623,6 +623,14 @@ function findNodes(graph, options = {}) {
   return { query: text, scope, results };
 }
 
+function attachNodeExtensions(graph, detail) {
+  if (!detail) return null;
+  return {
+    ...detail,
+    agentEvidenceTraces: listStoredAgentEvidenceTraces(graph.project.root, graph, { contextId: detail.node.id, limit: 10 }),
+  };
+}
+
 function getNodeDetails(graph, id) {
   const node = graph.nodes.find((candidate) => candidate.id === id);
   if (!node) return null;
@@ -630,13 +638,12 @@ function getNodeDetails(graph, id) {
   const detailFor = (edge, nodeId) => ({ ...edge, node: byId.get(nodeId) });
   const incoming = graph.edges.filter((edge) => edge.target === node.id).map((edge) => detailFor(edge, edge.source)).filter((item) => item.node);
   const outgoing = graph.edges.filter((edge) => edge.source === node.id).map((edge) => detailFor(edge, edge.target)).filter((item) => item.node);
-  return {
+  return attachNodeExtensions(graph, {
     node,
     incoming,
     outgoing,
     relatedTests: [...incoming, ...outgoing].filter((item) => item.node.type === "test"),
-    agentEvidenceTraces: listStoredAgentEvidenceTraces(graph.project.root, graph, { contextId: node.id, limit: 10 }),
-  };
+  });
 }
 
 function getContextCard(graph, id, format = "json") {
@@ -646,7 +653,10 @@ function getContextCard(graph, id, format = "json") {
   return createContextPacket(card, format);
 }
 
-function attachFlowVerification(graph, lens) {
+// Extensions decorate an already-assembled static Flow Lens. Keeping this
+// separate from buildFlowProjection lets the Rust core own the deterministic
+// lens while legacy local metadata remains an adapter over the public graph.
+function attachFlowExtensions(graph, lens) {
   if (!lens) return null;
   const semanticSuggestion = createSemanticFlowSuggestion(graph, lens);
   const semanticFeedback = resolveSemanticSuggestionFeedback(graph.project.root, graph, semanticSuggestion);
@@ -873,7 +883,7 @@ function getFlowProjection(graph, flowId, scope = "application", options = {}) {
   const lens = getOrCreateArtifact(graph.project.root, graph, "flow-projection", { flowId, scope, maxSteps }, () => buildFlowProjection(graph, flowId, scope, { maxSteps }), {
     dependencyPaths: (value) => (value?.steps || []).map((step) => step.node?.path).filter(Boolean),
   }).value;
-  return attachFlowVerification(graph, lens);
+  return attachFlowExtensions(graph, lens);
 }
 
 function recordAgentEvidenceTrace(graph, input) {
@@ -1382,6 +1392,7 @@ module.exports = {
   getCacheHygiene,
   getContextCard,
   getNodeDetails,
+  attachNodeExtensions,
   getRelatedImplementations,
   getProjectHome,
   getProductProof,
@@ -1397,6 +1408,7 @@ module.exports = {
   getFlowComparison,
   getFlowContextCard,
   getFlowProjection,
+  attachFlowExtensions,
   getFlowSuggestion,
   getFlowVerification,
   getVerifiedSemanticMemory,

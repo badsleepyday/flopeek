@@ -5,6 +5,7 @@ const { assignWorkflow, availableGraphDelta, createContinuationCheckpoint, creat
 const { createScanCoordinator } = require("./scan-coordinator");
 const { compareGitSnapshots, createGitSnapshot } = require("./history");
 const { DEFAULT_FLOW_LENS_MAX_STEPS, MAX_FLOW_LENS_STEPS, MIN_FLOW_LENS_STEPS } = require("./flow-lens-options");
+const { createSurfaceCoreClient } = require("./core-runtime");
 
 function jsonResult(value) {
   return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
@@ -21,7 +22,16 @@ async function createMcpServer(options) {
   ]);
   const root = fs.realpathSync(options.root);
   if (!fs.statSync(root).isDirectory()) throw new Error("MCP repository target must be a directory.");
+  const ownsCoreClient = !options.coreClient;
+  const core = options.coreClient || createSurfaceCoreClient(options);
+  let closeCorePromise = null;
+  const closeOwnedCore = () => {
+    if (!ownsCoreClient) return Promise.resolve();
+    if (!closeCorePromise) closeCorePromise = Promise.resolve(core.close?.());
+    return closeCorePromise;
+  };
   const coordinator = createScanCoordinator(root, {
+    coreClient: core,
     cache: options.cache,
     timeBudgetMs: options.timeBudgetMs,
     maxFiles: options.maxFiles,
@@ -72,7 +82,7 @@ async function createMcpServer(options) {
     title: "Get the Flopeek agent bootstrap",
     description: "Start here. Return the current graph identity, parser coverage, readiness, recommended evidence workflow, and non-overclaiming policy shared by every supported agent host.",
     inputSchema: {},
-  }, () => getAgentBootstrap(graph, {
+  }, () => core.getScanStatus(graph, {
     scanOutcome: coordinator.currentOutcome(),
     project: {
       name: path.basename(root),
@@ -105,7 +115,7 @@ async function createMcpServer(options) {
     inputSchema: {
       scope: z.enum(["application", "runtime", "framework", "devtool", "all"]).optional(),
     },
-  }, ({ scope = "application" }) => projectView(currentGraph(), { mode: "overview", scope }));
+  }, ({ scope = "application" }) => core.getProjectOverview(currentGraph(), { mode: "overview", scope }));
 
   register("get_view_projection", {
     title: "Get a bounded technical view projection",
@@ -118,7 +128,7 @@ async function createMcpServer(options) {
       maxNodes: z.number().int().min(1).max(100).optional(),
       maxEdges: z.number().int().min(1).max(200).optional(),
     },
-  }, ({ mode = "overview", scope = "application", level = "feature", focus = null, maxNodes, maxEdges }) => projectView(currentGraph(), { mode, scope, level, focus, maxNodes, maxEdges }));
+  }, ({ mode = "overview", scope = "application", level = "feature", focus = null, maxNodes, maxEdges }) => core.getProjectOverview(currentGraph(), { mode, scope, level, focus, maxNodes, maxEdges }));
 
   register("find_nodes", {
     title: "Find code graph nodes",
@@ -127,14 +137,14 @@ async function createMcpServer(options) {
       query: z.string().min(1).max(240),
       scope: z.enum(["application", "runtime", "framework", "devtool", "all"]).optional(),
     },
-  }, ({ query, scope = "application" }) => findNodes(currentGraph(), { query, scope }));
+  }, ({ query, scope = "application" }) => core.findNodes(currentGraph(), { query, scope }));
 
   register("get_node", {
     title: "Get raw node evidence",
     description: "Return one original node with direct incoming and outgoing parser facts, source evidence, and manually verified description. Call this before interpreting a summary node as implementation detail.",
     inputSchema: { id: z.string().min(1).max(2048) },
-  }, ({ id }) => {
-    const detail = getNodeDetails(currentGraph(), id);
+  }, async ({ id }) => {
+    const detail = await core.getNode(currentGraph(), id);
     if (!detail) throw new Error(`Node not found: ${id}`);
     return detail;
   });
@@ -146,7 +156,7 @@ async function createMcpServer(options) {
       id: z.string().min(1).max(2048),
       scope: z.enum(["application", "runtime", "framework", "devtool", "all"]).optional(),
     },
-  }, ({ id, scope = "application" }) => projectView(currentGraph(), { mode: "dependencies", scope, focus: id }));
+  }, ({ id, scope = "application" }) => core.getProjectOverview(currentGraph(), { mode: "dependencies", scope, focus: id }));
 
   register("get_request_flows", {
     title: "Get detected entry flows (legacy request alias)",
@@ -155,7 +165,7 @@ async function createMcpServer(options) {
       endpoint: z.string().max(240).optional(),
       scope: z.enum(["application", "all"]).optional(),
     },
-  }, ({ endpoint = "", scope = "application" }) => getRequestFlows(currentGraph(), endpoint, scope));
+  }, ({ endpoint = "", scope = "application" }) => core.getRequestFlows(currentGraph(), endpoint, scope));
 
   register("get_entry_flows", {
     title: "Get detected entry flows",
@@ -164,7 +174,7 @@ async function createMcpServer(options) {
       query: z.string().max(240).optional(),
       scope: z.enum(["application", "all"]).optional(),
     },
-  }, ({ query = "", scope = "application" }) => getEntryFlows(currentGraph(), query, scope));
+  }, ({ query = "", scope = "application" }) => core.getEntryFlows(currentGraph(), query, scope));
 
   register("get_flow_projection", {
     title: "Get an evidence-rich Flow Lens",
@@ -174,8 +184,8 @@ async function createMcpServer(options) {
       scope: z.enum(["application", "all"]).optional(),
       maxSteps: z.number().int().min(MIN_FLOW_LENS_STEPS).max(MAX_FLOW_LENS_STEPS).optional(),
     },
-  }, ({ flowId, scope = "application", maxSteps = DEFAULT_FLOW_LENS_MAX_STEPS }) => {
-    const lens = getFlowProjection(currentGraph(), flowId, scope, { maxSteps });
+  }, async ({ flowId, scope = "application", maxSteps = DEFAULT_FLOW_LENS_MAX_STEPS }) => {
+    const lens = await core.getFlowProjection(currentGraph(), flowId, scope, { maxSteps });
     if (!lens) throw new Error(`Detected flow not found: ${flowId}`);
     return lens;
   });
@@ -187,14 +197,14 @@ async function createMcpServer(options) {
       paths: z.array(z.string().min(1).max(2048)).min(1).max(100),
       maxDepth: z.number().int().min(0).max(12).optional(),
     },
-  }, ({ paths, maxDepth = 6 }) => getChangeImpact(currentGraph(), paths, { maxDepth, previousGraph }));
+  }, ({ paths, maxDepth = 6 }) => core.getChangeImpact(currentGraph(), paths, { maxDepth, previousGraph }));
 
   register("get_related_tests", {
     title: "Get directly related tests",
     description: "Return test files that have direct parser relationships with a node. Missing results do not prove that behavioral coverage does not exist.",
     inputSchema: { id: z.string().min(1).max(2048) },
-  }, ({ id }) => {
-    const tests = getRelatedTests(currentGraph(), id);
+  }, async ({ id }) => {
+    const tests = await core.getRelatedTests(currentGraph(), id);
     if (!tests) throw new Error(`Node not found: ${id}`);
     return tests;
   });
@@ -207,7 +217,7 @@ async function createMcpServer(options) {
       scope: z.enum(["application", "runtime", "framework", "devtool", "all"]).optional(),
       focusId: z.string().max(2048).optional(),
     },
-  }, ({ mode = "overview", scope = "application", focusId }) => projectView(currentGraph(), { mode, scope, focus: focusId }).aiContext);
+  }, async ({ mode = "overview", scope = "application", focusId }) => (await core.getProjectOverview(currentGraph(), { mode, scope, focus: focusId })).aiContext);
 
   register("get_trust_analytics", {
     title: "Get trust analytics",
@@ -258,7 +268,7 @@ async function createMcpServer(options) {
       fromVersion: z.number().int().min(0).optional(),
       toVersion: z.number().int().min(1).optional(),
     },
-  }, ({ fromVersion, toVersion }) => getChangedContexts(currentGraph(), { fromVersion, toVersion }));
+  }, ({ fromVersion, toVersion }) => core.getChangedContexts(currentGraph(), { fromVersion, toVersion }));
 
   register("get_related_implementations", {
     title: "Find repeated static implementation conventions",
@@ -539,8 +549,8 @@ async function createMcpServer(options) {
       id: z.string().min(1).max(2048),
       format: z.enum(["json", "markdown"]).optional(),
     },
-  }, ({ id, format = "json" }) => {
-    const card = getContextCard(currentGraph(), id, format);
+  }, async ({ id, format = "json" }) => {
+    const card = await core.getContextCard(currentGraph(), id, format);
     if (!card) throw new Error(`Node not found: ${id}`);
     return card;
   });
@@ -549,7 +559,7 @@ async function createMcpServer(options) {
     title: "Resolve a Flopeek Context Ref",
     description: "Resolve a node or flow fp://local Context Ref against the current project. The result explicitly reports current, stale, historical, unresolved, or successor-candidate state and never silently redirects to unrelated evidence.",
     inputSchema: { contextRef: z.string().min(1).max(8192) },
-  }, ({ contextRef }) => resolveContextRef(currentGraph(), contextRef));
+  }, ({ contextRef }) => core.resolveContextRef(currentGraph(), contextRef));
 
   register("get_active_branch_git_evidence", {
     title: "Get active-branch Git path evidence for a Context Ref",
@@ -720,13 +730,24 @@ async function createMcpServer(options) {
       delta,
       adjacentDelta: refreshed.analysis.latestDelta || null,
       persistedDelta: options.cache === false ? null : refreshed.analysis.latestDelta || null,
-      changedContexts: getChangedContexts(refreshed, { fromVersion: refreshed.analysis.latestDelta?.fromGraphVersion, toVersion: refreshed.analysis.latestDelta?.toGraphVersion }),
+      changedContexts: await core.getChangedContexts(refreshed, { fromVersion: refreshed.analysis.latestDelta?.fromGraphVersion, toVersion: refreshed.analysis.latestDelta?.toGraphVersion }),
       scanOutcome,
-      agentContext: projectView(refreshed, { mode: "overview", scope: "application" }).aiContext,
+      agentContext: (await core.getProjectOverview(refreshed, { mode: "overview", scope: "application" })).aiContext,
     };
   });
 
-  return { server, root, refresh, startInitialScan, coordinator };
+  let closePromise = null;
+  const close = () => {
+    if (!closePromise) closePromise = (async () => {
+      try {
+        await server.close();
+      } finally {
+        await closeOwnedCore();
+      }
+    })();
+    return closePromise;
+  };
+  return { server, root, refresh, startInitialScan, coordinator, close };
 }
 
 async function runMcpServer(options) {
@@ -746,6 +767,9 @@ async function runMcpServer(options) {
     });
   };
   await instance.server.connect(transport);
+  transport.onclose = () => instance.close().catch((error) => {
+    process.stderr.write(`Flopeek MCP shutdown failed: ${error?.message || "unknown error"}\n`);
+  });
   process.stderr.write(`Flopeek MCP connected for ${instance.root}\n`);
   return instance;
 }

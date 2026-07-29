@@ -23,9 +23,12 @@ const { cacheHygiene, pruneArtifactCache } = require("./artifact-cache");
 const { pruneGraphDeltas, readGraphDelta, readLatestGraphDelta } = require("./graph-state");
 const { discoverRepository } = require("./repository-discovery");
 const { activateOnWorkspaceHub, startWorkspaceServer } = require("./workspace-server");
+const { createSurfaceCoreClient } = require("./core-runtime");
+
+let core = null;
 
 function parseArgs(argv) {
-  const result = { command: "serve", evaluation: null, cacheAction: "status", showcaseAction: "run", workAction: "list", continueAction: "list", planAction: "list", reconcileAction: "list", recordId: null, checkpointId: null, overlayId: null, reconciliationId: null, planRef: null, contextRef: null, inputFile: null, root: process.cwd(), port: 4780, portFallback: true, global: false, workspaceId: null, serviceLabel: null, open: true, cache: true, format: "summary", changed: [], base: null, commit: "HEAD", from: "HEAD~1", to: "HEAD", fromVersion: null, toVersion: null, force: false, limit: null, keepDeltas: null, history: false, apply: false, iterations: 3, platforms: [], dryRun: false, strict: false, casesFile: null, runsFile: null, condition: "both", keepWorkspace: false, timeBudgetMs: null, maxFiles: null, maxBytes: null, packagePath: null, mode: "overview", scope: "application", level: "feature", focus: null, maxNodes: null, maxEdges: null };
+  const result = { command: "serve", evaluation: null, cacheAction: "status", showcaseAction: "run", workAction: "list", continueAction: "list", planAction: "list", reconcileAction: "list", recordId: null, checkpointId: null, overlayId: null, reconciliationId: null, planRef: null, contextRef: null, inputFile: null, root: process.cwd(), port: 4780, portFallback: true, global: false, workspaceId: null, serviceLabel: null, open: true, cache: true, format: "summary", changed: [], base: null, commit: "HEAD", from: "HEAD~1", to: "HEAD", fromVersion: null, toVersion: null, force: false, limit: null, keepDeltas: null, history: false, apply: false, iterations: 3, platforms: [], dryRun: false, strict: false, casesFile: null, runsFile: null, condition: "both", keepWorkspace: false, timeBudgetMs: null, maxFiles: null, maxBytes: null, packagePath: null, coreMode: null, mode: "overview", scope: "application", level: "feature", focus: null, maxNodes: null, maxEdges: null };
   const values = [...argv];
   if (["discover", "scan", "view", "impact", "snapshot", "history", "git-evidence", "git-continuity", "related-implementations", "delta", "benchmark", "proof", "evaluate", "cache", "showcase", "work", "continue", "bootstrap", "install", "uninstall", "doctor", "serve", "mcp", "help", "version", "--help", "-h", "--version", "-v"].includes(values[0])) result.command = values.shift().replace(/^--?/, "") || "help";
   if (result.command === "cache" && ["status", "prune"].includes(values[0])) result.cacheAction = values.shift();
@@ -76,6 +79,7 @@ function parseArgs(argv) {
     else if (value === "--max-files") result.maxFiles = Number(values[++index]);
     else if (value === "--max-bytes") result.maxBytes = Number(values[++index]);
     else if (value === "--package") result.packagePath = values[++index] || null;
+    else if (value === "--core-mode") result.coreMode = values[++index] || null;
     else if (value === "--mode") result.mode = values[++index] || "overview";
     else if (value === "--scope") result.scope = values[++index] || "application";
     else if (value === "--level") result.level = values[++index] || result.level;
@@ -111,16 +115,16 @@ function cachedPersistentGraph(root) {
   return cache.graph;
 }
 
-function currentPersistentGraph(root) {
+async function currentPersistentGraph(root) {
   const cached = cachedPersistentGraph(root);
   if (cached) return cached;
-  const graph = scanRepository(root, { persistIdentity: true });
+  const graph = await core.scan(root, { persistIdentity: true });
   graph.analysis.cacheState = summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-persistent-read" }));
   return graph;
 }
 
-function bootstrapGraph(root, cacheEnabled) {
-  if (!cacheEnabled) return scanRepository(root, { persistIdentity: false });
+async function bootstrapGraph(root, cacheEnabled) {
+  if (!cacheEnabled) return core.scan(root, { persistIdentity: false });
   return currentPersistentGraph(root);
 }
 
@@ -137,7 +141,7 @@ Package identity:
   flopeek --version
 
 Agent tools (MCP over stdio):
-  flopeek mcp [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [--no-cache]
+  flopeek mcp [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [--no-cache] [--core-mode js|shadow|native]
   flopeek bootstrap [repository] [--format summary|json]
 
 Agent host integration (project-local and non-destructive):
@@ -147,7 +151,7 @@ Agent host integration (project-local and non-destructive):
 
 Graph workflow:
   flopeek discover [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [--format summary|json]
-  flopeek scan [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [--format summary|json|mermaid] [--no-cache]
+  flopeek scan [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [--format summary|json|mermaid] [--no-cache] [--core-mode js|shadow|native]
   flopeek view [repository] [--mode overview|requests|dependencies] [--scope application|runtime|framework|devtool|all] [--level domain|feature|component|symbol] [--focus node-id] [--max-nodes number] [--max-edges number] [--format summary|json] [--no-cache]
   flopeek impact [repository] [--changed path[,path] | --base git-ref] [--format summary|json]
   flopeek snapshot [repository] [--commit git-ref] [--force] [--format summary|json]
@@ -346,6 +350,7 @@ function printPlanReconciliation(result, action) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  core ||= createSurfaceCoreClient({ coreMode: options.coreMode });
   if (options.command === "help" || options.command === "h") return printHelp();
   if (options.command === "version" || options.command === "v") return console.log(packageInfo.version);
   if (options.command === "mcp") return runMcpServer(options);
@@ -412,8 +417,8 @@ async function main() {
     return;
   }
   if (options.command === "bootstrap") {
-    const graph = bootstrapGraph(options.root, options.cache);
-    const result = getAgentBootstrap(graph);
+    const graph = await bootstrapGraph(options.root, options.cache);
+    const result = await core.getScanStatus(graph);
     if (options.format === "json") console.log(JSON.stringify(result, null, 2));
     else if (options.format === "summary") printBootstrap(result);
     else throw new Error("Bootstrap output supports summary or json formats.");
@@ -480,7 +485,7 @@ async function main() {
     }
     // `--no-cache` is the safe inspection mode: it must not leave Flopeek
     // metadata behind merely to obtain a generated project identity.
-    const graph = scanRepository(options.root, { persistIdentity: options.cache });
+    const graph = await core.scan(options.root, { persistIdentity: options.cache });
     graph.analysis.cacheState = options.cache
       ? summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-scan" }))
       : { status: "disabled", path: path.join(graph.project.root, ".flopeek", "graph.json"), diagnostics: [], contract: null, migrated: false };
@@ -491,8 +496,8 @@ async function main() {
     return;
   }
   if (options.command === "view") {
-    const graph = scanRepository(options.root, { persistIdentity: options.cache });
-    const result = projectView(graph, { mode: options.mode, scope: options.scope, level: options.level, focus: options.focus, maxNodes: options.maxNodes, maxEdges: options.maxEdges });
+    const graph = await core.scan(options.root, { persistIdentity: options.cache });
+    const result = await core.getProjectOverview(graph, { mode: options.mode, scope: options.scope, level: options.level, focus: options.focus, maxNodes: options.maxNodes, maxEdges: options.maxEdges });
     if (options.format === "json") console.log(JSON.stringify(result, null, 2));
     else if (options.format === "summary") {
       console.log(`${result.view.mode} / ${result.view.scope}: ${result.display.catalog.nodes.returned}/${result.display.catalog.nodes.total} nodes, ${result.display.catalog.edges.returned}/${result.display.catalog.edges.total} edges`);
@@ -501,7 +506,7 @@ async function main() {
     return;
   }
   if (options.command === "impact") {
-    const graph = scanRepository(options.root, { persistIdentity: options.cache });
+    const graph = await core.scan(options.root, { persistIdentity: options.cache });
     const previousGraph = readGraphCache(options.root, {
       expectedProjectId: graph.project.identity?.canonicalProjectId || graph.project.projectId,
     });
@@ -509,7 +514,7 @@ async function main() {
     graph.analysis.cacheState = options.cache
       ? summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-impact", changedPaths }))
       : { status: "disabled", path: path.join(graph.project.root, ".flopeek", "graph.json"), diagnostics: [], contract: null, migrated: false };
-    const impact = getChangeImpact(graph, changedPaths, { previousGraph });
+    const impact = await core.getChangeImpact(graph, changedPaths, { previousGraph });
     if (options.format === "json") console.log(JSON.stringify(impact, null, 2));
     else if (options.format === "summary") printImpact(impact);
     else throw new Error("Impact output supports summary or json formats.");
@@ -548,7 +553,7 @@ async function main() {
   }
   if (options.command === "git-evidence") {
     if (!options.contextRef) throw new Error("Git evidence requires --context-ref <fp://local/...>.");
-    const graph = scanRepository(options.root, { persistIdentity: true });
+    const graph = await core.scan(options.root, { persistIdentity: true });
     graph.analysis.cacheState = options.cache
       ? summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-active-branch-git-evidence" }))
       : { status: "disabled", path: path.join(graph.project.root, ".flopeek", "graph.json"), diagnostics: [], contract: null, migrated: false };
@@ -560,7 +565,7 @@ async function main() {
   }
   if (options.command === "git-continuity") {
     if (!options.contextRef) throw new Error("Git continuity requires --context-ref <fp://local/...>.");
-    const graph = scanRepository(options.root, { persistIdentity: true });
+    const graph = await core.scan(options.root, { persistIdentity: true });
     graph.analysis.cacheState = options.cache
       ? summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-git-context-continuity" }))
       : { status: "disabled", path: path.join(graph.project.root, ".flopeek", "graph.json"), diagnostics: [], contract: null, migrated: false };
@@ -579,7 +584,7 @@ async function main() {
     return;
   }
   if (options.command === "proof") {
-    const graph = scanRepository(options.root, { persistIdentity: false });
+    const graph = await core.scan(options.root, { persistIdentity: false });
     const result = createProductProof(graph, { localBenchmark: benchmarkRepository(options.root, { iterations: options.iterations }) });
     if (options.format === "json") console.log(JSON.stringify(result, null, 2));
     else if (options.format === "summary") printProductProof(result);
@@ -624,7 +629,7 @@ async function main() {
   }
   if (options.command === "continue") {
     if (!options.cache) throw new Error("Continuation checkpoint commands require persistent graph identity; omit --no-cache.");
-    const graph = scanRepository(options.root, { persistIdentity: true });
+    const graph = await core.scan(options.root, { persistIdentity: true });
     graph.analysis.cacheState = summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-continuation" }));
     const result = options.continueAction === "plan"
       ? options.planAction === "create"
@@ -680,6 +685,7 @@ async function main() {
         timeBudgetMs: options.timeBudgetMs,
         maxFiles: options.maxFiles,
         maxBytes: options.maxBytes,
+        coreMode: options.coreMode,
       });
     } catch (error) {
       if (error?.name !== "TimeoutError" && error?.cause?.code !== "ECONNREFUSED" && error?.code !== "ECONNREFUSED") throw error;
@@ -700,7 +706,8 @@ async function main() {
         serviceLabel: options.serviceLabel,
         timeBudgetMs: options.timeBudgetMs,
         maxFiles: options.maxFiles,
-        maxBytes: options.maxBytes,
+      maxBytes: options.maxBytes,
+      coreMode: options.coreMode,
       }],
     });
     const hubUrl = `http://127.0.0.1:${hub.port}`;
@@ -723,12 +730,14 @@ async function main() {
   console.log(`Project ID: ${app.serveInstance.project.projectId}`);
   if (app.portBinding.fallback) console.log(`Port ${app.portBinding.requestedPort} was occupied; this instance uses ${app.port} without stopping the existing process.`);
   if (options.open) openBrowser(url);
-  const close = () => app.server.close(() => process.exit(0));
+  const close = () => app.close().then(() => process.exit(0));
   process.once("SIGINT", close);
   process.once("SIGTERM", close);
 }
 
-main().catch((error) => {
-  console.error(`Flopeek command failed: ${error.message}`);
-  process.exitCode = 1;
-});
+main()
+  .catch((error) => {
+    console.error(`Flopeek command failed: ${error.message}`);
+    process.exitCode = 1;
+  })
+  .finally(() => core?.close?.().catch(() => {}));

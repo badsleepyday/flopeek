@@ -1604,7 +1604,10 @@ function summarizeFileCoverage(records) {
   const summary = { scannedFiles: 0, parsedFiles: 0, parsedWithDiagnosticsFiles: 0, inventoryOnlyFiles: 0, parseFailedFiles: 0 };
   const byLanguage = new Map();
   for (const record of records) {
-    const language = record.node.language;
+    // Prepared parser facts deliberately have no assembled file node. Keep
+    // coverage independent from graph topology so the native envelope can be
+    // constructed before JavaScript graph assembly.
+    const language = record.node?.language || record.language || "unknown";
     if (!byLanguage.has(language)) byLanguage.set(language, { language, files: 0, parsed: 0, parsedWithDiagnostics: 0, inventoryOnly: 0, parseFailed: 0, parsers: new Set() });
     const languageSummary = byLanguage.get(language);
     const status = record.result.analysis.status;
@@ -1812,6 +1815,7 @@ function parseProjectConfig(configPath) {
 
 function createConfiguredResolver(root) {
   const configCache = new Map();
+  const resolutionCache = new WeakMap();
   const findConfig = (fromFile) => {
     for (let directory = path.dirname(fromFile); ; directory = path.dirname(directory)) {
       if (!configCache.has(directory)) {
@@ -1829,15 +1833,30 @@ function createConfiguredResolver(root) {
   return (fromFile, specifier) => {
     const config = findConfig(fromFile);
     if (!config) return null;
+    let cached = resolutionCache.get(config);
+    if (!cached) {
+      cached = new Map();
+      resolutionCache.set(config, cached);
+    }
+    // Once findConfig selected one config, path-pattern and baseUrl resolution
+    // depend only on that immutable config plus the specifier. Reusing misses
+    // is particularly important for repeated third-party imports: it avoids
+    // probing the same local baseUrl candidates for every importing file.
+    if (cached.has(specifier)) return cached.get(specifier);
     for (const [pattern, targets] of config.paths) {
       const wildcardValue = pathPatternMatch(pattern, specifier);
       if (wildcardValue === null) continue;
       for (const target of targets) {
         const resolved = resolveFile(root, path.resolve(config.baseUrl, target.replaceAll("*", wildcardValue)));
-        if (resolved) return resolved;
+        if (resolved) {
+          cached.set(specifier, resolved);
+          return resolved;
+        }
       }
     }
-    return resolveFile(root, path.resolve(config.baseUrl, specifier));
+    const resolved = resolveFile(root, path.resolve(config.baseUrl, specifier));
+    cached.set(specifier, resolved || null);
+    return resolved;
   };
 }
 
@@ -2677,9 +2696,9 @@ function isScannableFile(absolutePath) {
   }
 }
 
-function createFileRecord(root, absolutePath, sourceScope, goFact = null) {
+function createFileRecord(root, absolutePath, sourceScope, goFact = null, sourceOverride = null) {
   const relativePath = toPosix(path.relative(root, absolutePath));
-  const content = fs.readFileSync(absolutePath, "utf8").replace(/\r\n?/gu, "\n");
+  const content = (typeof sourceOverride === "string" ? sourceOverride : fs.readFileSync(absolutePath, "utf8")).replace(/\r\n?/gu, "\n");
   const descriptor = sourceDescriptor(absolutePath);
   return {
     absolutePath,
@@ -2783,7 +2802,353 @@ function createGraphContext(root, options = {}) {
   };
 }
 
-function buildGraphFromRecords(root, sourceRecords, refresh = null, graphContext = null, scope = null, excludedPaths = [], projectIdentity = null) {
+// Produce only import facts needed by StructuralFactBatch/v1. This runs after
+// parsing and resolver-context preparation, before public graph assembly, so a
+// native graph builder never needs JavaScript graph edges as an import oracle.
+function structuralImportFacts(sourceRecords, graphContext, options = {}) {
+  // An incremental consumer may resolve only a changed subset, but resolution
+  // must still be checked against the complete current source-path inventory.
+  // Callers must supply that inventory explicitly; this prevents a partial
+  // batch from turning an unchanged local import into an external import.
+  const knownPaths = options.knownPaths instanceof Set
+    ? new Set(options.knownPaths)
+    : new Set(sourceRecords.map((record) => record.relativePath));
+  const profile = typeof options.onProfile === "function" ? options.onProfile : null;
+  const resolutionProfile = new Map();
+  const factsByPath = new Map();
+  for (const record of sourceRecords) {
+    const resolvedImports = [];
+    const resolvedPackages = [];
+    const externalImports = [];
+    for (const imported of record.result?.imports || []) {
+      if (!imported || imported.standard || typeof imported.specifier !== "string") continue;
+      const resolutionStarted = profile ? process.hrtime.bigint() : null;
+      const resolved = graphContext.resolveImportedPath(record, imported);
+      if (resolutionStarted) {
+        const language = record.language || record.extension || "unknown";
+        const current = resolutionProfile.get(language) || { language, imports: 0, milliseconds: 0, internal: 0, package: 0, unresolved: 0 };
+        current.imports += 1;
+        current.milliseconds += Number(process.hrtime.bigint() - resolutionStarted) / 1_000_000;
+        if (typeof resolved === "string") current.internal += 1;
+        else if (resolved?.kind === "go-package") current.package += 1;
+        else current.unresolved += 1;
+        resolutionProfile.set(language, current);
+      }
+      if (typeof resolved === "string" && knownPaths.has(resolved)) {
+        resolvedImports.push({ specifier: imported.specifier, targetPath: resolved });
+        continue;
+      }
+      if (resolved?.kind === "go-package" && typeof resolved.path === "string" && Array.isArray(resolved.files)) {
+        const packageNode = createGoPackageNode(resolved.path, resolved.files, {});
+        const { id: _id, kind: _kind, type: _type, path: _path, manualDescription: _manualDescription, ...metadata } = packageNode;
+        resolvedPackages.push({ specifier: imported.specifier, packagePath: resolved.path, files: resolved.files, metadata });
+        continue;
+      }
+      if (imported.internal || imported.specifier.startsWith(".") || NODE_BUILTINS.has(imported.specifier.replace("node:", ""))) continue;
+      const external = createExternalNode(imported.specifier, graphContext.devPackages);
+      const {
+        id: _id,
+        kind: _kind,
+        type: _type,
+        path: _path,
+        manualDescription: _manualDescription,
+        ...metadata
+      } = external;
+      externalImports.push({ specifier: imported.specifier, nodeType: external.type, metadata });
+    }
+    factsByPath.set(record.relativePath, {
+      resolvedImports: resolvedImports.sort((left, right) => left.specifier.localeCompare(right.specifier) || left.targetPath.localeCompare(right.targetPath)),
+      resolvedPackages: resolvedPackages.sort((left, right) => left.specifier.localeCompare(right.specifier) || left.packagePath.localeCompare(right.packagePath)),
+      externalImports: externalImports.sort((left, right) => left.specifier.localeCompare(right.specifier) || left.nodeType.localeCompare(right.nodeType)),
+    });
+  }
+  if (profile) {
+    profile({
+      phase: "native-fact-import-resolution-breakdown",
+      languages: [...resolutionProfile.values()]
+        .map((entry) => ({ ...entry, milliseconds: Number(entry.milliseconds.toFixed(3)) }))
+        .sort((left, right) => right.milliseconds - left.milliseconds || left.language.localeCompare(right.language)),
+    });
+  }
+  return factsByPath;
+}
+
+// File classification is derived from a parser record plus local authored
+// description state; it does not require nodes produced by graph assembly.
+function structuralFileFacts(root, sourceRecords) {
+  const descriptions = readDescriptions(root);
+  return new Map(sourceRecords.map((record) => {
+    const node = createFileNode(record, descriptions);
+    const { id: _id, kind: _kind, type, path: _path, ...metadata } = node;
+    return [record.relativePath, { fileNodeType: type, fileMetadata: metadata }];
+  }));
+}
+
+function structuralEntryFacts(root, sourceRecords) {
+  const descriptions = readDescriptions(root);
+  const filesByPath = new Map(sourceRecords.map((record) => [record.relativePath, createFileNode(record, descriptions)]));
+  const records = sourceRecords.map((record) => ({ ...record, node: filesByPath.get(record.relativePath) }));
+  const symbols = new Map();
+  for (const record of records) {
+    for (const symbol of record.result?.symbols || []) {
+      if (!symbol || typeof symbol.type !== "string" || typeof symbol.name !== "string") continue;
+      const id = `symbol:${record.relativePath}:${symbol.type}:${symbol.name}`;
+      if (!symbols.has(`${record.relativePath}\u0000${symbol.type}\u0000${symbol.name}`)) {
+        symbols.set(`${record.relativePath}\u0000${symbol.type}\u0000${symbol.name}`, {
+          id,
+          path: record.relativePath,
+          type: symbol.type,
+          label: symbol.name,
+        });
+      }
+    }
+  }
+  const findSymbol = (relativePath, type, name) => symbols.get(`${relativePath}\u0000${type}\u0000${name}`) || null;
+  const packageEntries = packageScriptEntries(root, records, filesByPath, descriptions);
+  const frameworkEntries = frameworkCommandEntries(records, findSymbol, descriptions);
+  const scheduleEntries = nodeCronScheduleEntries(records, findSymbol, descriptions);
+  const entryMetadata = Object.fromEntries([
+    ...packageEntries.nodes,
+    ...frameworkEntries.nodes,
+    ...scheduleEntries.nodes,
+  ].map((node) => {
+    const { id, kind: _kind, type: _type, path: _path, ...metadata } = node;
+    return [id, metadata];
+  }).sort(([left], [right]) => left.localeCompare(right)));
+  return {
+    packageCommands: packageEntries.supported
+      .map(({ manifest, scriptName, targetPath }) => ({ manifest, scriptName, targetPath }))
+      .sort((left, right) => left.manifest.localeCompare(right.manifest) || left.scriptName.localeCompare(right.scriptName)),
+    entryMetadata,
+    edgeMetadata: Object.fromEntries([
+      ...packageEntries.edges,
+      ...frameworkEntries.edges,
+      ...scheduleEntries.edges,
+    ].map((edge) => [
+      `${edge.source}\u0000${edge.target}\u0000${edge.type}`,
+      { confidence: edge.confidence, evidence: edge.evidence },
+    ]).sort(([left], [right]) => left.localeCompare(right))),
+    entryPoints: {
+      schemaVersion: "flopeek-static-entry-inventory/v1",
+      supported: {
+        packageScripts: packageEntries.supported,
+        djangoManagementCommands: frameworkEntries.supported.filter((command) => command.id.includes(":django:")),
+        frameworkCommands: frameworkEntries.supported.filter((command) => !command.id.includes(":django:")),
+        nodeCronSchedules: scheduleEntries.supported,
+        limitation: "Only an explicitly supported exact static subset becomes a Flow Lens entry: a direct package runner target, a supported Python framework command declaration, or a literal node-cron registration.",
+      },
+      unsupported: {
+        packageScripts: packageEntries.unsupported,
+        djangoManagementCommands: frameworkEntries.unsupported.filter((command) => command.adapter === "django"),
+        frameworkCommands: frameworkEntries.unsupported.filter((command) => command.adapter && command.adapter !== "django"),
+        nodeCronSchedules: scheduleEntries.unsupported,
+        limitation: "Unsupported scripts, framework commands, and schedule registrations are static inventory only. Their absence from Flow Lenses does not prove they cannot run or have no behavior.",
+      },
+      limitations: [
+        "Package scripts are not executed during discovery or scanning.",
+        "Shell composition, quoting, environment expansion, package-manager indirection, runner flags, computed configuration, and runtime module loading are not command-entry facts in this version.",
+        "Django discovery does not execute settings or app registration. Only a non-private management/commands module with one top-level Command class directly extending the imported BaseCommand binding and one direct handle method is projected.",
+        "Click, Typer, and Flask CLI discovery does not import modules or initialize applications. Only direct module/import bindings, direct top-level decorator registrations, and one top-level function target are projected; computed decorators, factory indirection, and non-literal command names remain unsupported.",
+        "Scheduler registration is not executed during discovery or scanning. Only the narrow node-cron default-import, literal-expression, exact-local-function subset is projected; scheduler initialization, task timing, callbacks, dynamic expressions, and other scheduler APIs remain unsupported.",
+      ],
+    },
+  };
+}
+
+function structuralEdgeFacts(sourceRecords, importFacts, entryFacts) {
+  const metadata = new Map();
+  const symbols = new Map();
+  const runtimeNodes = new Map();
+  const endpoints = new Map();
+  // Public assembly creates a Go package node only on its first resolved
+  // import. Preserve that exact ownership of the package -> file `contains`
+  // evidence without handing JavaScript graph topology to the native side.
+  const introducedGoPackages = new Set();
+  const edge = (source, target, type, confidence, evidence) => {
+    metadata.set(`${source}\u0000${target}\u0000${type}`, { confidence, evidence });
+  };
+  const fileId = (record) => `file:${record.relativePath}`;
+  const symbolId = (record, type, name) => `symbol:${record.relativePath}:${type}:${name}`;
+  for (const record of sourceRecords) {
+    for (const integration of record.result?.integrations || []) {
+      if (!integration?.type || !integration?.instance) continue;
+      const id = `runtime:${record.relativePath}:${integration.type}:${integration.instance}`;
+      runtimeNodes.set(`${record.relativePath}\u0000${integration.instance}`, id);
+      edge(fileId(record), id, "initializes", "exact", integration.evidence);
+    }
+    for (const symbol of record.result?.symbols || []) {
+      if (!symbol?.type || !symbol?.name) continue;
+      const id = symbolId(record, symbol.type, symbol.name);
+      symbols.set(`${record.relativePath}\u0000${symbol.type}\u0000${symbol.name}`, id);
+      const confidence = symbol.confidence || "exact";
+      edge(id, fileId(record), "declares", confidence, symbol.evidence);
+      edge(fileId(record), id, "contains", confidence, symbol.evidence);
+    }
+  }
+  for (const record of sourceRecords) {
+    const imports = importFacts.get(record.relativePath) || { resolvedImports: [], resolvedPackages: [], externalImports: [] };
+    const resolved = new Map(imports.resolvedImports.map((item) => [item.specifier, item.targetPath]));
+    const packages = new Map(imports.resolvedPackages.map((item) => [item.specifier, item]));
+    const external = new Set(imports.externalImports.map((item) => item.specifier));
+    for (const imported of record.result?.imports || []) {
+      if (!imported?.specifier || imported.standard) continue;
+      if (resolved.has(imported.specifier)) edge(fileId(record), `file:${resolved.get(imported.specifier)}`, "imports", "exact", imported.evidence);
+      else if (packages.has(imported.specifier)) {
+        const resolvedPackage = packages.get(imported.specifier);
+        const packageId = `go-package:${resolvedPackage.packagePath}`;
+        if (!introducedGoPackages.has(resolvedPackage.packagePath)) {
+          introducedGoPackages.add(resolvedPackage.packagePath);
+          for (const targetPath of resolvedPackage.files || []) {
+            edge(packageId, `file:${targetPath}`, "contains", "exact", imported.evidence);
+          }
+        }
+        edge(fileId(record), packageId, "imports", "exact", imported.evidence);
+      }
+      else if (external.has(imported.specifier)) edge(fileId(record), `external:${packageName(imported.specifier)}`, "uses", "exact", imported.evidence);
+    }
+    for (const endpoint of record.result?.endpoints || []) {
+      if (!endpoint?.method || !endpoint?.route) continue;
+      const id = `endpoint:${record.relativePath}:${endpoint.method}:${endpoint.route}`;
+      const handler = endpoint.handlerName
+        ? symbols.get(`${record.relativePath}\u0000${endpoint.handlerType || "function"}\u0000${endpoint.handlerName}`)
+        : null;
+      endpoints.set(`${endpoint.method}\u0000${endpoint.route}`, endpoints.get(`${endpoint.method}\u0000${endpoint.route}`) || id);
+      edge(id, handler || fileId(record), "handles", endpoint.confidence || (handler ? "exact" : "likely"), endpoint.evidence);
+    }
+  }
+  for (const record of sourceRecords) {
+    const imports = importFacts.get(record.relativePath) || { resolvedImports: [], resolvedPackages: [] };
+    const resolved = new Map(imports.resolvedImports.map((item) => [item.specifier, item.targetPath]));
+    const packages = new Map(imports.resolvedPackages.map((item) => [item.specifier, item]));
+    for (const call of record.result?.calls || []) {
+      if (!call?.name) continue;
+      const source = call.source
+        ? symbols.get(`${record.relativePath}\u0000${call.source.type}\u0000${call.source.name}`) || fileId(record)
+        : fileId(record);
+      const targetName = call.imported?.exportedName || call.name;
+      const target = call.imported?.specifier
+        ? resolved.has(call.imported.specifier)
+          ? symbols.get(`${resolved.get(call.imported.specifier)}\u0000function\u0000${targetName}`)
+          : (() => {
+            const files = packages.get(call.imported.specifier)?.files || [];
+            const matches = files.map((targetPath) => symbols.get(`${targetPath}\u0000function\u0000${targetName}`)).filter(Boolean);
+            return matches.length === 1 ? matches[0] : null;
+          })()
+        : symbols.get(`${record.relativePath}\u0000function\u0000${targetName}`);
+      if (target) edge(source, target, "calls", "exact", call.evidence);
+    }
+    for (const action of record.result?.runtimeActions || []) {
+      if (!action?.instance || !action?.type) continue;
+      const source = action.source
+        ? symbols.get(`${record.relativePath}\u0000${action.source.type}\u0000${action.source.name}`) || fileId(record)
+        : fileId(record);
+      const target = runtimeNodes.get(`${record.relativePath}\u0000${action.instance}`);
+      if (target) edge(source, target, action.type, "exact", action.evidence);
+    }
+    for (const request of record.result?.requests || []) {
+      if (!request?.method || !request?.route) continue;
+      const target = endpoints.get(`${request.method}\u0000${request.route}`);
+      if (target) edge(fileId(record), target, "requests", "exact", request.evidence);
+    }
+  }
+  for (const [key, value] of Object.entries(entryFacts?.edgeMetadata || {})) metadata.set(key, value);
+  return Object.fromEntries([...metadata.entries()].sort(([left], [right]) => left.localeCompare(right)));
+}
+
+// Public envelope fields are parser/resolver/session facts, not graph
+// topology. Keeping them here lets the JS adapter submit a complete native
+// input before `buildGraphFromRecords()` runs. Topology-derived statistics are
+// filled by the consumer that actually assembled nodes and edges.
+function createPublicGraphEnvelope(prepared, entryFacts = null) {
+  if (!prepared || typeof prepared.root !== "string" || !Array.isArray(prepared.sourceRecords) || !prepared.graphContext || !prepared.projectIdentity) {
+    throw new TypeError("Public graph envelope requires prepared scanner facts.");
+  }
+  const { root, sourceRecords, refresh, graphContext, repositoryScope, excludedPaths, projectIdentity } = prepared;
+  const coverage = summarizeFileCoverage(sourceRecords);
+  const git = readGitMetadata(root);
+  const generatedAt = new Date().toISOString();
+  return {
+    schemaVersion: GRAPH_SCHEMA_VERSION,
+    generatedAt,
+    project: {
+      root,
+      name: graphContext.packageJson.name || path.basename(root),
+      projectId: projectIdentity.projectId || null,
+      identity: projectIdentity,
+      git,
+    },
+    state: {
+      graphVersion: 0,
+      materialFingerprint: null,
+      sourceFingerprint: sourceFingerprint(sourceRecords),
+      sourceRevision: git.revision,
+      updatedAt: generatedAt,
+      status: "unpersisted",
+    },
+    analysis: {
+      mode: "deterministic",
+      refresh: refresh || {
+        strategy: "full-content-analysis",
+        mode: "full",
+        analyzedFiles: sourceRecords.length,
+        reusedFiles: 0,
+        removedFiles: 0,
+        changedPaths: [],
+      },
+      codeInterpretation: "AST-only for registered language adapters",
+      unparsedPolicy: "inventory-only; no dependency or flow is inferred",
+      coverage,
+      repositoryScope: scopeSummary(repositoryScope || readRepositoryScope(root), sourceRecords, excludedPaths || []),
+      cache: {
+        graphSchemaVersion: GRAPH_SCHEMA_VERSION,
+        validation: "Graph cache payloads are validated on read and before atomic replacement.",
+        persistence: "Validated JSON is written to a synchronized temporary file and atomically replaced with bounded retry for transient Windows locks.",
+        limitation: "Cache state proves a persisted static graph version, not runtime behavior, a source diff, or business intent.",
+      },
+      resolution: {
+        internal: ["relative imports", "$lib", "@/", "tsconfig/jsconfig baseUrl and paths", "literal aliases from exported Vite/Webpack configs", "safe static Vite/Webpack alias expressions (__dirname, root process.cwd(), path.resolve/join/dirname, new URL/import.meta.url, fileURLToPath(import.meta.url), and constants)", "package.json imports aliases", "static import/node/default/require/types package condition trees", "declared npm and pnpm workspace package entries", "static Yarn PnP JSON workspace package entries", "Python relative and src-package imports", "static Go module packages", "static Rust crate/self/super modules in conventional Cargo src roots"],
+        limitations: ["Arbitrary computed Vite/Webpack aliases, custom package conditions, unsupported pnpm YAML constructs, PHP Composer autoloading, Java framework wiring and non-local-static method dispatch, Rust custom Cargo targets and #[path] modules, Go build tags and duplicate package function names, and runtime module loading are not resolved."],
+      },
+      calls: {
+        supported: ["direct identifier calls to top-level local functions", "direct identifier calls to named ES/CommonJS imports resolved inside the repository", "direct identifier calls to top-level local Python functions and named Python imports resolved inside the repository", "direct local Go function calls and aliased Go package selectors resolved inside the repository", "direct local PHP function calls", "direct local Rust functions and named crate/self/super imports", "direct unqualified unique local static Java method calls"],
+        limitations: "Java instance/qualified/overloaded method dispatch, Rust macros, qualified module calls, trait dispatch, custom Cargo targets, and #[path] modules, default and namespace imports, PHP Composer/autoloaded functions, Python attribute calls, Go function values, ambiguous package functions, and unaliased package-name mismatches, dependency injection, callbacks, reflection, dynamic loading, and non-literal CommonJS requires are not resolved as call edges.",
+      },
+      entryPoints: entryFacts?.entryPoints || null,
+      adapterCapabilities: getAdapterRegistry(),
+      capabilities: getAdapterRegistry().adapters,
+    },
+    // These source-derived values can be emitted before graph assembly. The
+    // remaining counters are added from the native or JS topology later.
+    stats: {
+      scannedFiles: coverage.summary.scannedFiles,
+      parsedFiles: coverage.summary.parsedFiles,
+      inventoryOnlyFiles: coverage.summary.inventoryOnlyFiles,
+      parseFailedFiles: coverage.summary.parseFailedFiles,
+    },
+  };
+}
+
+function graphStats(coverage, nodes, edges) {
+  return {
+    scannedFiles: coverage.summary.scannedFiles,
+    nodes: nodes.length,
+    edges: edges.length,
+    services: nodes.filter((node) => node.type === "service").length,
+    classes: nodes.filter((node) => node.kind === "symbol" && node.type === "class").length,
+    functions: nodes.filter((node) => node.kind === "symbol" && node.type === "function").length,
+    calls: edges.filter((edge) => edge.type === "calls").length,
+    endpoints: nodes.filter((node) => node.kind === "endpoint").length,
+    commandEntries: nodes.filter((node) => node.kind === "command" && ["package-script", "django-management-command", "framework-command"].includes(node.entryKind)).length,
+    scheduledEntries: nodes.filter((node) => node.kind === "schedule" && node.entryKind === "node-cron-schedule").length,
+    tests: nodes.filter((node) => node.type === "test").length,
+    runtimeDependencies: nodes.filter((node) => node.layer === "runtime").length,
+    parsedFiles: coverage.summary.parsedFiles,
+    inventoryOnlyFiles: coverage.summary.inventoryOnlyFiles,
+    parseFailedFiles: coverage.summary.parseFailedFiles,
+  };
+}
+
+function buildGraphFromRecords(root, sourceRecords, refresh = null, graphContext = null, scope = null, excludedPaths = [], projectIdentity = null, publicEnvelope = null) {
   const context = graphContext || createGraphContext(root);
   const { packageJson, devPackages, resolveImportedPath } = context;
   const descriptions = readDescriptions(root);
@@ -2959,6 +3324,17 @@ function buildGraphFromRecords(root, sourceRecords, refresh = null, graphContext
   const uniqueEdges = [...new Map(edges.map((edge) => [`${edge.source}|${edge.target}|${edge.type}`, edge])).values()];
   const sortedNodes = nodes.sort((left, right) => left.label.localeCompare(right.label));
   const coverage = summarizeFileCoverage(records);
+  if (publicEnvelope) {
+    const graph = {
+      ...publicEnvelope,
+      stats: graphStats(coverage, sortedNodes, uniqueEdges),
+      nodes: sortedNodes,
+      edges: uniqueEdges,
+    };
+    graph.flows = buildFlows(graph.nodes, graph.edges, scope?.flowEntries);
+    graph.diagnosticFlows = buildFlows(graph.nodes, graph.edges, { tests: true, fixtures: true });
+    return graph;
+  }
   const git = readGitMetadata(root);
   const generatedAt = new Date().toISOString();
   const graph = {
@@ -3077,7 +3453,12 @@ function relativeChangedPath(root, changedPath) {
 function graphContextMayHaveChanged(root, relativePath) {
   if (relativePath === CONFIG_FILENAME) return true;
   const filename = path.basename(relativePath).toLowerCase();
-  if (filename.endsWith(".json") || filename === "go.mod" || filename === "cargo.toml" || filename === ".pnp.data.json" || filename === "pnpm-workspace.yaml" || filename === "pnpm-workspace.yml" || BUNDLER_CONFIG_FILENAMES.includes(filename) || [".go", ".rs"].includes(extensionOf(relativePath))) return true;
+  // A Go/Rust source-body edit does not alter the resolver's package/module
+  // inventory. Additions and removals still invalidate it below through the
+  // reconciler's topology result; manifests/configuration remain immediate
+  // invalidators. This avoids treating every Go controller body edit as a
+  // repository-wide import-resolution change.
+  if (filename.endsWith(".json") || filename === "go.mod" || filename === "cargo.toml" || filename === ".pnp.data.json" || filename === "pnpm-workspace.yaml" || filename === "pnpm-workspace.yml" || BUNDLER_CONFIG_FILENAMES.includes(filename)) return true;
   try {
     return fs.statSync(path.resolve(root, relativePath)).isDirectory();
   } catch {
@@ -3110,6 +3491,29 @@ function createRepositoryScanner(inputRoot, options = {}) {
     })
     : null;
   const initialRecords = Array.isArray(options.initialRecords) ? options.initialRecords : [];
+  // Native source batches are a bounded, current-session optimization only.
+  // Their text is consumed once below and never enters cached record payloads,
+  // StructuralFactBatch/v1, or persistent graph state.
+  const initialSourceContents = new Map();
+  const sourceBatchStats = { provided: 0, used: 0, discarded: 0 };
+  for (const source of Array.isArray(options.initialSourceContents) ? options.initialSourceContents : []) {
+    const relativePath = source?.path;
+    const content = source?.utf8;
+    const sizeBytes = source?.sizeBytes;
+    const modifiedAtNs = source?.modifiedAtNs;
+    const absolutePath = typeof relativePath === "string" ? path.resolve(root, relativePath) : null;
+    const rootRelativePath = absolutePath ? path.relative(root, absolutePath) : null;
+    if (typeof relativePath !== "string" || !relativePath || path.isAbsolute(relativePath)
+      || relativePath.includes("\\") || relativePath.split("/").includes("..")
+      || !rootRelativePath || rootRelativePath.startsWith("..") || path.isAbsolute(rootRelativePath)
+      || typeof content !== "string" || Buffer.byteLength(content, "utf8") > 1_000_000
+      || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0 || !/^[0-9]+$/u.test(modifiedAtNs || "")) {
+      throw new Error("initialSourceContents must contain bounded portable UTF-8 source records.");
+    }
+    if (initialSourceContents.has(relativePath)) throw new Error("initialSourceContents must not repeat a path.");
+    initialSourceContents.set(relativePath, { content, sizeBytes, modifiedAtNs });
+    sourceBatchStats.provided += 1;
+  }
   for (const candidate of initialRecords) {
     if (!candidate || typeof candidate !== "object" || typeof candidate.relativePath !== "string" || !candidate.relativePath) {
       throw new Error("initialRecords must contain cached file records with a repository-relative path.");
@@ -3167,7 +3571,23 @@ function createRepositoryScanner(inputRoot, options = {}) {
       refresh.reusedFiles += 1;
       return;
     }
-    records.set(relativePath, createFileRecord(root, absolutePath, sourceScope, goFactByPath?.get(path.resolve(absolutePath)) || null));
+    const sourceCandidate = initialSourceContents.get(relativePath);
+    initialSourceContents.delete(relativePath);
+    let sourceOverride = null;
+    if (sourceCandidate) {
+      try {
+        const stat = fs.statSync(absolutePath, { bigint: true });
+        if (stat.size === BigInt(sourceCandidate.sizeBytes) && stat.mtimeNs === BigInt(sourceCandidate.modifiedAtNs)) {
+          sourceOverride = sourceCandidate.content;
+          sourceBatchStats.used += 1;
+        } else {
+          sourceBatchStats.discarded += 1;
+        }
+      } catch {
+        sourceBatchStats.discarded += 1;
+      }
+    }
+    records.set(relativePath, createFileRecord(root, absolutePath, sourceScope, goFactByPath?.get(path.resolve(absolutePath)) || null, sourceOverride));
     refresh.analyzedPaths.add(relativePath);
     refresh.analyzedFiles += 1;
   };
@@ -3245,7 +3665,11 @@ function createRepositoryScanner(inputRoot, options = {}) {
     return topologyChanged;
   };
 
-  const scan = (changedPaths = null) => {
+  // Parser-fact preparation is intentionally separable from public graph
+  // assembly. It remains JavaScript-owned while the native core consumes the
+  // resulting facts, and lets the migration remove JS graph assembly without
+  // changing parser behavior or public node-ID construction.
+  const prepare = (changedPaths = null) => {
     let nextScope;
     let nextScopeSignature;
     timed("scope-and-identity", () => {
@@ -3340,9 +3764,32 @@ function createRepositoryScanner(inputRoot, options = {}) {
           : null,
       });
     });
+    return {
+      root,
+      sourceRecords: [...records.values()].sort((left, right) => left.relativePath.localeCompare(right.relativePath)),
+      refresh,
+      graphContext,
+      repositoryScope,
+      excludedPaths: [...excludedPaths].sort(),
+      projectIdentity,
+    };
+  };
+
+  const assemble = (prepared, publicEnvelope = null) => {
+    if (!prepared || !Array.isArray(prepared.sourceRecords) || !prepared.refresh || !prepared.graphContext || !prepared.projectIdentity) {
+      throw new TypeError("Scanner assembly requires a prepared parser-fact state from this scanner session.");
+    }
     return timed("graph-assembly", () => {
-      const sourceRecords = [...records.values()].sort((left, right) => left.relativePath.localeCompare(right.relativePath));
-      const graph = buildGraphFromRecords(root, sourceRecords, refresh, graphContext, repositoryScope, [...excludedPaths].sort(), projectIdentity);
+      const graph = buildGraphFromRecords(
+        root,
+        prepared.sourceRecords,
+        prepared.refresh,
+        prepared.graphContext,
+        prepared.repositoryScope,
+        prepared.excludedPaths,
+        prepared.projectIdentity,
+        publicEnvelope,
+      );
       if (persistIdentity) return graph;
       graph.analysis.cacheState = {
         status: "disabled",
@@ -3351,17 +3798,20 @@ function createRepositoryScanner(inputRoot, options = {}) {
         contract: null,
         migrated: false,
       };
-      advanceSessionGraph(graph, sessionGraph, { changedPaths: refresh.changedPaths });
+      advanceSessionGraph(graph, sessionGraph, { changedPaths: prepared.refresh.changedPaths });
       sessionGraph = graph;
       return graph;
     });
   };
 
+  const scan = (changedPaths = null) => assemble(prepare(changedPaths));
+
   const snapshotRecords = () => [...records.values()]
     .map(({ absolutePath: _absolutePath, ...record }) => record)
     .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
 
-  return { root, scan, snapshotRecords };
+  const sourceBatchStatus = () => ({ ...sourceBatchStats, pending: initialSourceContents.size });
+  return { root, prepare, assemble, scan, snapshotRecords, sourceBatchStatus };
 }
 
 function scanRepository(inputRoot, options = {}) {
@@ -3400,4 +3850,4 @@ function saveDescription(root, id, description) {
   return descriptions;
 }
 
-module.exports = { buildFlows, createRepositoryScanner, getGitChangedPaths, graphToMermaid, readGraphCache, scanRepository, saveDescription, writeGraphCache };
+module.exports = { buildFlows, createPublicGraphEnvelope, createRepositoryScanner, getGitChangedPaths, graphToMermaid, readDescriptions, readGraphCache, scanRepository, saveDescription, structuralEdgeFacts, structuralEntryFacts, structuralFileFacts, structuralImportFacts, writeGraphCache };

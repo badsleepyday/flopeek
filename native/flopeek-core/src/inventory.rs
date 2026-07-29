@@ -11,6 +11,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const NATIVE_INVENTORY_SCHEMA: &str = "flopeek-native-inventory/v1";
 const MAX_SOURCE_FILE_BYTES: u64 = 1_000_000;
+/// Ephemeral JSONL source transfer is deliberately bounded. It may reduce
+/// duplicate cold-scan reads, but must never become a source-body cache.
+const MAX_SOURCE_BATCH_BYTES: usize = 32 * 1024 * 1024;
 const IGNORED_DIRECTORIES: &[&str] = &[
     ".flopeek",
     ".flowpeek",
@@ -55,6 +58,14 @@ struct InventoryRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeSourceBatchRecord {
+    pub path: String,
+    pub utf8: String,
+    pub size_bytes: i64,
+    pub modified_at_ns: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeInventoryStatus {
     pub project_root: PathBuf,
     pub project_identity: ProjectIdentity,
@@ -69,6 +80,8 @@ pub struct NativeInventoryStatus {
     pub changed_paths: Vec<String>,
     pub reused_paths: Vec<String>,
     pub removed_paths: Vec<String>,
+    pub source_batch_records: Option<Vec<NativeSourceBatchRecord>>,
+    pub source_batch_omitted_files: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,10 +198,8 @@ fn displayable_root(root: PathBuf) -> PathBuf {
     root
 }
 
-fn content_hash(path: &Path) -> Result<String, String> {
-    let bytes =
-        fs::read(path).map_err(|error| format!("Unable to read {}: {error}", path.display()))?;
-    Ok(format!("blake3:{}", blake3::hash(&bytes).to_hex()))
+fn content_hash(bytes: &[u8]) -> String {
+    format!("blake3:{}", blake3::hash(bytes).to_hex())
 }
 
 fn source_fingerprint(records: &[InventoryRecord]) -> String {
@@ -240,6 +251,7 @@ fn migrate_legacy_path_identity(
 fn scan_native_inventory_with_options(
     input_root: &Path,
     include_paths: bool,
+    include_source_batch: bool,
 ) -> Result<NativeInventoryStatus, String> {
     let root = displayable_root(fs::canonicalize(input_root).map_err(|error| {
         format!(
@@ -317,6 +329,9 @@ fn scan_native_inventory_with_options(
     let mut reused_files = 0;
     let mut changed_paths = Vec::new();
     let mut reused_paths = Vec::new();
+    let mut source_batch_records = Vec::new();
+    let mut source_batch_bytes = 0usize;
+    let mut source_batch_omitted_files = 0usize;
     let mut records = Vec::with_capacity(candidates.len());
     for candidate in candidates {
         let hash = match cached.get(&candidate.path) {
@@ -331,7 +346,26 @@ fn scan_native_inventory_with_options(
             _ => {
                 hashed_files += 1;
                 changed_paths.push(candidate.path.clone());
-                content_hash(&root.join(&candidate.path))?
+                let source_path = root.join(&candidate.path);
+                let bytes = fs::read(&source_path).map_err(|error| {
+                    format!("Unable to read {}: {error}", source_path.display())
+                })?;
+                if include_source_batch {
+                    let utf8 = String::from_utf8_lossy(&bytes).into_owned();
+                    let byte_len = utf8.len();
+                    if source_batch_bytes.saturating_add(byte_len) <= MAX_SOURCE_BATCH_BYTES {
+                        source_batch_bytes += byte_len;
+                        source_batch_records.push(NativeSourceBatchRecord {
+                            path: candidate.path.clone(),
+                            utf8,
+                            size_bytes: candidate.size_bytes,
+                            modified_at_ns: candidate.modified_at_ns,
+                        });
+                    } else {
+                        source_batch_omitted_files += 1;
+                    }
+                }
+                content_hash(&bytes)
             }
         };
         records.push(InventoryRecord {
@@ -436,24 +470,34 @@ fn scan_native_inventory_with_options(
         changed_paths,
         reused_paths,
         removed_paths,
+        source_batch_records: include_source_batch.then_some(source_batch_records),
+        source_batch_omitted_files,
     })
 }
 
 pub fn scan_native_inventory(input_root: &Path) -> Result<NativeInventoryStatus, String> {
-    scan_native_inventory_with_options(input_root, false)
+    scan_native_inventory_with_options(input_root, false, false)
 }
 
 pub fn scan_native_inventory_with_paths(
     input_root: &Path,
 ) -> Result<NativeInventoryStatus, String> {
-    scan_native_inventory_with_options(input_root, true)
+    scan_native_inventory_with_options(input_root, true, false)
 }
 
 pub fn scan_native_incremental_manifest(
     input_root: &Path,
 ) -> Result<NativeIncrementalManifest, String> {
     Ok(NativeIncrementalManifest {
-        inventory: scan_native_inventory_with_options(input_root, true)?,
+        inventory: scan_native_inventory_with_options(input_root, true, false)?,
+    })
+}
+
+pub fn scan_native_incremental_manifest_with_source_batch(
+    input_root: &Path,
+) -> Result<NativeIncrementalManifest, String> {
+    Ok(NativeIncrementalManifest {
+        inventory: scan_native_inventory_with_options(input_root, true, true)?,
     })
 }
 

@@ -33,10 +33,12 @@ impl SourceScope {
 pub struct NativeScope {
     pub source: String,
     pub project_id: Option<String>,
-    source_roots: Vec<String>,
-    test_roots: Vec<String>,
-    fixture_roots: Vec<String>,
-    exclude: Vec<String>,
+    pub source_roots: Vec<String>,
+    pub test_roots: Vec<String>,
+    pub fixture_roots: Vec<String>,
+    pub exclude: Vec<String>,
+    pub flow_entries_tests: bool,
+    pub flow_entries_fixtures: bool,
 }
 
 fn normalise_rule(value: &str, field: &str, allow_glob: bool) -> Result<String, String> {
@@ -237,6 +239,8 @@ pub fn read_native_scope(root: &Path) -> Result<NativeScope, String> {
                 .map(|value| (*value).to_string())
                 .collect(),
             exclude: Vec::new(),
+            flow_entries_tests: false,
+            flow_entries_fixtures: false,
         });
     }
     let content = fs::read_to_string(&config_path)
@@ -275,16 +279,29 @@ pub fn read_native_scope(root: &Path) -> Result<NativeScope, String> {
             );
         }
     };
-    if let Some(flow_entries) = object.get("flowEntries") {
-        let Some(flow_entries) = flow_entries.as_object() else {
-            return Err(".flopeek/config.json flowEntries must be an object.".to_string());
-        };
-        for (key, value) in flow_entries {
-            if !matches!(key.as_str(), "tests" | "fixtures") || !value.is_boolean() {
-                return Err(".flopeek/config.json flowEntries is invalid.".to_string());
+    let (flow_entries_tests, flow_entries_fixtures) =
+        if let Some(flow_entries) = object.get("flowEntries") {
+            let Some(flow_entries) = flow_entries.as_object() else {
+                return Err(".flopeek/config.json flowEntries must be an object.".to_string());
+            };
+            for (key, value) in flow_entries {
+                if !matches!(key.as_str(), "tests" | "fixtures") || !value.is_boolean() {
+                    return Err(".flopeek/config.json flowEntries is invalid.".to_string());
+                }
             }
-        }
-    }
+            (
+                flow_entries
+                    .get("tests")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                flow_entries
+                    .get("fixtures")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            )
+        } else {
+            (false, false)
+        };
     Ok(NativeScope {
         source: "config".to_string(),
         project_id,
@@ -302,5 +319,30 @@ pub fn read_native_scope(root: &Path) -> Result<NativeScope, String> {
             false,
         )?,
         exclude: path_list(object.get("exclude"), "exclude", &[], true)?,
+        flow_entries_tests,
+        flow_entries_fixtures,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_native_scope;
+    use std::fs;
+
+    #[test]
+    fn preserves_flow_entry_policy_for_the_native_batch_envelope() {
+        let root =
+            std::env::temp_dir().join(format!("flopeek-native-scope-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(".flopeek")).unwrap();
+        fs::write(
+            root.join(".flopeek/config.json"),
+            r#"{"schemaVersion":1,"flowEntries":{"tests":true,"fixtures":true}}"#,
+        )
+        .unwrap();
+        let scope = read_native_scope(&root).unwrap();
+        assert!(scope.flow_entries_tests);
+        assert!(scope.flow_entries_fixtures);
+        fs::remove_dir_all(root).unwrap();
+    }
 }
