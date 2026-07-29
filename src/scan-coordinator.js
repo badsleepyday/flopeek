@@ -97,7 +97,7 @@ function createScanCoordinator(inputRoot, options = {}) {
   const packageScoped = hasPackageScope(options);
   const cacheEnabled = options.cache !== false && !packageScoped;
   const bounded = hasBounds(options) || packageScoped;
-  const coreMode = selectCoreMode({
+  const coreMode = options.coreRuntime || selectCoreMode({
     mode: options.coreMode,
     rolloutEvidence: options.nativeRolloutEvidence,
   });
@@ -232,6 +232,51 @@ function createScanCoordinator(inputRoot, options = {}) {
     previousGraph = graph;
     try {
       if (bounded) {
+        const nativeBounded = core.implementation === "native-experimental" && core.sourceAuthority === "rust";
+        if (nativeBounded) {
+          const nativeSessionProjectId = sessionProjectId || `session:${randomUUID()}`;
+          graph = await core.refresh(root, {
+            nativeBounded: true,
+            packagePath: packageScoped ? options.packagePath.trim() : null,
+            timeBudgetMs: options.timeBudgetMs,
+            maxFiles: options.maxFiles,
+            maxBytes: options.maxBytes,
+            persistIdentity: false,
+            sessionProjectId: nativeSessionProjectId,
+            signal: controller.signal,
+            onProfile: options.onCoreProfile,
+          });
+          if (core.implementation !== "native-experimental" || core.sourceAuthority !== "rust") {
+            const error = new Error("Native bounded execution fell back before producing a Rust graph.");
+            error.code = "native-bounded-fallback";
+            throw error;
+          }
+          const nativeDiscovery = graph.analysis?.nativeBoundedDiscovery || null;
+          graph.analysis.packageSelection = packageScoped
+            ? { status: "selected", packagePath: options.packagePath.trim(), source: "native-bounded-discovery" }
+            : { status: "repository", source: "native-bounded-discovery" };
+          advanceSessionGraph(graph, previousGraph, { reason, changedPaths });
+          graph.analysis.cacheState = disabledCacheState(root, packageScoped ? "native-package-scoped-session" : "native-bounded-session");
+          graph.analysis.derivedCacheInvalidation = { status: "disabled", events: [], diagnostics: [] };
+          const active = { graph, source: "fresh-complete" };
+          const boundedResult = {
+            status: "complete",
+            graph,
+            discovery: nativeDiscovery,
+            verification: nativeDiscovery ? { valid: nativeDiscovery.verified === true, source: "native-bounded-discovery" } : null,
+          };
+          return {
+            graph,
+            previousGraph,
+            boundedResult,
+            outcome: finalize(operationId, startedAt, "complete", null, active, {
+              discovery: nativeDiscovery,
+              cachePromoted: false,
+              refresh: graph.analysis.refresh,
+              coreRuntime: { ...coreMode, boundedNative: { status: "completed", sourceAuthority: "rust" } },
+            }),
+          };
+        }
         const result = await scanRepositoryBounded(root, {
           timeBudgetMs: options.timeBudgetMs,
           maxFiles: options.maxFiles,

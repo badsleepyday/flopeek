@@ -7,7 +7,7 @@ const { createNativeCoreClient } = require("./native-core-client");
 const { createNativeIncrementalSession } = require("./native-incremental-coordinator");
 const { createShadowCoreClient } = require("./shadow-core-client");
 
-const CORE_MODES = new Set(["js", "shadow", "native"]);
+const CORE_MODES = new Set(["js", "shadow", "native", "native-experimental"]);
 
 // A failed native bootstrap may use JavaScript only before native has promoted
 // any graph for this client. Once SQLite is authoritative, falling back to a
@@ -43,6 +43,10 @@ function createNativeFallbackCoreClient(native, javascript) {
   return Object.freeze({
     schemaVersion: CORE_CLIENT_SCHEMA,
     get implementation() { return javascriptFallback ? "javascript" : nativeCore.implementation; },
+    // Preserve native capability metadata through the rollback boundary so
+    // product orchestration can select the native bounded lifecycle without
+    // mistaking this explicit fallback wrapper for a JavaScript core.
+    get sourceAuthority() { return javascriptFallback ? null : nativeCore.sourceAuthority; },
     get fallback() {
       return javascriptFallback
         ? Object.freeze({ active: true, reason: "native-bootstrap-failed-before-authority" })
@@ -58,6 +62,7 @@ function createNativeFallbackCoreClient(native, javascript) {
     getRequestFlows: query("getRequestFlows"),
     getEntryFlows: query("getEntryFlows"),
     getFlowProjection: query("getFlowProjection"),
+    getFlowContextCard: query("getFlowContextCard"),
     getChangeImpact: query("getChangeImpact"),
     getChangedContexts: query("getChangedContexts"),
     getRelatedTests: query("getRelatedTests"),
@@ -112,10 +117,31 @@ function createConfiguredCoreClient(options = {}) {
 // Keep their core selection separate, while retaining `mode: "shadow"` for
 // direct programmatic callers during the experimental migration.
 function createSurfaceCoreClient(options = {}) {
+  return createSurfaceCoreRuntime(options).core;
+}
+
+// Keep activation and its machine-readable decision together so CLI, MCP,
+// server, workspace hosts, and ScanCoordinator can expose the same fallback
+// rather than silently reporting a JavaScript scan as a requested native one.
+function createSurfaceCoreRuntime(options = {}) {
   const mode = options.coreMode == null
     ? (CORE_MODES.has(options.mode) ? options.mode : undefined)
     : options.coreMode;
-  return createConfiguredCoreClient({ ...options, mode });
+  const nativeAvailable = options.enableNativeCore === true
+    || Boolean(options.nativeCore)
+    || Boolean(options.native)
+    || mode === "native-experimental";
+  const selection = selectCoreMode({
+    mode,
+    rolloutEvidence: options.rolloutEvidence,
+    nativeAvailable,
+  });
+  const core = createConfiguredCoreClient({
+    ...options,
+    mode,
+    enableNativeCore: nativeAvailable,
+  });
+  return Object.freeze({ core, selection });
 }
 
-module.exports = { createConfiguredCoreClient, createNativeFallbackCoreClient, createSurfaceCoreClient };
+module.exports = { createConfiguredCoreClient, createNativeFallbackCoreClient, createSurfaceCoreClient, createSurfaceCoreRuntime };

@@ -593,15 +593,18 @@ The scanner integration suite is large and should be split into faster feedback 
 The current `flopeek-core-client/v3` facade gives an unbounded scan coordinator
 one explicit `scan`/`refresh`/`getLastCompleteGraph`/`close` lifecycle. Native
 mode uses Rust+SQLite as its sole graph and core-query authority; it cannot
-construct or accept `JsCoreClient`. JavaScript remains the parser host behind
-`StructuralFactBatch/v1`, while named extension adapters only decorate or
-present already-native results. The strict stage-7 source path is narrower:
+construct or accept `JsCoreClient`. The strict stage-7 source path is narrower:
 Rust owns inventory, JS/TS parsing, import resolution, source hashes, and
-structural-record ordering, and rejects unpromoted adapters instead of invoking
-a JavaScript parser. A temporary JavaScript formatter still creates the public
-envelope and entry metadata from those Rust facts. It is reported as
-`factEnvelopeHost: javascript-transition-formatter` and is not yet eligible for
-an end-to-end native benchmark or native-default rollout. MCP and HTTP share that same client instance with their coordinator. Legacy delivery
+structural-record ordering, batch envelope, entry metadata, and graph assembly;
+bounded Project Overview selection and its static agent-context evidence are
+also assembled by Rust. Node may append only explicitly local runtime evidence,
+cache audit, semantic feedback, and trace metadata; it must not rebuild a
+native view or silently substitute JavaScript static context.
+it rejects unpromoted adapters instead of invoking a JavaScript parser. The
+ephemeral path performs the same work in one Rust JSONL session without SQLite
+or repository metadata. `native-experimental` is the explicit dogfood request;
+the rollout-gated `native` request records a visible JavaScript fallback when
+it cannot select native. MCP and HTTP share that same client instance with their coordinator. Legacy delivery
 and extension calls remain separate adapters. `native/flopeek-core --native-serve` exposes the persistent
 `flopeek-native-protocol/v1` JSONL bootstrap with request IDs and typed errors.
 `StructuralFactBatch/v1` has no source-body transport. A separate bounded

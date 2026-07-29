@@ -104,7 +104,8 @@ optimization, not parser evidence or a public API surface.
 
 ### Promotion and rollback
 
-Promotion is explicit through `FLOPEEK_CORE=js`, `shadow`, or `native`; a beta
+Promotion is explicit through `FLOPEEK_CORE=js`, `shadow`, `native`, or
+`native-experimental`; a beta
 cannot silently mix outputs or stores. Native initialization, migration, or
 validation failure reports the selected mode and uses the JavaScript path only
 when its pre-existing cache is valid. Rollback never rewrites source or
@@ -121,6 +122,9 @@ terminal scan outcome. `shadow` is skipped for cache-disabled or bounded scans:
 those modes must not create native SQLite state. A `native` request is visibly
 rolled back to JavaScript until both the rollout gate and an actual native
 public-core implementation exist; it never silently aliases `shadow`.
+`native-experimental` is the explicit dogfood selection: it bypasses the
+default-rollout gate but remains wrapped in visible JavaScript fallback and is
+reported as experimental in every surface selection record.
 
 The migration order is:
 
@@ -136,12 +140,13 @@ The migration order is:
    native-default beta, historical-cache migration, and packaging.
 
 The current stage-7 slice promotes Rust inventory, tree-sitter JS/TS parsing,
-import resolution, source hashes, and canonical record ordering behind
+import resolution, source hashes, public envelope/entry metadata, graph
+assembly, persistent SQLite lifecycle, and native graph-handle queries behind
 `NativeCoreClient({ sourceAuthority: "rust" })`. It rejects repositories with
-an unpromoted source adapter before public graph promotion. JavaScript still
-formats public-envelope and entry metadata in the transitional
-`native-source-fact-host`; therefore this slice is not yet eligible for the
-end-to-end native benchmark or native-default rollout.
+an unpromoted source adapter before public graph promotion. JavaScript remains
+the compatibility and extension oracle for unpromoted adapters and selected
+presentation projections; therefore this slice is not yet eligible for the
+native-default rollout.
 
 ## Consequences
 

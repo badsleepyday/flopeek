@@ -9,6 +9,7 @@ pub const PROJECT_IDENTITY_RELATIVE_PATH: &str = ".flopeek/project.json";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectIdentity {
     pub project_id: String,
+    pub canonical_project_id: Option<String>,
     pub source: String,
     pub status: String,
     pub origin_remote: Option<String>,
@@ -90,6 +91,7 @@ pub fn resolve_project_identity(
     if let Some(project_id) = configured_id {
         return Ok(ProjectIdentity {
             project_id: project_id.to_string(),
+            canonical_project_id: None,
             source: "configured".to_string(),
             status: "configured".to_string(),
             origin_remote,
@@ -114,6 +116,7 @@ pub fn resolve_project_identity(
         )?;
         return Ok(ProjectIdentity {
             project_id,
+            canonical_project_id: None,
             source: "generated".to_string(),
             status: "created".to_string(),
             origin_remote,
@@ -165,6 +168,7 @@ pub fn resolve_project_identity(
         recorded_remote.is_some() && origin_remote.is_some() && recorded_remote != origin_remote;
     Ok(ProjectIdentity {
         project_id: project_id.to_string(),
+        canonical_project_id: None,
         source: "generated".to_string(),
         status: if remote_mismatch {
             "remote-mismatch"
@@ -188,30 +192,22 @@ pub fn resolve_ephemeral_project_identity(
     configured_id: Option<&str>,
     session_project_id: Option<&str>,
 ) -> Result<ProjectIdentity, String> {
-    if let Some(project_id) = configured_id {
-        return Ok(ProjectIdentity {
-            project_id: project_id.to_string(),
-            source: "configured".to_string(),
-            status: "configured".to_string(),
-            origin_remote: None,
-            limitation: "This configured project identity is used for an ephemeral native session and is not written or modified during --no-cache scanning.".to_string(),
-        });
-    }
     let project_id = session_project_id
         .filter(|value| !value.trim().is_empty())
         .ok_or("Ephemeral native scanning requires a session project identity.")?;
     Ok(ProjectIdentity {
         project_id: project_id.to_string(),
+        canonical_project_id: configured_id.map(str::to_string),
         source: "session".to_string(),
-        status: "ephemeral".to_string(),
+        status: "session-only".to_string(),
         origin_remote: None,
-        limitation: "This identity exists only for the current native JSONL session and is never written to the source repository.".to_string(),
+        limitation: "This identity exists only for the current native JSONL session and is never written to the source repository. canonicalProjectId, when present, records the configured durable identity without making this session Context Ref durable.".to_string(),
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_project_identity;
+    use super::{resolve_ephemeral_project_identity, resolve_project_identity};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -261,5 +257,21 @@ mod tests {
         assert_eq!(configured.status, "configured");
         assert_eq!(configured.project_id, "project:explicit-identity");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ephemeral_identity_is_always_session_scoped_even_with_configured_identity() {
+        let identity = resolve_ephemeral_project_identity(
+            Some("project:configured"),
+            Some("session:ephemeral"),
+        )
+        .unwrap();
+        assert_eq!(identity.project_id, "session:ephemeral");
+        assert_eq!(
+            identity.canonical_project_id.as_deref(),
+            Some("project:configured")
+        );
+        assert_eq!(identity.source, "session");
+        assert_eq!(identity.status, "session-only");
     }
 }

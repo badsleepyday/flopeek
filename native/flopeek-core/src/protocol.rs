@@ -1,16 +1,21 @@
 use crate::inventory::{
-    scan_native_incremental_manifest, scan_native_incremental_manifest_with_source_batch,
+    discover_native_bounded_project, scan_native_incremental_manifest,
+    scan_native_incremental_manifest_with_source_batch,
 };
 use crate::js_batch::native_manual_descriptions;
-use crate::js_facts::{scan_native_js_facts, scan_native_js_facts_ephemeral};
+use crate::js_facts::{
+    NativeJsFactsStatus, refresh_native_js_facts_session, reuse_native_js_facts_session,
+    scan_native_js_facts, scan_native_js_facts_ephemeral, scan_native_js_facts_ephemeral_bounded,
+};
+use crate::project_identity::ProjectIdentity;
 use crate::record_cache::{handle_native_js_record_cache_value, load_native_js_record_cache_raw};
 use crate::scope::read_native_scope;
 use crate::store::{
-    begin_graph_build, complete_graph_delta, complete_graph_delta_by_public_versions,
-    complete_graph_payload, complete_graph_payload_by_public_version, current_complete_graph,
-    current_structural_batch, initialize_native_store, open_native_store,
-    promote_graph_build_with_changed_records, recover_incomplete_graph_builds,
-    retained_public_delta_range,
+    NativeGraphPromotionRequest, begin_graph_build, complete_graph_delta,
+    complete_graph_delta_by_public_versions, complete_graph_payload,
+    complete_graph_payload_by_public_version, current_complete_graph, current_structural_batch,
+    initialize_native_store, open_native_store, promote_graph_build_with_changed_records,
+    recover_incomplete_graph_builds, retained_public_delta_range,
 };
 use crate::structural_graph::{
     StructuralGraphNode, StructuralGraphProjection, StructuralGraphSnapshot,
@@ -34,6 +39,15 @@ use time::format_description::well_known::Rfc3339;
 pub const NATIVE_PROTOCOL_VERSION: &str = "flopeek-native-protocol/v1";
 pub const STRUCTURAL_FACT_BATCH_SCHEMA: &str = "flopeek-structural-fact-batch/v1";
 pub const STRUCTURAL_FACT_PATCH_SCHEMA: &str = "flopeek-structural-fact-patch/v1";
+
+type NativePublicDeltaHistory = (Option<Value>, Option<(i64, i64)>);
+type ComparedItems = (
+    Vec<Value>,
+    Vec<Value>,
+    Vec<Value>,
+    (usize, usize, usize),
+    bool,
+);
 
 fn elapsed_ms(started: Instant) -> u64 {
     started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
@@ -118,8 +132,36 @@ struct NativePersistentFacts {
 #[derive(Default)]
 struct NativeProtocolSession {
     graphs: BTreeMap<String, NativeSessionGraph>,
+    ephemeral_sources: BTreeMap<String, NativeJsFactsStatus>,
+    persistent_sources: BTreeMap<String, NativeJsFactsStatus>,
+    // A durable CoreClient owns one JSONL process. Retain its SQLite handle by
+    // canonical project root so schema preparation happens once per session,
+    // not once per changed-path refresh. The map is deliberately process-local
+    // and is dropped on shutdown; SQLite remains the authoritative store.
+    persistent_connections: BTreeMap<String, rusqlite::Connection>,
     persistent_graph: Option<NativePersistentGraph>,
     persistent_facts: Option<NativePersistentFacts>,
+}
+
+fn with_persistent_session_connection<T>(
+    session: &mut NativeProtocolSession,
+    root: &Path,
+    operation: impl FnOnce(
+        &mut NativeProtocolSession,
+        &mut rusqlite::Connection,
+    ) -> Result<T, NativeProtocolError>,
+) -> Result<T, NativeProtocolError> {
+    let key = root.to_string_lossy().to_string();
+    let mut connection = match session.persistent_connections.remove(&key) {
+        Some(connection) => connection,
+        None => open_native_store(root).map_err(|error| NativeProtocolError {
+            code: "store-initialize-failed",
+            message: error.to_string(),
+        })?,
+    };
+    let result = operation(session, &mut connection);
+    session.persistent_connections.insert(key, connection);
+    result
 }
 
 fn ensure_persistent_payload(
@@ -227,6 +269,16 @@ fn hydrate_cached_query_batch(
         return Ok(());
     }
     let root = project_root(params)?;
+    with_persistent_session_connection(session, &root, |session, connection| {
+        hydrate_cached_query_batch_using_connection(session, params, connection)
+    })
+}
+
+fn hydrate_cached_query_batch_using_connection(
+    session: &mut NativeProtocolSession,
+    params: &mut Value,
+    connection: &rusqlite::Connection,
+) -> Result<(), NativeProtocolError> {
     let project_id = params
         .get("projectId")
         .and_then(Value::as_str)
@@ -245,11 +297,7 @@ fn hydrate_cached_query_batch(
             message: "Cached native query requires params.factsDigest.".to_string(),
         })?
         .to_string();
-    let connection = open_native_store(&root).map_err(|error| NativeProtocolError {
-        code: "store-read-failed",
-        message: error.to_string(),
-    })?;
-    if let Err(error) = ensure_persistent_facts(session, &connection, &project_id, &facts_digest) {
+    if let Err(error) = ensure_persistent_facts(session, connection, &project_id, &facts_digest) {
         if error.code == "structural-fact-patch-miss" {
             return Err(NativeProtocolError {
                 code: "native-query-fact-cache-miss",
@@ -380,6 +428,147 @@ fn native_incremental_manifest(params: &Value) -> Result<Value, NativeProtocolEr
     }))
 }
 
+fn native_bounded_discovery(params: &Value) -> Result<Value, NativeProtocolError> {
+    let root = project_root(params)?;
+    let limits = params.get("limits").and_then(Value::as_object);
+    let max_files = limits
+        .and_then(|limits| limits.get("maxFiles"))
+        .and_then(Value::as_u64)
+        .map(|value| {
+            usize::try_from(value).map_err(|_| NativeProtocolError {
+                code: "invalid-params",
+                message: "limits.maxFiles exceeds this platform's address space.".to_string(),
+            })
+        })
+        .transpose()?;
+    let max_bytes = limits
+        .and_then(|limits| limits.get("maxBytes"))
+        .and_then(Value::as_i64);
+    let budget_ms = limits
+        .and_then(|limits| limits.get("budgetMs"))
+        .and_then(Value::as_u64);
+    let package_path = params.get("packagePath").and_then(Value::as_str);
+    let discovery =
+        discover_native_bounded_project(&root, package_path, max_files, max_bytes, budget_ms)
+            .map_err(|message| NativeProtocolError {
+                code: if message.starts_with("native-bounded-") {
+                    "native-bounded-discovery-failed"
+                } else {
+                    "native-bounded-discovery-error"
+                },
+                message,
+            })?;
+    Ok(json!({
+        "schemaVersion":"flopeek-native-bounded-discovery/v1",
+        "projectRoot":discovery.project_root,
+        "packagePath":discovery.package_path,
+        "scopeSource":discovery.scope_source,
+        "planFingerprint":discovery.plan_fingerprint,
+        "candidateFiles":discovery.candidates.len(),
+        "candidateBytes":discovery.total_bytes,
+        "candidates":discovery.candidates.into_iter().map(|candidate| json!({
+            "path":candidate.path,
+            "sizeBytes":candidate.size_bytes,
+            "modifiedAtNs":candidate.modified_at_ns.to_string(),
+            "sourceScope":candidate.source_scope,
+        })).collect::<Vec<_>>(),
+        "promotion":"not-started",
+        "limitation":"This is native-owned bounded discovery and limit validation. Execution, mutation verification, and graph promotion are intentionally separate so an incomplete plan cannot become a graph."
+    }))
+}
+
+fn refresh_native_project(
+    session: &mut NativeProtocolSession,
+    params: &Value,
+) -> Result<Value, NativeProtocolError> {
+    let root = project_root(params)?;
+    let session_project_id = params
+        .get("sessionProjectId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| NativeProtocolError {
+            code: "invalid-params",
+            message: "refreshNativeProject requires sessionProjectId.".to_string(),
+        })?;
+    let limits = params.get("limits").and_then(Value::as_object);
+    let max_files = limits
+        .and_then(|limits| limits.get("maxFiles"))
+        .and_then(Value::as_u64)
+        .map(|value| {
+            usize::try_from(value).map_err(|_| NativeProtocolError {
+                code: "invalid-params",
+                message: "limits.maxFiles exceeds this platform's address space.".to_string(),
+            })
+        })
+        .transpose()?;
+    let max_bytes = limits
+        .and_then(|limits| limits.get("maxBytes"))
+        .and_then(Value::as_i64);
+    let budget_ms = limits
+        .and_then(|limits| limits.get("budgetMs"))
+        .and_then(Value::as_u64);
+    let package_path = params.get("packagePath").and_then(Value::as_str);
+    let (status, discovery) = scan_native_js_facts_ephemeral_bounded(
+        &root,
+        Some(session_project_id),
+        package_path,
+        max_files,
+        max_bytes,
+        budget_ms,
+    )
+    .map_err(|message| NativeProtocolError {
+        code: "native-bounded-execution-failed",
+        message,
+    })?;
+    let supported_paths = status.facts.keys().cloned().collect::<BTreeSet<_>>();
+    let unsupported_paths = status
+        .candidate_paths
+        .iter()
+        .filter(|path| !supported_paths.contains(*path))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unsupported_paths.is_empty() {
+        return Err(NativeProtocolError {
+            code: "native-source-adapter-unavailable",
+            message: format!(
+                "Rust bounded source authority has no promoted adapter for: {}.",
+                unsupported_paths.join(", ")
+            ),
+        });
+    }
+    // A second native discovery before assembly is deliberately mandatory.
+    // A changed plan is discarded rather than becoming a plausible partial
+    // graph. This costs one metadata walk, but has no source-body transport.
+    let verified =
+        discover_native_bounded_project(&root, package_path, max_files, max_bytes, budget_ms)
+            .map_err(|message| NativeProtocolError {
+                code: "native-bounded-verification-failed",
+                message,
+            })?;
+    if verified.plan_fingerprint != discovery.plan_fingerprint {
+        return Err(NativeProtocolError {
+            code: "native-bounded-plan-changed",
+            message: "Repository source plan changed during native bounded execution; the graph was discarded."
+                .to_string(),
+        });
+    }
+    let batch = native_js_batch_envelope_for_package(&status, discovery.package_path.as_deref())?;
+    let mut result = refresh_native_session_graph(session, &batch)?;
+    result["batch"] = batch;
+    result["sourceAuthority"] = json!("rust-native-bounded/v1");
+    result["boundedDiscovery"] = json!({
+        "schemaVersion":"flopeek-native-bounded-discovery/v1",
+        "projectRoot":discovery.project_root,
+        "packagePath":discovery.package_path,
+        "scopeSource":discovery.scope_source,
+        "planFingerprint":discovery.plan_fingerprint,
+        "candidateFiles":discovery.candidates.len(),
+        "candidateBytes":discovery.total_bytes,
+        "verified":true,
+        "promotion":"session-memory-only",
+    });
+    Ok(result)
+}
+
 fn native_js_record_cache(params: &Value) -> Result<Value, NativeProtocolError> {
     let root = project_root(params)?;
     let request = params
@@ -394,22 +583,84 @@ fn native_js_record_cache(params: &Value) -> Result<Value, NativeProtocolError> 
     })
 }
 
-fn native_js_structural_facts(params: &Value) -> Result<Value, NativeProtocolError> {
+fn native_project_identity_value(identity: &ProjectIdentity) -> Value {
+    let mut value = json!({
+        "projectId": identity.project_id,
+        "source": identity.source,
+        "status": identity.status,
+        "originRemote": identity.origin_remote,
+        "limitation": identity.limitation,
+    });
+    if let Some(canonical_project_id) = &identity.canonical_project_id {
+        value["canonicalProjectId"] = Value::String(canonical_project_id.clone());
+    }
+    value
+}
+
+/// Load or incrementally refresh the Rust-owned JS/TS source session without
+/// materialising the diagnostic JSON protocol payload. Persistent graph
+/// promotion consumes this directly; only the compatibility/debug protocol
+/// method below serializes complete facts, resolution, and records.
+fn load_native_js_facts_status(
+    session: &mut NativeProtocolSession,
+    params: &Value,
+) -> Result<crate::js_facts::NativeJsFactsStatus, NativeProtocolError> {
     let root = project_root(params)?;
     let ephemeral = params
         .get("ephemeral")
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let session_project_id = params.get("sessionProjectId").and_then(Value::as_str);
+    let session_key = root.display().to_string();
+    let changed_paths = params
+        .get("changedPaths")
+        .and_then(Value::as_array)
+        .map(|paths| {
+            paths
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        });
     let status = (if ephemeral {
         scan_native_js_facts_ephemeral(&root, session_project_id)
+    } else if let (Some(previous), Some(paths)) = (
+        session.persistent_sources.get(&session_key),
+        changed_paths.as_deref(),
+    ) {
+        if paths.is_empty() {
+            Ok(reuse_native_js_facts_session(previous))
+        } else {
+            refresh_native_js_facts_session(previous, paths)
+        }
     } else {
         scan_native_js_facts(&root)
     })
     .map_err(|message| NativeProtocolError {
-        code: "native-source-facts-failed",
+        code: if message.starts_with("native-session-reconcile-required:") {
+            "native-session-reconcile-required"
+        } else {
+            "native-source-facts-failed"
+        },
         message,
     })?;
+    if !ephemeral {
+        session
+            .persistent_sources
+            .insert(session_key, status.clone());
+    }
+    Ok(status)
+}
+
+fn native_js_structural_facts(
+    session: &mut NativeProtocolSession,
+    params: &Value,
+) -> Result<Value, NativeProtocolError> {
+    let ephemeral = params
+        .get("ephemeral")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let status = load_native_js_facts_status(session, params)?;
     let supported_paths = status.facts.keys().cloned().collect::<BTreeSet<_>>();
     let unsupported_paths = status
         .candidate_paths
@@ -423,13 +674,7 @@ fn native_js_structural_facts(params: &Value) -> Result<Value, NativeProtocolErr
         "adapterVersion": status.adapter_version,
         "persistence": if ephemeral { "session-memory" } else { "sqlite" },
         "projectRoot": status.project_root,
-        "projectIdentity": {
-            "projectId": status.project_identity.project_id,
-            "source": status.project_identity.source,
-            "status": status.project_identity.status,
-            "originRemote": status.project_identity.origin_remote,
-            "limitation": status.project_identity.limitation,
-        },
+        "projectIdentity": native_project_identity_value(&status.project_identity),
         "candidateFiles": status.candidate_files,
         "candidatePaths": status.candidate_paths,
         "changedPaths": status.changed_paths,
@@ -454,6 +699,194 @@ fn native_js_structural_facts(params: &Value) -> Result<Value, NativeProtocolErr
     }))
 }
 
+// A caller that explicitly supplies an empty changed-path list is asserting
+// that its watcher observed no source event.  Once this JSONL process already
+// owns the matching Rust source session and public snapshot, do not rebuild a
+// complete fact envelope merely to rediscover the same SQLite graph.  The
+// SQLite pointer is still read and matched first: another process may have
+// promoted a newer graph, in which case the normal lifecycle path safely
+// re-establishes this process-local cache.
+fn reuse_native_persistent_project_no_op(
+    session: &mut NativeProtocolSession,
+    root: &Path,
+    status: &NativeJsFactsStatus,
+) -> Result<Option<Value>, NativeProtocolError> {
+    let project_id = status.project_identity.project_id.clone();
+    let cached = match (&session.persistent_graph, &session.persistent_facts) {
+        (Some(graph), Some(facts))
+            if graph.project_id == project_id
+                && facts.project_id == project_id
+                && graph.public_snapshot.is_some() =>
+        {
+            (
+                graph.graph_version,
+                facts.facts_digest.clone(),
+                graph
+                    .public_snapshot
+                    .as_ref()
+                    .expect("checked public snapshot")
+                    .clone(),
+            )
+        }
+        _ => return Ok(None),
+    };
+    let current = with_persistent_session_connection(session, root, |_session, connection| {
+        current_complete_graph(connection, &project_id).map_err(|error| NativeProtocolError {
+            code: "store-read-failed",
+            message: error.to_string(),
+        })
+    })?;
+    let Some(current) = current else {
+        return Ok(None);
+    };
+    if current.graph_version != cached.0
+        || current.material_fingerprint != cached.1
+        || current.public_graph_version.unwrap_or_default() < 1
+    {
+        return Ok(None);
+    }
+    let mut envelope = native_public_graph_envelope(&cached.2);
+    envelope["analysis"]["refresh"] = json!({
+        "strategy": "incremental-content-analysis",
+        "mode": "incremental",
+        "analyzedFiles": 0,
+        "reusedFiles": status.reused_files,
+        "removedFiles": 0,
+        "changedPaths": [],
+    });
+    envelope["analysis"]["latestDelta"] = Value::Null;
+    let public_graph_version = current
+        .public_graph_version
+        .expect("positive public graph version was checked");
+    Ok(Some(json!({
+        "schemaVersion": "flopeek-native-public-lifecycle/v1",
+        "status": "reused",
+        "nativeGraphVersion": current.graph_version,
+        "publicGraphVersion": public_graph_version,
+        "factsDigest": cached.1,
+        "receipt": {
+            "schemaVersion": "flopeek-native-source-session-no-op/v1",
+            "stored": false,
+            "status": "reused",
+            "reason": "explicit-empty-changed-paths",
+        },
+        "publicGraphReuse": {
+            "schemaVersion": "flopeek-native-public-graph-reuse/v1",
+            "envelope": envelope,
+        },
+    })))
+}
+
+/// Persistent strict-Rust lifecycle. Source discovery, fact assembly, graph
+/// promotion, and the SQLite-attached fact cache all remain in this process;
+/// the JSONL caller receives a graph handle instead of a complete fact batch
+/// that it would otherwise send straight back for persistence.
+fn refresh_native_persistent_project(
+    session: &mut NativeProtocolSession,
+    params: &Value,
+) -> Result<Value, NativeProtocolError> {
+    let root = project_root(params)?;
+    let session_key = root.display().to_string();
+    let explicit_no_op = params
+        .get("changedPaths")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty)
+        && session.persistent_sources.contains_key(&session_key);
+    let status = load_native_js_facts_status(session, params)?;
+    if explicit_no_op {
+        if let Some(mut response) = reuse_native_persistent_project_no_op(session, &root, &status)?
+        {
+            response["sourceAuthority"] = json!("rust-native-persistent/v1");
+            response["sourceRefresh"] = json!({
+                "mode": "no-op-session",
+                "parsedFiles": 0,
+                "reusedFiles": status.reused_files,
+                "changedPaths": [],
+                "removedPaths": [],
+            });
+            response["graphHandle"] = json!({
+                "schemaVersion": "flopeek-native-graph-handle/v1",
+                "projectId": status.project_identity.project_id,
+                "factsDigest": response["factsDigest"],
+                "persistence": "sqlite",
+                "publicGraphVersion": response["publicGraphVersion"],
+            });
+            return Ok(response);
+        }
+    }
+    let supported_paths = status.facts.keys().cloned().collect::<BTreeSet<_>>();
+    let unsupported_paths = status
+        .candidate_paths
+        .iter()
+        .filter(|path| !supported_paths.contains(*path))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unsupported_paths.is_empty() {
+        return Err(NativeProtocolError {
+            code: "native-source-adapter-unavailable",
+            message: format!(
+                "Rust source authority has no promoted adapter for: {}.",
+                unsupported_paths.join(", ")
+            ),
+        });
+    }
+    let mut batch = native_js_batch_envelope(&status)?;
+    batch["projectRoot"] = Value::String(root.to_string_lossy().to_string());
+    let project_id = batch
+        .get("projectId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| NativeProtocolError {
+            code: "native-source-facts-failed",
+            message: "Rust source authority returned a StructuralFactBatch without projectId."
+                .to_string(),
+        })?
+        .to_string();
+    let facts_digest = batch
+        .get("factsDigest")
+        .and_then(Value::as_str)
+        .ok_or_else(|| NativeProtocolError {
+            code: "native-source-facts-failed",
+            message: "Rust source authority returned a StructuralFactBatch without factsDigest."
+                .to_string(),
+        })?
+        .to_string();
+    let changed_record_paths = (!status.initial_scan).then(|| {
+        status
+            .changed_record_paths
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+    });
+    let mut result = with_persistent_session_connection(session, &root, |session, connection| {
+        let receipt = submit_structural_facts(&batch)?;
+        persist_native_public_graph_with_receipt_using_connection(
+            session,
+            &mut batch,
+            receipt,
+            true,
+            None,
+            changed_record_paths,
+            connection,
+        )
+    })?;
+    result["sourceAuthority"] = json!("rust-native-persistent/v1");
+    result["sourceRefresh"] = json!({
+        "mode": batch["lifecycleContext"]["refresh"]["mode"],
+        "parsedFiles": status.parsed_files,
+        "reusedFiles": status.reused_files,
+        "changedPaths": status.changed_paths,
+        "removedPaths": status.removed_paths,
+    });
+    result["graphHandle"] = json!({
+        "schemaVersion": "flopeek-native-graph-handle/v1",
+        "projectId": project_id,
+        "factsDigest": facts_digest,
+        "persistence": "sqlite",
+        "publicGraphVersion": result["publicGraphVersion"],
+    });
+    Ok(result)
+}
+
 // The ephemeral path must not serialize a complete StructuralFactBatch to Node
 // only to have Node send the identical payload back for session assembly. Keep
 // discovery, parsing, envelope construction, and graph assembly inside the
@@ -471,17 +904,54 @@ fn refresh_native_js_session_graph(
             code: "invalid-params",
             message: "refreshNativeJsSessionGraph requires sessionProjectId.".to_string(),
         })?;
-    let status =
-        scan_native_js_facts_ephemeral(&root, Some(session_project_id)).map_err(|message| {
-            NativeProtocolError {
-                code: "native-source-facts-failed",
-                message,
-            }
-        })?;
+    let session_key = format!("{}\0{}", root.display(), session_project_id);
+    let changed_paths = params
+        .get("changedPaths")
+        .and_then(Value::as_array)
+        .map(|paths| {
+            paths
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        });
+    let no_op = matches!(
+        (
+            session.ephemeral_sources.get(&session_key),
+            changed_paths.as_deref()
+        ),
+        (Some(_), Some([]))
+    );
+    let status = match (
+        session.ephemeral_sources.get(&session_key),
+        changed_paths.as_deref(),
+    ) {
+        (Some(previous), Some(paths)) if !paths.is_empty() => {
+            refresh_native_js_facts_session(previous, paths)
+        }
+        (Some(previous), Some([])) => Ok(reuse_native_js_facts_session(previous)),
+        _ => scan_native_js_facts_ephemeral(&root, Some(session_project_id)),
+    }
+    .map_err(|message| NativeProtocolError {
+        code: if message.starts_with("native-session-reconcile-required:") {
+            "native-session-reconcile-required"
+        } else {
+            "native-source-facts-failed"
+        },
+        message,
+    })?;
     let batch = native_js_batch_envelope(&status)?;
     let mut result = refresh_native_session_graph(session, &batch)?;
     result["batch"] = batch;
     result["sourceAuthority"] = json!("rust-native-ephemeral/v1");
+    result["sourceRefresh"] = json!({
+        "mode": if no_op { "no-op-session" } else if changed_paths.as_ref().is_some_and(|paths| !paths.is_empty()) { "changed-path-session" } else { "initial-or-reconciled" },
+        "parsedFiles": status.parsed_files,
+        "reusedFiles": status.reused_files,
+        "changedPaths": status.changed_paths,
+        "removedPaths": status.removed_paths,
+    });
+    session.ephemeral_sources.insert(session_key, status);
     Ok(result)
 }
 
@@ -540,12 +1010,31 @@ fn native_js_git_metadata(root: &Path) -> Value {
     json!({"branch":branch,"revision":revision,"shallow":Value::Null,"dirty":dirty,"availability":"available","reason":Value::Null})
 }
 
+/// The adapter contract is owned once at the repository root.  Rust embeds the
+/// same bytes that the JavaScript scanner loads, so a release cannot advertise
+/// divergent adapter capabilities across the two execution paths.
 fn native_adapter_registry() -> Value {
-    serde_json::from_str(r#"{"schema":"flopeek-adapter-capabilities/v1","adapters":[{"id":"csharp","languages":["csharp"],"extensions":[".cs"],"parser":"csharp-roslyn","availability":"toolchain-conditional","requiredToolchain":".NET SDK with Roslyn assemblies","capabilities":{"structure":"exact-static","imports":"exact-static","directCalls":"unsupported","frameworkFacts":[]},"resolverCapabilities":[],"evidenceClass":"exact-static","limitations":["Call graph and runtime dispatch are not implemented."],"filenames":[]},{"id":"go","languages":["go"],"extensions":[".go"],"parser":"go-parser","availability":"toolchain-conditional","requiredToolchain":"Go toolchain","capabilities":{"structure":"exact-static","imports":"exact-static","directCalls":"supported-subset","frameworkFacts":["local go.mod module packages"]},"resolverCapabilities":["static local module packages"],"evidenceClass":"exact-static","limitations":["Build tags, function values, method dispatch, ambiguous package functions, and package-name mismatches are unsupported."],"filenames":[]},{"id":"inventory","languages":["assembly","astro","c","cpp","headers","kotlin","makefile","ruby","scala","shell","swift","vue"],"extensions":[".asm",".astro",".bash",".c",".cc",".cpp",".cxx",".h",".kt",".kts",".rb",".scala",".sh",".swift",".vue",".zsh"],"filenames":["Makefile"],"parser":"inventory","availability":"inventory-only","requiredToolchain":null,"capabilities":{"structure":"inventory-only","imports":"unsupported","directCalls":"unsupported","frameworkFacts":[]},"resolverCapabilities":[],"evidenceClass":"inventory-only","limitations":["Files are classified but receive no structural relationships."]},{"id":"java","languages":["java"],"extensions":[".java"],"parser":"tree-sitter-java","availability":"bundled","requiredToolchain":null,"capabilities":{"structure":"exact-static","imports":"exact-static","directCalls":"supported-subset","frameworkFacts":[]},"resolverCapabilities":[],"evidenceClass":"exact-static","limitations":["Instance, qualified, overloaded, reflection, and DI/container dispatch are unsupported."],"filenames":[]},{"id":"php","languages":["php"],"extensions":[".php"],"parser":"php-parser","availability":"bundled","requiredToolchain":null,"capabilities":{"structure":"exact-static","imports":"exact-static","directCalls":"supported-subset","frameworkFacts":[]},"resolverCapabilities":[],"evidenceClass":"exact-static","limitations":["Composer autoloading, dynamic include, method/static dispatch, and container calls are unsupported."],"filenames":[]},{"id":"python","languages":["python"],"extensions":[".py"],"parser":"python-lezer","availability":"bundled","requiredToolchain":null,"capabilities":{"structure":"exact-static","imports":"supported-subset","directCalls":"supported-subset","frameworkFacts":["Flask and Blueprint literal routes","literal HTTP decorators","narrow Click, Typer, and Flask CLI command declarations","narrow Django management commands"]},"resolverCapabilities":["relative and src-package imports"],"evidenceClass":"exact-static","limitations":["Attribute calls, dynamic dispatch, dynamic decorator configuration, framework app registration/initialization, computed command names, and indirect management-command base classes are unsupported."],"filenames":[]},{"id":"rust","languages":["rust"],"extensions":[".rs"],"parser":"tree-sitter-rust","availability":"bundled","requiredToolchain":null,"capabilities":{"structure":"exact-static","imports":"supported-subset","directCalls":"supported-subset","frameworkFacts":["conventional Cargo src module layout"]},"resolverCapabilities":["crate/self/super modules in conventional Cargo src roots"],"evidenceClass":"exact-static","limitations":["Macros, traits, function values, qualified module calls, custom targets, and #[path] modules are unsupported."],"filenames":[]},{"id":"svelte","languages":["svelte"],"extensions":[".svelte"],"parser":"svelte-compiler","availability":"bundled","requiredToolchain":null,"capabilities":{"structure":"exact-static","imports":"supported-subset","directCalls":"supported-subset","frameworkFacts":["SvelteKit file-system routes"]},"resolverCapabilities":["supported script imports"],"evidenceClass":"exact-static","limitations":["Reactive and runtime component behavior are not traced."],"filenames":[]},{"id":"typescript","languages":["javascript","jsx","tsx","typescript"],"extensions":[".cjs",".js",".jsx",".mjs",".ts",".tsx"],"parser":"typescript-ast","availability":"bundled","requiredToolchain":null,"capabilities":{"structure":"exact-static","imports":"exact-static","directCalls":"supported-subset","frameworkFacts":["BullMQ","Drizzle","Express","Fastify","NestJS","Next.js","Prisma","TypeORM","node-cron module-scope literal default-import schedules"]},"resolverCapabilities":["Yarn PnP JSON","npm/pnpm workspaces","package imports/exports","relative paths","static Vite/Webpack aliases","tsconfig/jsconfig paths"],"evidenceClass":"exact-static","limitations":["Dynamic imports, general method dispatch, callbacks, dependency injection, reflection, and runtime loading are unsupported."],"filenames":[]}]}"#).expect("native adapter registry is valid JSON")
+    serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../contracts/adapter-capabilities.json"
+    )))
+    .expect("shared adapter capability contract is valid JSON")
 }
 
 fn native_js_batch_envelope(
     status: &crate::js_facts::NativeJsFactsStatus,
+) -> Result<Value, NativeProtocolError> {
+    native_js_batch_envelope_for_package(status, None)
+}
+
+/// Assemble a graph envelope from native facts. Bounded/package scans retain
+/// the repository root as their identity anchor, but use the selected package
+/// manifest for package-owned metadata and commands. This prevents a parent
+/// monorepo's scripts from appearing as executable entry points in a child
+/// package graph.
+fn native_js_batch_envelope_for_package(
+    status: &crate::js_facts::NativeJsFactsStatus,
+    package_path: Option<&str>,
 ) -> Result<Value, NativeProtocolError> {
     let scope = read_native_scope(&status.project_root).map_err(|message| NativeProtocolError {
         code: "native-source-facts-failed",
@@ -558,7 +1047,10 @@ fn native_js_batch_envelope(
             message: error.to_string(),
         })?;
     let git = native_js_git_metadata(&status.project_root);
-    let package = std::fs::read_to_string(status.project_root.join("package.json"))
+    let manifest_path = package_path
+        .map(|path| status.project_root.join(path).join("package.json"))
+        .unwrap_or_else(|| status.project_root.join("package.json"));
+    let package = std::fs::read_to_string(manifest_path)
         .ok()
         .and_then(|text| serde_json::from_str::<Value>(&text).ok());
     let project_name = package
@@ -621,15 +1113,55 @@ fn native_js_batch_envelope(
     let by_language = by_language.into_iter().map(|(language, (files, parsed, parsed_with_diagnostics, inventory_only, parse_failed, parsers))| json!({"language":language,"files":files,"parsed":parsed,"parsedWithDiagnostics":parsed_with_diagnostics,"inventoryOnly":inventory_only,"parseFailed":parse_failed,"parsers":parsers})).collect::<Vec<_>>();
     let coverage = json!({"summary":summary,"byLanguage":by_language,"interpretation":"Coverage counts syntax-tree analysis status, not runtime execution coverage or relationship precision."});
     let source_fingerprint = native_js_source_fingerprint(&status.structural_records);
-    let refresh = json!({"strategy":"incremental-content-analysis","mode":"initial","analyzedFiles":status.structural_records.len(),"reusedFiles":0,"removedFiles":0,"changedPaths":[]});
+    // Inventory and parser status are the source of lifecycle telemetry. Do
+    // not label every persistent refresh as an initial full scan merely
+    // because graph assembly receives a complete compatibility envelope.
+    let refresh = json!({
+        "strategy":"incremental-content-analysis",
+        "mode": if status.initial_scan { "initial" } else { "incremental" },
+        "analyzedFiles":status.parsed_files,
+        "reusedFiles":status.reused_files,
+        "removedFiles":status.removed_facts,
+        "changedPaths":&status.changed_paths,
+    });
     let adapter_registry = native_adapter_registry();
-    let public_graph_context = json!({
+    let project_identity = native_project_identity_value(&status.project_identity);
+    let mut public_graph_context = json!({
         "schemaVersion":5,"generatedAt":generated_at,
-        "project":{"root":status.project_root,"name":project_name,"projectId":status.project_identity.project_id,"identity":{"projectId":status.project_identity.project_id,"source":status.project_identity.source,"status":status.project_identity.status,"originRemote":status.project_identity.origin_remote,"limitation":status.project_identity.limitation},"git":git},
+        "project":{"root":status.project_root,"name":project_name,"projectId":status.project_identity.project_id,"identity":project_identity,"git":git},
         "state":{"graphVersion":0,"materialFingerprint":Value::Null,"sourceFingerprint":source_fingerprint,"sourceRevision":git["revision"],"updatedAt":generated_at,"status":"unpersisted"},
-        "analysis":{"mode":"deterministic","refresh":refresh,"codeInterpretation":"AST-only for registered language adapters","unparsedPolicy":"inventory-only; no dependency or flow is inferred","coverage":coverage,"repositoryScope":{"schemaVersion":1,"source":scope.source,"configPath":if scope.source == "config" { Value::String(".flopeek/config.json".to_string()) } else { Value::Null },"sourceRoots":scope.source_roots,"testRoots":scope.test_roots,"fixtureRoots":scope.fixture_roots,"exclude":scope.exclude,"projectId":scope.project_id,"flowEntries":{"tests":scope.flow_entries_tests,"fixtures":scope.flow_entries_fixtures},"precedence":["excluded","fixture","test","generated","application"],"counts":{"application":status.source_scope_counts.get("application").copied().unwrap_or(0),"test":status.source_scope_counts.get("test").copied().unwrap_or(0),"fixture":status.source_scope_counts.get("fixture").copied().unwrap_or(0),"generated":status.source_scope_counts.get("generated").copied().unwrap_or(0),"excluded":0}},"resolution":{"internal":["relative imports","$lib","@/","tsconfig/jsconfig baseUrl and paths","literal aliases from exported Vite/Webpack configs","safe static Vite/Webpack alias expressions (__dirname, root process.cwd(), path.resolve/join/dirname, new URL/import.meta.url, fileURLToPath(import.meta.url), and constants)","package.json imports aliases","static import/node/default/require/types package condition trees","declared npm and pnpm workspace package entries","static Yarn PnP JSON workspace package entries","Python relative and src-package imports","static Go module packages","static Rust crate/self/super modules in conventional Cargo src roots"],"limitations":["Arbitrary computed Vite/Webpack aliases, custom package conditions, unsupported pnpm YAML constructs, PHP Composer autoloading, Java framework wiring and non-local-static method dispatch, Rust custom Cargo targets and #[path] modules, Go build tags and duplicate package function names, and runtime module loading are not resolved."]},"calls":{"supported":["direct identifier calls to top-level local functions","direct identifier calls to named ES/CommonJS imports resolved inside the repository","direct identifier calls to top-level local Python functions and named Python imports resolved inside the repository","direct local Go function calls and aliased Go package selectors resolved inside the repository","direct local PHP function calls","direct local Rust functions and named crate/self/super imports","direct unqualified unique local static Java method calls"],"limitations":"Java instance/qualified/overloaded method dispatch, Rust macros, qualified module calls, trait dispatch, custom Cargo targets, and #[path] modules, default and namespace imports, PHP Composer/autoloaded functions, Python attribute calls, Go function values, ambiguous package functions, and unaliased package-name mismatches, dependency injection, callbacks, reflection, dynamic loading, and non-literal CommonJS requires are not resolved as call edges."},"entryPoints":status.entry_facts["entryPoints"],"adapterCapabilities":adapter_registry,"capabilities":adapter_registry["adapters"]},
+        "analysis":{"mode":"deterministic","refresh":refresh,"codeInterpretation":"AST-only for registered language adapters","unparsedPolicy":"inventory-only; no dependency or flow is inferred","coverage":coverage,"nativeBoundedPackagePath":package_path,"repositoryScope":{"schemaVersion":1,"source":scope.source,"configPath":if scope.source == "config" { Value::String(".flopeek/config.json".to_string()) } else { Value::Null },"sourceRoots":scope.source_roots,"testRoots":scope.test_roots,"fixtureRoots":scope.fixture_roots,"exclude":scope.exclude,"projectId":scope.project_id,"flowEntries":{"tests":scope.flow_entries_tests,"fixtures":scope.flow_entries_fixtures},"precedence":["excluded","fixture","test","generated","application"],"counts":{"application":status.source_scope_counts.get("application").copied().unwrap_or(0),"test":status.source_scope_counts.get("test").copied().unwrap_or(0),"fixture":status.source_scope_counts.get("fixture").copied().unwrap_or(0),"generated":status.source_scope_counts.get("generated").copied().unwrap_or(0),"excluded":0}},"resolution":{"internal":["relative imports","$lib","@/","tsconfig/jsconfig baseUrl and paths","literal aliases from exported Vite/Webpack configs","safe static Vite/Webpack alias expressions (__dirname, root process.cwd(), path.resolve/join/dirname, new URL/import.meta.url, fileURLToPath(import.meta.url), and constants)","package.json imports aliases","static import/node/default/require/types package condition trees","declared npm and pnpm workspace package entries","static Yarn PnP JSON workspace package entries","Python relative and src-package imports","static Go module packages","static Rust crate/self/super modules in conventional Cargo src roots"],"limitations":["Arbitrary computed Vite/Webpack aliases, custom package conditions, unsupported pnpm YAML constructs, PHP Composer autoloading, Java framework wiring and non-local-static method dispatch, Rust custom Cargo targets and #[path] modules, Go build tags and duplicate package function names, and runtime module loading are not resolved."]},"calls":{"supported":["direct identifier calls to top-level local functions","direct identifier calls to named ES/CommonJS imports resolved inside the repository","direct identifier calls to top-level local Python functions and named ES/CommonJS imports resolved inside the repository","direct local Go function calls and aliased Go package selectors resolved inside the repository","direct local PHP function calls","direct local Rust functions and named crate/self/super imports","direct unqualified unique local static Java method calls"],"limitations":"Java instance/qualified/overloaded method dispatch, Rust macros, qualified module calls, trait dispatch, custom Cargo targets, and #[path] modules, default and namespace imports, PHP Composer/autoloaded functions, Python attribute calls, Go function values, ambiguous package functions, and unaliased package-name mismatches, dependency injection, callbacks, reflection, dynamic loading, and non-literal CommonJS requires are not resolved as call edges."},"entryPoints":status.entry_facts["entryPoints"],"adapterCapabilities":adapter_registry,"capabilities":adapter_registry["adapters"]},
         "stats":{"scannedFiles":summary["scannedFiles"],"parsedFiles":summary["parsedFiles"],"inventoryOnlyFiles":summary["inventoryOnlyFiles"],"parseFailedFiles":summary["parseFailedFiles"]}
     });
+    if let Some(package_path) = package_path {
+        public_graph_context["analysis"]["nativeBoundedPackagePath"] =
+            Value::String(package_path.to_string());
+    } else {
+        public_graph_context["analysis"]
+            .as_object_mut()
+            .expect("native graph analysis is an object")
+            .remove("nativeBoundedPackagePath");
+    }
+    // The compatibility contract is a set of supported call categories. Keep
+    // its public array stable even if adjacent source declarations are merged
+    // while evolving the native envelope.
+    if let Some(supported) = public_graph_context
+        .pointer_mut("/analysis/calls/supported")
+        .and_then(Value::as_array_mut)
+    {
+        supported.dedup();
+        for capability in supported {
+            if capability.as_str()
+                == Some(
+                    "direct identifier calls to top-level local Python functions and named ES/CommonJS imports resolved inside the repository",
+                )
+            {
+                *capability = Value::String(
+                    "direct identifier calls to top-level local Python functions and named Python imports resolved inside the repository".to_string(),
+                );
+            }
+        }
+    }
     let mut batch = json!({
         "schemaVersion":STRUCTURAL_FACT_BATCH_SCHEMA,"projectId":status.project_identity.project_id,"packageCommands":status.entry_facts["packageCommands"],"entryMetadata":status.entry_facts["entryMetadata"],"entryEdgeMetadata":status.entry_facts["edgeMetadata"],"manualDescriptions":native_manual_descriptions(&status.project_root, &status.structural_records),
         "flowContext":{"graphVersion":0,"sourceRevision":git["revision"]},"flowEntries":{"primary":{"tests":scope.flow_entries_tests,"fixtures":scope.flow_entries_fixtures},"diagnostic":{"tests":true,"fixtures":true}},
@@ -708,7 +1240,7 @@ fn string_field<'a>(
         })
 }
 
-fn structural_batch<'a>(params: &'a Value) -> Result<&'a Value, NativeProtocolError> {
+fn structural_batch(params: &Value) -> Result<&Value, NativeProtocolError> {
     match params.get("batch") {
         Some(batch) if batch.is_object() => Ok(batch),
         Some(_) => Err(NativeProtocolError {
@@ -1422,7 +1954,7 @@ fn assemble_native_flows_from_projection(
     for edge in &projection.edges {
         outgoing.entry(edge.source.clone()).or_default().push(edge);
     }
-    let edge_order = structural_edge_traversal_order(batch, &projection);
+    let edge_order = structural_edge_traversal_order(batch, projection);
     for edges in outgoing.values_mut() {
         edges.sort_by_key(|edge| {
             edge_order
@@ -1936,7 +2468,8 @@ fn native_flow_lens_from_assembled(
     let missing_transitions = steps
         .iter()
         .skip(1)
-        .filter_map(|step| step["transition"].is_null().then(|| step["id"].clone()))
+        .filter(|&step| step["transition"].is_null())
+        .map(|step| step["id"].clone())
         .collect::<Vec<_>>();
     let display_truncated = source_steps.len() > displayed.len();
     let source_traversal_may_be_truncated = source_steps.len() >= 24;
@@ -1958,7 +2491,7 @@ fn native_flow_lens_from_assembled(
     let entry_kind = entry["kind"].as_str().unwrap_or("unknown-static-entry");
     let entry_family = entry["family"].as_str().unwrap_or("unknown");
     let declaration = entry["declaration"].as_object();
-    let edge_order = structural_edge_traversal_order(batch, &projection);
+    let edge_order = structural_edge_traversal_order(batch, projection);
     let first_matching_edge = |edge_type: &str| {
         projection
             .edges
@@ -2542,7 +3075,7 @@ fn native_public_delta_history(
     project_id: &str,
     from_version: u64,
     to_version: u64,
-) -> Result<(Option<Value>, Option<(i64, i64)>), NativeProtocolError> {
+) -> Result<NativePublicDeltaHistory, NativeProtocolError> {
     let Some(root) = params
         .get("projectRoot")
         .and_then(Value::as_str)
@@ -2631,7 +3164,7 @@ fn resolve_native_context_ref(params: &Value) -> Result<Value, NativeProtocolErr
             return Ok(native_unresolved_context_ref(
                 requested,
                 error.message,
-                &error.code,
+                error.code,
             ));
         }
     };
@@ -2913,6 +3446,985 @@ fn query_max_depth(params: &Value) -> usize {
         .and_then(Value::as_u64)
         .unwrap_or(6)
         .min(12) as usize
+}
+
+fn native_agent_bootstrap(
+    session: &NativeProtocolSession,
+    params: &Value,
+) -> Result<Value, NativeProtocolError> {
+    // Persistent CoreClient queries carry a verified project handle. Prefer
+    // its current native snapshot over reconstructing a pending projection
+    // from the fact batch: the cached snapshot contains the committed public
+    // lifecycle status and version exposed to the caller.
+    let graph = params
+        .get("projectId")
+        .and_then(Value::as_str)
+        .and_then(|project_id| {
+            session
+                .persistent_graph
+                .as_ref()
+                .filter(|cached| cached.project_id == project_id)
+                .and_then(|cached| cached.public_snapshot.clone())
+        })
+        .map(Ok)
+        .unwrap_or_else(|| {
+            let batch = structural_batch(params)?;
+            submit_structural_facts(batch)?;
+            let payload = assemble_native_public_payload(batch)?;
+            native_public_graph_snapshot(&payload)
+        })?;
+    let declared_scan_outcome = params
+        .get("scanOutcome")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .or_else(|| {
+            graph
+                .pointer("/analysis/scanOutcome")
+                .filter(|value| !value.is_null())
+                .cloned()
+        });
+    let has_scan_outcome = declared_scan_outcome.is_some();
+    let scan_outcome = declared_scan_outcome
+        .unwrap_or_else(|| json!({
+            "status": "unavailable",
+            "reason": "This graph was not produced through a surface that exposes the shared scan-outcome contract.",
+        }));
+    let coverage = graph
+        .pointer("/analysis/coverage")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let coverage_summary = coverage.get("summary").cloned().unwrap_or(Value::Null);
+    let inventory_only = coverage_summary
+        .get("inventoryOnlyFiles")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let parse_failed = coverage_summary
+        .get("parseFailedFiles")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let flow_count = graph
+        .get("flows")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let package_selection = graph
+        .pointer("/analysis/packageSelection")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .or_else(|| scan_outcome.pointer("/discovery/selection").cloned())
+        .unwrap_or(Value::Null);
+    let cache_state = graph.pointer("/analysis/cacheState");
+    let project = graph.get("project").cloned().unwrap_or_else(|| json!({}));
+    let supplied_project = params.get("project").cloned().unwrap_or_else(|| json!({}));
+    let branch = supplied_project
+        .get("branch")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .unwrap_or_else(|| {
+            project
+                .pointer("/git/branch")
+                .cloned()
+                .unwrap_or(Value::Null)
+        });
+    let revision = supplied_project
+        .get("revision")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .unwrap_or_else(|| {
+            project
+                .pointer("/git/revision")
+                .cloned()
+                .or_else(|| graph.pointer("/state/sourceRevision").cloned())
+                .unwrap_or(Value::Null)
+        });
+    let scan_is_available = scan_outcome
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| status == "complete")
+        && scan_outcome
+            .pointer("/activeGraph/freshness")
+            .and_then(Value::as_str)
+            .is_some_and(|freshness| freshness == "current");
+    let attached_head_matched = scan_outcome
+        .pointer("/activeGraph/attachedHeadFreshness/status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| status == "matched");
+    Ok(json!({
+        "schemaVersion": "flopeek-agent-bootstrap/v1",
+        "project": {
+            "projectId": project["projectId"].clone(),
+            "name": project["name"].clone(),
+            "branch": branch,
+            "revision": revision,
+        },
+        "graph": {
+            "schemaVersion": graph["schemaVersion"].clone(),
+            "graphVersion": graph.pointer("/state/graphVersion").cloned().unwrap_or(Value::Null),
+            "status": graph.pointer("/state/status").cloned().unwrap_or_else(|| json!("unknown")),
+            "updatedAt": graph.pointer("/state/updatedAt").cloned().or_else(|| graph.get("generatedAt").cloned()).unwrap_or(Value::Null),
+            "inventory": {
+                "nodes": graph.get("nodes").and_then(Value::as_array).map_or(0, Vec::len),
+                "edges": graph.get("edges").and_then(Value::as_array).map_or(0, Vec::len),
+                "applicationFlows": flow_count,
+                "endpoints": graph.pointer("/stats/endpoints").cloned().unwrap_or_else(|| json!(0)),
+                "commandEntries": graph.pointer("/stats/commandEntries").cloned().unwrap_or_else(|| json!(0)),
+                "scheduledEntries": graph.pointer("/stats/scheduledEntries").cloned().unwrap_or_else(|| json!(0)),
+                "services": graph.pointer("/stats/services").cloned().unwrap_or_else(|| json!(0)),
+                "tests": graph.pointer("/stats/tests").cloned().unwrap_or_else(|| json!(0)),
+            },
+            "cache": {
+                "status": cache_state.and_then(|value| value.get("status")).cloned().unwrap_or_else(|| json!("unknown")),
+                "diagnostics": cache_state.and_then(|value| value.get("diagnostics")).cloned().unwrap_or_else(|| json!([])),
+            },
+            "packageSelection": package_selection,
+        },
+        "readiness": {
+            "graphAvailable": graph.get("nodes").is_some() && graph.get("edges").is_some(),
+            "applicationFlowsAvailable": flow_count > 0,
+            "sourceFallbackRequired": flow_count == 0 || inventory_only > 0 || parse_failed > 0,
+            "currentSourceVerified": if has_scan_outcome { json!(scan_is_available) } else { Value::Null },
+            "attachedHeadVerified": if has_scan_outcome { json!(attached_head_matched) } else { Value::Null },
+        },
+        "scan": scan_outcome,
+        "coverage": {
+            "summary": coverage_summary,
+            "files": coverage.get("files").cloned().unwrap_or(Value::Null),
+            "languages": coverage.get("languages").cloned().or_else(|| coverage.get("byLanguage").cloned()).unwrap_or_else(|| json!([])),
+            "diagnostics": coverage.get("diagnostics").cloned().unwrap_or_else(|| json!([])),
+            "interpretation": "Coverage describes deterministic parser handling for this repository. It is not runtime coverage, behavioral coverage, or a recall guarantee.",
+        },
+        "workflow": [
+            {"step":1,"action":"Orient","tools":["get_scan_status","get_agent_context","get_project_overview"],"purpose":"Read scan freshness, graph identity, parser coverage, and interpretation limits before making claims."},
+            {"step":2,"action":"Focus","tools":["get_handoff_context","find_nodes","get_entry_flows"],"purpose":"Retrieve a bounded task-relevant context instead of reading the entire repository."},
+            {"step":3,"action":"Inspect evidence","tools":["get_node","get_flow_projection","get_flow_context_card","get_related_tests"],"purpose":"Resolve parser facts and Context Refs before planning a source change."},
+            {"step":4,"action":"Continue safely when a checkpoint exists","tools":["get_continuation_context","get_work_dependency_status"],"purpose":"Resolve exact checkpoint context and declared dependency readiness before built-in implementation entry. Ready is local delivery metadata, not source or runtime proof."},
+            {"step":5,"action":"Inspect bounded Git evidence only when needed","tools":["get_active_branch_git_evidence","get_git_context_continuity"],"purpose":"Read local path-touch commits or compare one Context Ref across two static Git snapshots. Neither result proves original rationale, runtime behavior, review, test success, release state, rename, or implementation equivalence."},
+            {"step":6,"action":"Edit outside Flopeek","tools":[],"purpose":"Use the host agent's normal workspace tools. Flopeek exposes no repository-source write or arbitrary shell tool."},
+            {"step":7,"action":"Refresh","tools":["refresh_graph","get_scan_status","get_changed_contexts","get_flow_comparison","get_change_impact"],"purpose":"Advance the graph, confirm source freshness, and inspect bounded before/current static evidence after source edits."},
+            {"step":8,"action":"Verify outside Flopeek","tools":["get_related_tests","record_agent_evidence_trace"],"purpose":"Run repository-owned verification with approved host tools, then record only bounded declared evidence metadata."}
+        ],
+        "policy": {"strategy":"graph-first-with-source-fallback","parserFactsAuthority":"flopeek-deterministic-scanner","agentRole":"consumer-and-proposer","sourceWrites":"not-exposed","targetExecution":"not-exposed","staticIsRuntimeTruth":false,"staticIsBusinessTruth":false,"missingEvidenceMeansMissingBehavior":false,"agentProposalCreatesParserFact":false,"agentProposalCreatesHumanVerification":false},
+        "limitations": [
+            "Static relationships do not prove runtime order, dynamic dispatch, successful side effects, or business intent.",
+            "Inventory-only and unsupported constructs require direct source inspection and, where relevant, runtime or test evidence.",
+            "Context Refs must be resolved again after a graph refresh; stale evidence must not be silently reused.",
+            if package_selection.get("status").and_then(Value::as_str) == Some("selected") { "This graph covers only the selected static package subtree. It does not prove workspace topology, dependency ownership, build activation, or runtime behavior outside that subtree." } else { "This graph covers the configured repository-wide static scope; it does not prove runtime topology or behavior." },
+            "Do not store source bodies, secrets, prompts, private reasoning, or raw command logs in Flopeek metadata."
+        ]
+    }))
+}
+
+fn native_agent_entry_reason_counts(entries: Option<&Vec<Value>>) -> Value {
+    let mut counts = BTreeMap::<String, usize>::new();
+    for entry in entries.into_iter().flatten() {
+        if let Some(reason) = entry.get("reason").and_then(Value::as_str) {
+            *counts.entry(reason.to_string()).or_default() += 1;
+        }
+    }
+    json!(counts)
+}
+
+fn native_agent_entry_inventory(graph: &Value) -> Value {
+    let Some(inventory) = graph
+        .pointer("/analysis/entryPoints")
+        .and_then(Value::as_object)
+    else {
+        return Value::Null;
+    };
+    let supported = inventory.get("supported").and_then(Value::as_object);
+    let unsupported = inventory.get("unsupported").and_then(Value::as_object);
+    let selected = |key: &str, fields: &[&str]| {
+        supported
+            .and_then(|supported| supported.get(key))
+            .and_then(Value::as_array)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .map(|entry| {
+                        let mut item = serde_json::Map::new();
+                        for field in fields {
+                            item.insert(
+                                (*field).to_string(),
+                                entry.get(*field).cloned().unwrap_or(Value::Null),
+                            );
+                        }
+                        Value::Object(item)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+    json!({
+        "schemaVersion": inventory.get("schemaVersion").cloned().unwrap_or(Value::Null),
+        "supported": {
+            "packageScripts": selected("packageScripts", &["id", "manifest", "scriptName", "runner", "targetPath", "targetId"]),
+            "djangoManagementCommands": selected("djangoManagementCommands", &["id", "path", "commandName", "targetPath", "targetId"]),
+            "nodeCronSchedules": selected("nodeCronSchedules", &["id", "path", "expression", "taskName", "targetPath", "targetId"]),
+        },
+        "unsupported": {
+            "packageScriptReasonCounts": native_agent_entry_reason_counts(unsupported.and_then(|items| items.get("packageScripts")).and_then(Value::as_array)),
+            "djangoManagementCommandReasonCounts": native_agent_entry_reason_counts(unsupported.and_then(|items| items.get("djangoManagementCommands")).and_then(Value::as_array)),
+            "nodeCronScheduleReasonCounts": native_agent_entry_reason_counts(unsupported.and_then(|items| items.get("nodeCronSchedules")).and_then(Value::as_array)),
+        },
+        "limitations": inventory.get("limitations").cloned().unwrap_or_else(|| json!([])),
+    })
+}
+
+fn native_agent_context_core(
+    graph: &Value,
+    projection: &Value,
+    mode: &str,
+    scope: &str,
+    focus: Option<&str>,
+) -> Value {
+    let level = projection
+        .pointer("/hierarchy/level")
+        .and_then(Value::as_str)
+        .unwrap_or(if mode == "dependencies" {
+            "symbol"
+        } else {
+            "feature"
+        });
+    let meaning = match mode {
+        "overview" => {
+            "Each visible node is a feature summary that aggregates source nodes. It is not a source file, runtime service, or execution step."
+        }
+        "requests" => {
+            "Each visible node is a feature summary. Edges aggregate supported static entry, HTTP handler, static fetch, import, or usage facts; they do not prove command invocation or end-to-end runtime execution."
+        }
+        _ => {
+            "Each visible node is an original graph node. Edges are direct parser facts for the selected node's neighborhood."
+        }
+    };
+    json!({
+        "schemaVersion": "flopeek-agent-context/v1",
+        "mode": mode,
+        "scope": scope,
+        "level": level,
+        "focusId": focus,
+        "projection": {
+            "meaning": meaning,
+            "visibleNodes": projection.get("nodes").and_then(Value::as_array).map_or(0, Vec::len),
+            "visibleEdges": projection.get("edges").and_then(Value::as_array).map_or(0, Vec::len),
+            "sourceNodesRepresented": projection.get("sourceNodeCount").cloned().unwrap_or_else(|| json!(0)),
+            "aggregation": mode != "dependencies",
+        },
+        "evidencePolicy": {
+            "codeInterpretation": graph.pointer("/analysis/codeInterpretation").cloned().unwrap_or(Value::Null),
+            "unparsedPolicy": graph.pointer("/analysis/unparsedPolicy").cloned().unwrap_or(Value::Null),
+            "rawFacts": "Raw AST relationships use their stored parser, source range, and confidence. Aggregate feature edges are labelled derived.",
+        },
+        "interpretationRules": [
+            "Do not treat a feature summary as a source file, service boundary, or runtime call trace.",
+            "Do not infer business intent or runtime order from import relationships.",
+            "Use get_entry_flows followed by get_flow_projection for a bounded static explanation of a supported HTTP/request, command, or scheduler entry; inspect a step Context Card before changing code.",
+            "Use get_flow_context_card to copy or hand off one versioned bounded flow context; resolve its Context Ref before reusing it after a graph refresh.",
+            "Flow Lens roles, boundaries, branches, and truncation are derived static metadata, not runtime control flow or side-effect proof.",
+            "Semantic flow suggestions are deterministic derived candidates with evidence and abstention; they never constitute or create human verification.",
+            "Semantic suggestion feedback is immutable local human labeling. It can accept, edit, reject, or confirm abstention, but it never creates human verification or model-quality proof by itself.",
+            "Use record_agent_evidence_trace after an agent action to append its Context Ref, declared action, changed paths, and verification result. This is audit metadata, not private reasoning or human verification.",
+            "After refresh_graph advances the graph version, use get_changed_contexts with the adjacent versions before relying on an earlier Flow Lens or Context Card. Its affected statuses are bounded static delta evidence; historical items do not reconstruct a full Context Card.",
+            "Use get_flow_comparison only for a flow captured in the retained adjacent delta. Its before/current sides are bounded static snapshots, not reconstructed runtime history.",
+            "Use a raw node tool before proposing a code change.",
+            "Files marked inventory-only have no inferred dependencies or flows.",
+        ],
+        "adapterCapabilities": graph.pointer("/analysis/adapterCapabilities").cloned().unwrap_or(Value::Null),
+        "capabilities": graph.pointer("/analysis/capabilities").cloned().unwrap_or(Value::Null),
+        "calls": graph.pointer("/analysis/calls").cloned().unwrap_or(Value::Null),
+        "resolution": graph.pointer("/analysis/resolution").cloned().unwrap_or(Value::Null),
+        "coverage": graph.pointer("/analysis/coverage").cloned().unwrap_or(Value::Null),
+        "entryPoints": native_agent_entry_inventory(graph),
+        "repositoryScope": graph.pointer("/analysis/repositoryScope").cloned().unwrap_or(Value::Null),
+        "packageSelection": graph.pointer("/analysis/packageSelection").filter(|value| !value.is_null()).cloned().or_else(|| graph.pointer("/analysis/scanOutcome/discovery/selection").cloned()).unwrap_or(Value::Null),
+        "project": graph.get("project").cloned().unwrap_or(Value::Null),
+        "graphState": graph.get("state").cloned().unwrap_or(Value::Null),
+        "latestDelta": graph.pointer("/analysis/latestDelta").cloned().unwrap_or(Value::Null),
+        "cache": graph.pointer("/analysis/cache").cloned().unwrap_or(Value::Null),
+        "cacheState": graph.pointer("/analysis/cacheState").cloned().unwrap_or(Value::Null),
+        "durableBriefs": {"schemaVersion":"flopeek-brief/v1","kinds":["project","feature","flow","node"],"evidenceClasses":["static-parser-fact","deterministic-inference","human-authored","human-verified","runtime-evidence"],"derivedEvidenceCeiling":"deterministic-inference","freshnessFields":["projectIdentity","sourceBasis","graphVersion","evidenceClass","freshnessStatus"],"compositionSurface":"get_handoff_context"},
+        "handoffWorkspace": {"schemaVersion":"flopeek-handoff-workspace/v1","compositionSurface":"get_handoff_context","localVersioning":"immutable-supersession","humanNotes":"append-only-attributed-supersession","portableFormats":["json","markdown"],"foreignImport":{"access":"read-only","trust":"foreign-unverified","automaticAdoption":false}},
+        "trustAnalytics": {"schemaVersion":"flopeek-trust-analytics/v1","httpEndpoint":"/api/trust-analytics","mcpTool":"get_trust_analytics","purpose":"Inspect evidence availability, provenance, and freshness without collapsing unlike evidence classes into a truth score.","compositeScore":false},
+        "productProof": {"schemaVersion":"flopeek-product-proof/v1","httpEndpoint":"/api/product-proof","mcpTool":"get_product_proof","purpose":"Inspect bounded public benchmark evidence, current-repository facts, feature proof surfaces, reproduction commands, and claim boundaries."},
+    })
+}
+
+const NATIVE_VIEW_PROJECTION_SCHEMA: &str = "flopeek-native-view-projection-core/v1";
+
+fn native_view_graph(
+    session: &NativeProtocolSession,
+    params: &Value,
+) -> Result<Value, NativeProtocolError> {
+    params
+        .get("projectId")
+        .and_then(Value::as_str)
+        .and_then(|project_id| {
+            session
+                .persistent_graph
+                .as_ref()
+                .filter(|cached| cached.project_id == project_id)
+                .and_then(|cached| cached.public_snapshot.clone())
+        })
+        .map(Ok)
+        .unwrap_or_else(|| {
+            let batch = structural_batch(params)?;
+            submit_structural_facts(batch)?;
+            native_public_graph_snapshot(&assemble_native_public_payload(batch)?)
+        })
+}
+
+fn native_view_option<'a>(params: &'a Value, key: &str, fallback: &'a str) -> &'a str {
+    params.get(key).and_then(Value::as_str).unwrap_or(fallback)
+}
+
+fn native_scope_visible(node: &Value, scope: &str) -> bool {
+    let layer = node
+        .get("layer")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    match scope {
+        "all" => matches!(
+            layer,
+            "application"
+                | "runtime"
+                | "framework"
+                | "devtool"
+                | "package"
+                | "test"
+                | "fixture"
+                | "generated"
+        ),
+        "runtime" => matches!(layer, "application" | "runtime"),
+        "framework" => matches!(layer, "application" | "framework"),
+        "devtool" => matches!(layer, "application" | "devtool"),
+        _ => layer == "application",
+    }
+}
+
+fn native_capitalise(value: &str) -> String {
+    let mut characters = value.chars();
+    match characters.next() {
+        Some(first) => format!("{}{}", first.to_uppercase(), characters.as_str()),
+        None => String::new(),
+    }
+}
+
+fn native_humanize_segment(value: &str) -> String {
+    if value == "api" {
+        return "API".to_string();
+    }
+    value
+        .split('-')
+        .map(native_capitalise)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn native_feature_key(node: &Value) -> String {
+    if let Some(feature) = node.get("feature").and_then(Value::as_str) {
+        return feature.to_string();
+    }
+    if node.get("kind").and_then(Value::as_str) == Some("external") {
+        return format!(
+            "{}/{}",
+            value_string(node, "layer"),
+            value_string(node, "label").to_lowercase()
+        );
+    }
+    value_string(node, "domain").if_empty("project")
+}
+
+trait NativeStringFallback {
+    fn if_empty(self, fallback: &str) -> String;
+}
+impl NativeStringFallback for String {
+    fn if_empty(self, fallback: &str) -> String {
+        if self.is_empty() {
+            fallback.to_string()
+        } else {
+            self
+        }
+    }
+}
+
+fn native_domain_key(node: &Value) -> String {
+    value_string(node, "domain").if_empty("project")
+}
+
+fn native_component_key(node: &Value) -> String {
+    let path = value_string(node, "path");
+    if path.is_empty() {
+        return value_string(node, "type").if_empty("external");
+    }
+    let mut segments = path.split('/').collect::<Vec<_>>();
+    segments.pop();
+    if segments.is_empty() {
+        "root".to_string()
+    } else {
+        segments.join("/")
+    }
+}
+
+fn native_feature_label(key: &str) -> String {
+    match key {
+        "overview/http-api" => "HTTP API".to_string(),
+        "overview/ui" => "UI Components".to_string(),
+        "overview/pages" => "Application Pages".to_string(),
+        "overview/library" => "Shared Library".to_string(),
+        "overview/data" => "Data Layer".to_string(),
+        "overview/server-actions" => "Server Actions".to_string(),
+        "overview/hooks" => "Hooks".to_string(),
+        "overview/types" => "Types".to_string(),
+        "overview/project" => "Application Core".to_string(),
+        _ => key
+            .split('/')
+            .map(native_humanize_segment)
+            .collect::<Vec<_>>()
+            .join(" · "),
+    }
+}
+
+fn native_uri_component(value: &str) -> String {
+    value
+        .bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'_'
+            | b'.'
+            | b'!'
+            | b'~'
+            | b'*'
+            | b'\''
+            | b'('
+            | b')' => (byte as char).to_string(),
+            _ => format!("%{byte:02X}"),
+        })
+        .collect()
+}
+
+fn native_hierarchy_id(level: &str, parts: &[String]) -> String {
+    format!(
+        "{level}:{}",
+        parts
+            .iter()
+            .map(|part| native_uri_component(part))
+            .collect::<Vec<_>>()
+            .join(":")
+    )
+}
+
+fn native_hierarchy_parts(key: &str) -> Vec<String> {
+    key.split('\0').map(ToString::to_string).collect()
+}
+
+fn native_semantic_label(level: &str, key: &str) -> String {
+    let parts = native_hierarchy_parts(key);
+    match level {
+        "domain" => native_humanize_segment(key),
+        "feature" => native_feature_label(
+            parts
+                .get(1)
+                .unwrap_or(parts.first().unwrap_or(&String::new())),
+        ),
+        _ => {
+            let component = parts.get(2).map(String::as_str).unwrap_or("root");
+            format!(
+                "{} / {}",
+                native_feature_label(parts.get(1).map(String::as_str).unwrap_or_default()),
+                component
+                    .split('/')
+                    .map(native_humanize_segment)
+                    .collect::<Vec<_>>()
+                    .join(" / ")
+            )
+        }
+    }
+}
+
+fn native_parent_hierarchy_id(level: &str, key: &str) -> Value {
+    let parts = native_hierarchy_parts(key);
+    match level {
+        "feature" => json!(native_hierarchy_id(
+            "domain",
+            &[parts.first().cloned().unwrap_or_default()]
+        )),
+        "component" => json!(native_hierarchy_id(
+            "feature",
+            &[
+                parts.first().cloned().unwrap_or_default(),
+                parts.get(1).cloned().unwrap_or_default()
+            ]
+        )),
+        _ => Value::Null,
+    }
+}
+
+fn native_decode_component(value: &str) -> String {
+    let mut bytes = Vec::new();
+    let input = value.as_bytes();
+    let mut index = 0;
+    while index < input.len() {
+        if input[index] == b'%' && index + 2 < input.len() {
+            if let Ok(byte) = u8::from_str_radix(&value[index + 1..index + 3], 16) {
+                bytes.push(byte);
+                index += 3;
+                continue;
+            }
+        }
+        bytes.push(input[index]);
+        index += 1;
+    }
+    String::from_utf8(bytes).unwrap_or_else(|_| value.to_string())
+}
+
+fn native_focus_matches(node: &Value, focus: Option<&str>) -> bool {
+    let Some(focus) = focus.filter(|value| !value.is_empty()) else {
+        return true;
+    };
+    let parts = focus.split(':').collect::<Vec<_>>();
+    if parts.len() > 1 {
+        let decoded = parts[1..]
+            .iter()
+            .map(|part| native_decode_component(part))
+            .collect::<Vec<_>>();
+        match parts[0] {
+            "domain" => {
+                return native_domain_key(node) == decoded.first().cloned().unwrap_or_default();
+            }
+            "feature" => {
+                return native_domain_key(node) == decoded.first().cloned().unwrap_or_default()
+                    && native_feature_key(node) == decoded.get(1).cloned().unwrap_or_default();
+            }
+            "component" => {
+                return native_domain_key(node) == decoded.first().cloned().unwrap_or_default()
+                    && native_feature_key(node) == decoded.get(1).cloned().unwrap_or_default()
+                    && native_component_key(node) == decoded.get(2).cloned().unwrap_or_default();
+            }
+            _ => {}
+        }
+    }
+    if let Some(id) = focus.strip_prefix("domain:") {
+        return native_domain_key(node) == id;
+    }
+    if let Some(id) = focus.strip_prefix("feature:") {
+        return native_feature_key(node) == id;
+    }
+    if let Some(id) = focus.strip_prefix("component:") {
+        return native_component_key(node) == id;
+    }
+    value_string(node, "id") == focus
+}
+
+fn native_supported_flow_entry(node: &Value) -> bool {
+    let kind = node.get("kind").and_then(Value::as_str);
+    let entry = node.get("entryKind").and_then(Value::as_str);
+    kind == Some("endpoint")
+        || (kind == Some("command")
+            && matches!(
+                entry,
+                Some("package-script" | "django-management-command" | "framework-command")
+            ))
+        || (kind == Some("schedule") && entry == Some("node-cron-schedule"))
+}
+
+// Match entrySourceNodes(): expand declared entry links, then apply its single
+// ordered parser-fact pass. Earlier edges can admit a source for a later edge,
+// but this remains static selection rather than a runtime execution model.
+fn native_entry_source_nodes(graph: &Value, visible: &[Value]) -> Vec<Value> {
+    let visible_ids = visible
+        .iter()
+        .map(|node| value_string(node, "id"))
+        .collect::<BTreeSet<_>>();
+    let mut included = visible
+        .iter()
+        .filter(|node| {
+            node.get("type").and_then(Value::as_str) != Some("test")
+                && native_supported_flow_entry(node)
+        })
+        .map(|node| value_string(node, "id"))
+        .collect::<BTreeSet<_>>();
+    let edges = graph
+        .get("edges")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for edge in &edges {
+        let source = value_string(edge, "source");
+        let target = value_string(edge, "target");
+        let edge_type = value_string(edge, "type");
+        if (matches!(
+            edge_type.as_str(),
+            "handles" | "declares-command-target" | "schedules"
+        ) && included.contains(&source)
+            && visible_ids.contains(&target))
+            || (edge_type == "requests"
+                && included.contains(&target)
+                && visible_ids.contains(&source))
+        {
+            included.insert(if edge_type == "requests" {
+                source
+            } else {
+                target
+            });
+        }
+    }
+    for edge in &edges {
+        let source = value_string(edge, "source");
+        let target = value_string(edge, "target");
+        if included.contains(&source)
+            && matches!(
+                value_string(edge, "type").as_str(),
+                "imports" | "uses" | "contains" | "calls"
+            )
+            && visible_ids.contains(&target)
+        {
+            included.insert(target);
+        }
+    }
+    visible
+        .iter()
+        .filter(|node| included.contains(&value_string(node, "id")))
+        .cloned()
+        .collect()
+}
+
+fn native_summary_type(members: &[Value], key: &str) -> String {
+    if members
+        .iter()
+        .any(|node| node.get("kind").and_then(Value::as_str) == Some("endpoint"))
+    {
+        return "endpoint".to_string();
+    }
+    if members
+        .iter()
+        .any(|node| node.get("kind").and_then(Value::as_str) == Some("command"))
+    {
+        return "command".to_string();
+    }
+    if key.starts_with("data") {
+        return "database".to_string();
+    }
+    if key.starts_with("runtime") {
+        return "external".to_string();
+    }
+    if members
+        .iter()
+        .any(|node| node.get("type").and_then(Value::as_str) == Some("service"))
+    {
+        return "service".to_string();
+    }
+    if members
+        .iter()
+        .any(|node| node.get("type").and_then(Value::as_str) == Some("repository"))
+    {
+        return "repository".to_string();
+    }
+    "feature".to_string()
+}
+
+fn native_aggregate_projection(
+    graph: &Value,
+    source_nodes: &[Value],
+    mode: &str,
+    scope: &str,
+    level: &str,
+) -> Value {
+    let mut groups = BTreeMap::<String, Vec<Value>>::new();
+    for node in source_nodes {
+        let key = match level {
+            "domain" => native_domain_key(node),
+            "component" => format!(
+                "{}\0{}\0{}",
+                native_domain_key(node),
+                native_feature_key(node),
+                native_component_key(node)
+            ),
+            _ => format!("{}\0{}", native_domain_key(node), native_feature_key(node)),
+        };
+        groups.entry(key).or_default().push(node.clone());
+    }
+    let mut keys = groups.keys().cloned().collect::<Vec<_>>();
+    keys.sort_by(|left, right| javascript_ascii_locale_cmp(left, right));
+    let mut member_to_summary = BTreeMap::new();
+    let mut nodes = Vec::new();
+    for key in keys {
+        let members = &groups[&key];
+        let parts = native_hierarchy_parts(&key);
+        let id_parts = if level == "domain" {
+            vec![key.clone()]
+        } else {
+            parts.clone()
+        };
+        let id = native_hierarchy_id(level, &id_parts);
+        for member in members {
+            member_to_summary.insert(value_string(member, "id"), id.clone());
+        }
+        let mut types = members
+            .iter()
+            .map(|member| value_string(member, "type"))
+            .collect::<Vec<_>>();
+        types.sort();
+        types.dedup();
+        let type_counts = types
+            .iter()
+            .map(|kind| {
+                (
+                    kind.clone(),
+                    json!(
+                        members
+                            .iter()
+                            .filter(|member| value_string(member, "type") == *kind)
+                            .count()
+                    ),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        nodes.push(json!({"id":id,"kind":"summary","type":native_summary_type(members, &key),"label":native_semantic_label(level, &key),"feature":key,"layer":"projection","memberCount":members.len(),"members":members.iter().take(12).map(member_summary_value).collect::<Vec<_>>(),"memberIds":members.iter().map(|member| member["id"].clone()).collect::<Vec<_>>(),"typeCounts":type_counts,"detectedResponsibility":format!("Feature summary of {} source node{}.", members.len(), if members.len() == 1 { "" } else { "s" }),"analysis":{"parser":"flopeek-projection","status":"aggregate","confidence":"derived"},"hierarchy":{"level":level,"key":key,"parentId":native_parent_hierarchy_id(level, &key)}}));
+    }
+    let mut edge_map = BTreeMap::<(String, String), (BTreeMap<String, usize>, usize)>::new();
+    for edge in graph
+        .get("edges")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let source = member_to_summary.get(&value_string(edge, "source"));
+        let target = member_to_summary.get(&value_string(edge, "target"));
+        let (Some(source), Some(target)) = (source, target) else {
+            continue;
+        };
+        if source == target {
+            continue;
+        }
+        let item = edge_map
+            .entry((source.clone(), target.clone()))
+            .or_insert_with(|| (BTreeMap::new(), 0));
+        item.1 += 1;
+        *item.0.entry(value_string(edge, "type")).or_default() += 1;
+    }
+    let edges = edge_map.into_iter().map(|((source, target), (type_counts, count))| { let types = type_counts.keys().cloned().collect::<Vec<_>>(); json!({"id":format!("{source}|{target}"),"source":source,"target":target,"type":if types.len() == 1 { types[0].clone() } else { "mixed".to_string() },"types":types,"count":count,"label":format!("{count} {}", if count == 1 { "relationship" } else { "relationships" }),"confidence":"derived","evidence":{"kind":"aggregate","sourceEdgeCount":count}}) }).collect::<Vec<_>>();
+    json!({"nodes":nodes,"edges":edges,"sourceNodeCount":source_nodes.len(),"mode":mode,"scope":scope})
+}
+
+fn native_projection_limit(
+    params: &Value,
+    key: &str,
+    fallback: usize,
+    maximum: usize,
+) -> Result<usize, NativeProtocolError> {
+    let Some(value) = params.get(key).filter(|value| !value.is_null()) else {
+        return Ok(fallback);
+    };
+    let parsed = value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|value| value.parse().ok()));
+    match parsed.filter(|value| *value >= 1 && (*value as usize) <= maximum) {
+        Some(value) => Ok(value as usize),
+        None => Err(NativeProtocolError {
+            code: "invalid-view-bound",
+            message: format!("{key} must be an integer from 1 through {maximum}."),
+        }),
+    }
+}
+
+fn native_bounded_projection(
+    mut projection: Value,
+    params: &Value,
+) -> Result<Value, NativeProtocolError> {
+    let max_nodes = native_projection_limit(params, "maxNodes", 40, 100)?;
+    let max_edges = native_projection_limit(params, "maxEdges", 80, 200)?;
+    let focus = projection
+        .get("focusId")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let mut nodes = projection
+        .get("nodes")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    nodes.sort_by(|left, right| {
+        let left_id = value_string(left, "id");
+        let right_id = value_string(right, "id");
+        if left_id == focus {
+            std::cmp::Ordering::Less
+        } else if right_id == focus {
+            std::cmp::Ordering::Greater
+        } else {
+            javascript_ascii_locale_cmp(&left_id, &right_id)
+        }
+    });
+    let all_node_count = nodes.len();
+    let omitted_nodes = nodes
+        .iter()
+        .skip(max_nodes)
+        .map(|node| node["id"].clone())
+        .collect::<Vec<_>>();
+    nodes.truncate(max_nodes);
+    let node_ids = nodes
+        .iter()
+        .map(|node| value_string(node, "id"))
+        .collect::<BTreeSet<_>>();
+    let original_edges = projection
+        .get("edges")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut edges = original_edges
+        .iter()
+        .filter(|edge| {
+            node_ids.contains(&value_string(edge, "source"))
+                && node_ids.contains(&value_string(edge, "target"))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let edge_order_key = |edge: &Value| {
+        let id = value_string(edge, "id");
+        if id.is_empty() {
+            format!(
+                "{}\0{}\0{}",
+                value_string(edge, "source"),
+                value_string(edge, "target"),
+                value_string(edge, "type")
+            )
+        } else {
+            id
+        }
+    };
+    edges.sort_by(|left, right| {
+        javascript_ascii_locale_cmp(&edge_order_key(left), &edge_order_key(right))
+    });
+    let eligible_edge_count = edges.len();
+    let omitted_edges = edges
+        .iter()
+        .skip(max_edges)
+        .map(|edge| {
+            let id = value_string(edge, "id");
+            if id.is_empty() {
+                Value::String(edge_order_key(edge))
+            } else {
+                Value::String(id)
+            }
+        })
+        .collect::<Vec<_>>();
+    edges.truncate(max_edges);
+    let unavailable_edges = original_edges.len().saturating_sub(eligible_edge_count);
+    let truncated = !omitted_nodes.is_empty() || !omitted_edges.is_empty() || unavailable_edges > 0;
+    projection["nodes"] = json!(nodes);
+    projection["edges"] = json!(edges);
+    projection["display"] = json!({"bounds":{"maxNodes":max_nodes,"maxEdges":max_edges,"hardMaxNodes":100,"hardMaxEdges":200},"catalog":{"nodes":{"total":all_node_count,"returned":projection["nodes"].as_array().map_or(0, Vec::len),"omitted":omitted_nodes.len(),"sampleOmittedIds":omitted_nodes.into_iter().take(12).collect::<Vec<_>>()},"edges":{"total":original_edges.len(),"eligible":eligible_edge_count,"returned":projection["edges"].as_array().map_or(0, Vec::len),"omitted":omitted_edges.len(),"omittedBecauseNodeBound":unavailable_edges,"sampleOmittedIds":omitted_edges.into_iter().take(12).collect::<Vec<_>>()},"truncated":truncated,"warning":if truncated { Value::String("This view is bounded. Use focus, scope, Flow Lens, or a smaller hierarchy level to inspect omitted static evidence.".to_string()) } else { Value::Null }}});
+    Ok(projection)
+}
+
+fn native_project_overview_core(
+    session: &NativeProtocolSession,
+    params: &Value,
+) -> Result<Value, NativeProtocolError> {
+    let graph = native_view_graph(session, params)?;
+    let mode = match native_view_option(params, "mode", "overview") {
+        "overview" | "requests" | "dependencies" => native_view_option(params, "mode", "overview"),
+        _ => "overview",
+    };
+    let scope = match native_view_option(params, "scope", "application") {
+        "application" | "runtime" | "framework" | "devtool" | "all" => {
+            native_view_option(params, "scope", "application")
+        }
+        _ => "application",
+    };
+    let focus = params
+        .get("focus")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty());
+    let level = if mode == "dependencies" {
+        "symbol"
+    } else {
+        match native_view_option(params, "level", "feature") {
+            "domain" | "feature" | "component" | "symbol" => {
+                native_view_option(params, "level", "feature")
+            }
+            _ => "feature",
+        }
+    };
+    let graph_nodes = graph
+        .get("nodes")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let visible = graph_nodes
+        .iter()
+        .filter(|node| native_scope_visible(node, scope))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut projection = if mode == "dependencies" {
+        if let Some(focus_node) = visible
+            .iter()
+            .find(|node| value_string(node, "id") == focus.unwrap_or_default())
+        {
+            let visible_ids = visible
+                .iter()
+                .map(|node| value_string(node, "id"))
+                .collect::<BTreeSet<_>>();
+            let focus_id = value_string(focus_node, "id");
+            let edges = graph
+                .get("edges")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|edge| {
+                    (value_string(edge, "source") == focus_id
+                        || value_string(edge, "target") == focus_id)
+                        && visible_ids.contains(&value_string(edge, "source"))
+                        && visible_ids.contains(&value_string(edge, "target"))
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let ids = edges
+                .iter()
+                .flat_map(|edge| [value_string(edge, "source"), value_string(edge, "target")])
+                .chain(std::iter::once(focus_id.clone()))
+                .collect::<BTreeSet<_>>();
+            json!({"nodes":visible.iter().filter(|node| ids.contains(&value_string(node, "id"))).cloned().collect::<Vec<_>>(),"edges":edges,"sourceNodeCount":ids.len(),"focusId":focus_id})
+        } else {
+            json!({"nodes":[],"edges":[],"sourceNodeCount":0,"emptyState":"Search for a file, endpoint, or service, then select it to inspect direct dependencies."})
+        }
+    } else {
+        let candidates = if mode == "requests" {
+            native_entry_source_nodes(&graph, &visible)
+        } else {
+            visible
+        };
+        let source_nodes = candidates
+            .into_iter()
+            .filter(|node| native_focus_matches(node, focus))
+            .collect::<Vec<_>>();
+        if level == "symbol" {
+            let ids = source_nodes
+                .iter()
+                .map(|node| value_string(node, "id"))
+                .collect::<BTreeSet<_>>();
+            json!({"nodes":source_nodes.iter().map(|node| { let mut node = node.clone(); node["hierarchy"] = json!({"level":"symbol","parentId":focus}); node }).collect::<Vec<_>>(),"edges":graph.get("edges").and_then(Value::as_array).into_iter().flatten().filter(|edge| ids.contains(&value_string(edge, "source")) && ids.contains(&value_string(edge, "target"))).cloned().collect::<Vec<_>>(),"sourceNodeCount":source_nodes.len(),"mode":mode,"scope":scope,"focusId":focus,"hierarchy":{"level":level,"parentFocusId":focus}})
+        } else {
+            let mut aggregate =
+                native_aggregate_projection(&graph, &source_nodes, mode, scope, level);
+            aggregate["focusId"] = json!(focus);
+            aggregate["hierarchy"] = json!({"level":level,"parentFocusId":focus});
+            aggregate
+        }
+    };
+    projection = native_bounded_projection(projection, params)?;
+    let agent_context_core = native_agent_context_core(&graph, &projection, mode, scope, focus);
+    let available_flows = if scope == "all" {
+        graph.get("diagnosticFlows").or_else(|| graph.get("flows"))
+    } else {
+        graph.get("flows")
+    }
+    .and_then(Value::as_array)
+    .cloned()
+    .unwrap_or_default();
+    Ok(
+        json!({"schemaVersion":NATIVE_VIEW_PROJECTION_SCHEMA,"generatedAt":graph["generatedAt"].clone(),"project":graph["project"].clone(),"stats":graph["stats"].clone(),"nodes":projection["nodes"].clone(),"edges":projection["edges"].clone(),"flows":available_flows,"flowCatalog":{"total":available_flows.len(),"returned":available_flows.len(),"omittedFlowIds":[],"truncated":false,"warning":Value::Null},"basis":{"projectId":graph["project"]["projectId"].clone(),"graphVersion":graph["state"]["graphVersion"].clone(),"sourceFingerprint":graph["state"]["sourceFingerprint"].clone()},"display":projection["display"].clone(),"view":{"mode":mode,"scope":scope,"level":level,"focusId":focus,"sourceNodeCount":projection["sourceNodeCount"].clone(),"emptyState":projection.get("emptyState").cloned().unwrap_or(Value::Null),"hierarchy":projection.get("hierarchy").cloned().unwrap_or_else(|| json!({"level":level,"parentFocusId":Value::Null}))},"agentContextCore":agent_context_core}),
+    )
 }
 
 fn impact_node(
@@ -3386,16 +4898,18 @@ fn native_public_collection_patch(previous: &Value, current: &Value) -> Option<V
             .filter(|key| previous_by_key.contains_key(*key))
             .collect::<Vec<_>>();
         let stable_retained_order = retained_previous == retained_current;
-        let inserts = stable_retained_order
-            .then(|| {
+        let inserts = if stable_retained_order {
+            {
                 current_order
                     .iter()
                     .enumerate()
                     .filter(|(_, key)| !previous_by_key.contains_key(*key))
                     .map(|(index, key)| json!({ "key": key, "index": index }))
                     .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+            }
+        } else {
+            Default::default()
+        };
         collections.insert(
             field.to_string(),
             json!({
@@ -3494,18 +5008,21 @@ fn persist_reused_structural_projection(
                 message: error.to_string(),
             }
         })?;
+    let structural_batch = structural_batch(params)?;
     let promotion_timing = promote_graph_build_with_changed_records(
         connection,
-        project_id,
-        candidate.graph_version,
-        public_graph_version,
-        &projection,
-        &projection_digest,
-        Some(&adjacent_delta),
-        Some(facts_digest),
-        Some(structural_batch(params)?),
-        changed_record_paths,
-        true,
+        NativeGraphPromotionRequest {
+            project_id,
+            graph_version: candidate.graph_version,
+            public_graph_version,
+            payload: &projection,
+            compatibility_digest: &projection_digest,
+            adjacent_delta: Some(&adjacent_delta),
+            facts_digest: Some(facts_digest),
+            structural_batch: Some(structural_batch),
+            changed_record_paths,
+            reuse_public_components: true,
+        },
     )
     .map_err(|error| NativeProtocolError {
         code: "store-promote-failed",
@@ -3554,15 +5071,19 @@ fn persist_reused_structural_projection(
     })
 }
 
+struct PersistStructuralGraphOptions<'a> {
+    validated_receipt: Option<Value>,
+    previous_projection: Option<&'a Value>,
+    previous_public_snapshot: Option<&'a Value>,
+    reuse_previous_projection: bool,
+    isolated_incremental_path: Option<&'a str>,
+    changed_record_paths: Option<&'a BTreeSet<String>>,
+}
+
 fn persist_structural_graph_internal(
     params: &Value,
     connection: &mut rusqlite::Connection,
-    validated_receipt: Option<Value>,
-    previous_projection: Option<&Value>,
-    previous_public_snapshot: Option<&Value>,
-    reuse_previous_projection: bool,
-    isolated_incremental_path: Option<&str>,
-    changed_record_paths: Option<&BTreeSet<String>>,
+    options: PersistStructuralGraphOptions<'_>,
 ) -> Result<PersistedStructuralGraph, NativeProtocolError> {
     let started = Instant::now();
     // persistNativePublicGraph has already validated the exact same material
@@ -3571,30 +5092,36 @@ fn persist_structural_graph_internal(
     // mutations before this call are flowContext.graphVersion and
     // publicGraphContext.state, both intentionally excluded from the material
     // digest by structural_facts_canonical_json.
-    let receipt = match validated_receipt {
+    let receipt = match options.validated_receipt {
         Some(receipt) => receipt,
         None => submit_structural_facts(params)?,
     };
-    if reuse_previous_projection {
-        let previous = previous_projection.ok_or_else(|| NativeProtocolError {
+    if options.reuse_previous_projection {
+        let previous =
+            options.previous_projection.ok_or_else(|| {
+                NativeProtocolError {
             code: "store-integrity-failed",
             message:
                 "A structural projection reuse request requires the current complete projection."
                     .to_string(),
-        })?;
+        }
+            })?;
         return persist_reused_structural_projection(
             params,
             connection,
             receipt,
             previous,
-            previous_public_snapshot,
-            changed_record_paths,
+            options.previous_public_snapshot,
+            options.changed_record_paths,
         );
     }
     let fact_validation_ms = elapsed_ms(started);
     let batch = structural_batch(params)?;
     let assembly_started = Instant::now();
-    let graph = match (isolated_incremental_path, previous_projection) {
+    let graph = match (
+        options.isolated_incremental_path,
+        options.previous_projection,
+    ) {
         (Some(path), Some(previous)) => build_isolated_incremental_graph(batch, previous, path)?,
         _ => build_structural_graph(batch).map_err(|message| NativeProtocolError {
             code: "structural-graph-failed",
@@ -3685,7 +5212,7 @@ fn persist_structural_graph_internal(
         })?;
     let persistence_started = Instant::now();
     let previous = if let Some(current) =
-        current_complete_graph(&connection, project_id).map_err(|error| NativeProtocolError {
+        current_complete_graph(connection, project_id).map_err(|error| NativeProtocolError {
             code: "store-read-failed",
             message: error.to_string(),
         })? {
@@ -3718,7 +5245,8 @@ fn persist_structural_graph_internal(
     // projection. Reconstruct its public arrays once for both delta evidence
     // and the optional compact transport patch; never let this optimization
     // alter the complete SQLite candidate.
-    let previous_public_snapshot = previous_projection
+    let previous_public_snapshot = options
+        .previous_projection
         .map(native_public_graph_snapshot)
         .transpose()?;
     let public_collection_patch = previous_public_snapshot
@@ -3730,7 +5258,7 @@ fn persist_structural_graph_internal(
         .as_ref()
         .map(|previous| {
             if let (Some(cached), Some(previous_public)) =
-                (previous_projection, previous_public_snapshot.as_ref())
+                (options.previous_projection, previous_public_snapshot.as_ref())
             {
                 return native_public_graph_delta_from_public_snapshots(
                     cached,
@@ -3739,7 +5267,7 @@ fn persist_structural_graph_internal(
                     &public_snapshot,
                 );
             }
-            let stored = complete_graph_payload(&connection, project_id, previous.graph_version)
+            let stored = complete_graph_payload(connection, project_id, previous.graph_version)
                 .map_err(|error| NativeProtocolError {
                     code: "store-read-failed",
                     message: error.to_string(),
@@ -3771,18 +5299,21 @@ fn persist_structural_graph_internal(
                 message: error.to_string(),
             }
         })?;
+    let structural_batch = structural_batch(params)?;
     let promotion_timing = promote_graph_build_with_changed_records(
         connection,
-        project_id,
-        candidate.graph_version,
-        public_graph_version,
-        &projection,
-        &projection_digest,
-        adjacent_delta.as_ref(),
-        Some(facts_digest),
-        Some(structural_batch(params)?),
-        changed_record_paths,
-        false,
+        NativeGraphPromotionRequest {
+            project_id,
+            graph_version: candidate.graph_version,
+            public_graph_version,
+            payload: &projection,
+            compatibility_digest: &projection_digest,
+            adjacent_delta: adjacent_delta.as_ref(),
+            facts_digest: Some(facts_digest),
+            structural_batch: Some(structural_batch),
+            changed_record_paths: options.changed_record_paths,
+            reuse_public_components: false,
+        },
     )
     .map_err(|error| NativeProtocolError {
         code: "store-promote-failed",
@@ -3830,12 +5361,14 @@ fn persist_structural_graph(params: &Value) -> Result<Value, NativeProtocolError
     Ok(persist_structural_graph_internal(
         params,
         &mut connection,
-        None,
-        None,
-        None,
-        false,
-        None,
-        None,
+        PersistStructuralGraphOptions {
+            validated_receipt: None,
+            previous_projection: None,
+            previous_public_snapshot: None,
+            reuse_previous_projection: false,
+            isolated_incremental_path: None,
+            changed_record_paths: None,
+        },
     )?
     .receipt)
 }
@@ -4301,10 +5834,37 @@ fn persist_native_public_graph_with_receipt(
     retain_persistent_facts: bool,
     verified_topology_digest: Option<String>,
 ) -> Result<Value, NativeProtocolError> {
+    let root = project_root(params)?;
+    let mut connection = open_native_store(&root).map_err(|error| NativeProtocolError {
+        code: "store-initialize-failed",
+        message: error.to_string(),
+    })?;
+    persist_native_public_graph_with_receipt_using_connection(
+        session,
+        params,
+        receipt,
+        retain_persistent_facts,
+        verified_topology_digest,
+        None,
+        &mut connection,
+    )
+}
+
+fn persist_native_public_graph_with_receipt_using_connection(
+    session: &mut NativeProtocolSession,
+    params: &mut Value,
+    receipt: Value,
+    retain_persistent_facts: bool,
+    verified_topology_digest: Option<String>,
+    changed_record_paths_override: Option<BTreeSet<String>>,
+    connection: &mut rusqlite::Connection,
+) -> Result<Value, NativeProtocolError> {
     let lifecycle_started = Instant::now();
     let preflight_started = Instant::now();
-    let changed_record_paths = native_fact_patch_changed_paths(params)?;
-    let root = project_root(params)?;
+    let changed_record_paths = match changed_record_paths_override {
+        Some(paths) => Some(paths),
+        None => native_fact_patch_changed_paths(params)?,
+    };
     let project_id = receipt
         .get("projectId")
         .and_then(Value::as_str)
@@ -4323,18 +5883,14 @@ fn persist_native_public_graph_with_receipt(
         })?;
     let preflight_validation_ms = elapsed_ms(preflight_started);
     let store_preparation_started = Instant::now();
-    let mut connection = open_native_store(&root).map_err(|error| NativeProtocolError {
-        code: "store-initialize-failed",
-        message: error.to_string(),
-    })?;
-    recover_incomplete_graph_builds(&mut connection, &project_id).map_err(|error| {
+    recover_incomplete_graph_builds(connection, &project_id).map_err(|error| {
         NativeProtocolError {
             code: "store-recovery-failed",
             message: error.to_string(),
         }
     })?;
     let current =
-        current_complete_graph(&connection, &project_id).map_err(|error| NativeProtocolError {
+        current_complete_graph(connection, &project_id).map_err(|error| NativeProtocolError {
             code: "store-read-failed",
             message: error.to_string(),
         })?;
@@ -4371,7 +5927,7 @@ fn persist_native_public_graph_with_receipt(
         let current = current.expect("unchanged requires a complete graph");
         versioned_native_lifecycle_params(params, public_graph_version, &facts_digest)?;
         let persistent_payload_cache_hit =
-            ensure_persistent_payload(session, &connection, &project_id, current.graph_version)?;
+            ensure_persistent_payload(session, connection, &project_id, current.graph_version)?;
         let persistent = session
             .persistent_graph
             .as_ref()
@@ -4505,7 +6061,7 @@ fn persist_native_public_graph_with_receipt(
     let mut persistent_payload_cache_hit = false;
     let previous_projection = if let Some(previous) = current.as_ref() {
         let cache_hit =
-            ensure_persistent_payload(session, &connection, &project_id, previous.graph_version)?;
+            ensure_persistent_payload(session, connection, &project_id, previous.graph_version)?;
         persistent_payload_cache_hit = cache_hit;
         Some(
             &session
@@ -4534,13 +6090,15 @@ fn persist_native_public_graph_with_receipt(
     let versioning_ms = elapsed_ms(versioning_started);
     let mut stored = persist_structural_graph_internal(
         params,
-        &mut connection,
-        Some(receipt),
-        previous_projection,
-        previous_public_snapshot,
-        reuse_previous_projection,
-        isolated_incremental_path.as_deref(),
-        changed_record_paths.as_ref(),
+        connection,
+        PersistStructuralGraphOptions {
+            validated_receipt: Some(receipt),
+            previous_projection,
+            previous_public_snapshot,
+            reuse_previous_projection,
+            isolated_incremental_path: isolated_incremental_path.as_deref(),
+            changed_record_paths: changed_record_paths.as_ref(),
+        },
     )?;
     let native_graph_version = stored
         .receipt
@@ -4600,6 +6158,21 @@ fn persist_native_public_graph_with_receipt(
                 .clone()
                 .map(Value::String)
                 .unwrap_or(Value::Null),
+        );
+        profile.insert(
+            "structuralRecordCacheWriteMode".to_string(),
+            Value::String(
+                if changed_record_paths.is_some() {
+                    "changed-paths"
+                } else {
+                    "full-batch"
+                }
+                .to_string(),
+            ),
+        );
+        profile.insert(
+            "structuralRecordCacheWritePaths".to_string(),
+            json!(changed_record_paths.as_ref().map_or(0, BTreeSet::len)),
         );
         profile.insert(
             "snapshotMaterializationMs".to_string(),
@@ -5095,7 +6668,7 @@ fn native_public_graph_snapshot_from_snapshot(
             .map(native_public_edge)
             .collect::<Vec<_>>(),
     );
-    result["stats"] = native_public_stats(&snapshot, &result["analysis"]);
+    result["stats"] = native_public_stats(snapshot, &result["analysis"]);
     result["flows"] = payload["flows"].clone();
     result["diagnosticFlows"] = payload["diagnosticFlows"].clone();
     Ok(result)
@@ -5228,13 +6801,7 @@ fn compared_items(
     current: &[Value],
     key: impl Fn(&Value) -> String,
     summarize: impl Fn(&Value) -> Value,
-) -> (
-    Vec<Value>,
-    Vec<Value>,
-    Vec<Value>,
-    (usize, usize, usize),
-    bool,
-) {
+) -> ComparedItems {
     let previous_by_key = previous
         .iter()
         .map(|value| (key(value), value))
@@ -5836,10 +7403,7 @@ fn get_native_public_graph_delta(params: &Value) -> Result<Value, NativeProtocol
     };
     let previous = load(from)?;
     let current = load(to)?;
-    Ok(native_public_graph_delta(
-        &previous.payload,
-        &current.payload,
-    )?)
+    native_public_graph_delta(&previous.payload, &current.payload)
 }
 
 fn public_context_ref(
@@ -6072,6 +7636,8 @@ fn handle_request(
             | "getNativeFlowLensCore"
             | "getNativeNodeContextCard"
             | "getNativeFlowContextCard"
+            | "getNativeScanStatus"
+            | "getNativeProjectOverviewCore"
             | "getRelatedTests"
             | "getChangeImpact"
     );
@@ -6089,9 +7655,10 @@ fn handle_request(
                 request.request_id,
                 json!({
                     "implementation": "rust",
-                    "capabilities": ["health", "initialize", "nativeIncrementalManifest", "nativeJsRecordCache", "nativeJsStructuralFacts", "submitStructuralFacts", "assembleStructuralGraph", "assembleNativePublicGraph", "assembleNativeFlows", "findNodes", "getNodeDetails", "getEntryFlows", "getRequestFlows", "createContextRef", "resolveNativeContextRef", "getNativeFlowLensCore", "getNativeNodeContextCard", "getNativeFlowContextCard", "getRelatedTests", "getChangeImpact", "persistStructuralGraph", "persistNativePublicGraph", "persistNativePublicGraphPatch", "refreshNativeSessionGraph", "refreshNativeJsSessionGraph", "getNativeStructuralDelta", "getNativePublicGraphSnapshot", "getNativeCurrentPublicGraph", "getNativePublicGraphDelta", "getNativeChangedContexts", "shutdown"],
+                    "capabilities": ["health", "initialize", "nativeIncrementalManifest", "nativeBoundedDiscovery", "refreshNativeProject", "refreshNativePersistentProject", "nativeJsRecordCache", "nativeJsStructuralFacts", "submitStructuralFacts", "assembleStructuralGraph", "assembleNativePublicGraph", "assembleNativeFlows", "findNodes", "getNodeDetails", "getEntryFlows", "getRequestFlows", "createContextRef", "resolveNativeContextRef", "getNativeFlowLensCore", "getNativeNodeContextCard", "getNativeFlowContextCard", "getNativeScanStatus", "getNativeProjectOverviewCore", "getRelatedTests", "getChangeImpact", "persistStructuralGraph", "persistNativePublicGraph", "persistNativePublicGraphPatch", "refreshNativeSessionGraph", "refreshNativeJsSessionGraph", "getNativeStructuralDelta", "getNativePublicGraphSnapshot", "getNativeCurrentPublicGraph", "getNativePublicGraphDelta", "getNativeChangedContexts", "shutdown"],
                     "storeAuthoritative": false,
-                    "publicNodeIdsEnabled": false,
+                    "publicNodeIdsEnabled": true,
+                    "adapterCapabilities": native_adapter_registry(),
                 }),
             ),
             false,
@@ -6112,7 +7679,7 @@ fn handle_request(
                                 "quickCheck": store.quick_check,
                             },
                             "storeAuthoritative": false,
-                            "publicNodeIdsEnabled": false,
+                            "publicNodeIdsEnabled": true,
                         }),
                     ),
                     false,
@@ -6138,6 +7705,29 @@ fn handle_request(
                 false,
             ),
         },
+        "nativeBoundedDiscovery" => match native_bounded_discovery(&request.params) {
+            Ok(result) => (success_response(request.request_id, result), false),
+            Err(error) => (
+                error_response(Some(request.request_id), error.code, error.message),
+                false,
+            ),
+        },
+        "refreshNativeProject" => match refresh_native_project(session, &request.params) {
+            Ok(result) => (success_response(request.request_id, result), false),
+            Err(error) => (
+                error_response(Some(request.request_id), error.code, error.message),
+                false,
+            ),
+        },
+        "refreshNativePersistentProject" => {
+            match refresh_native_persistent_project(session, &request.params) {
+                Ok(result) => (success_response(request.request_id, result), false),
+                Err(error) => (
+                    error_response(Some(request.request_id), error.code, error.message),
+                    false,
+                ),
+            }
+        }
         "nativeJsRecordCache"
             if request
                 .params
@@ -6160,7 +7750,7 @@ fn handle_request(
                 false,
             ),
         },
-        "nativeJsStructuralFacts" => match native_js_structural_facts(&request.params) {
+        "nativeJsStructuralFacts" => match native_js_structural_facts(session, &request.params) {
             Ok(result) => (success_response(request.request_id, result), false),
             Err(error) => (
                 error_response(Some(request.request_id), error.code, error.message),
@@ -6237,6 +7827,22 @@ fn handle_request(
                 false,
             ),
         },
+        "getNativeScanStatus" => match native_agent_bootstrap(session, &request.params) {
+            Ok(result) => (success_response(request.request_id, result), false),
+            Err(error) => (
+                error_response(Some(request.request_id), error.code, error.message),
+                false,
+            ),
+        },
+        "getNativeProjectOverviewCore" => {
+            match native_project_overview_core(session, &request.params) {
+                Ok(result) => (success_response(request.request_id, result), false),
+                Err(error) => (
+                    error_response(Some(request.request_id), error.code, error.message),
+                    false,
+                ),
+            }
+        }
         "createContextRef" => match create_native_context_ref(&request.params) {
             Ok(result) => (success_response(request.request_id, result), false),
             Err(error) => (
@@ -6371,7 +7977,7 @@ fn handle_request(
             error_response(
                 Some(request.request_id),
                 "unknown-method",
-                "Supported methods are health, initialize, nativeIncrementalManifest, nativeJsRecordCache, nativeJsStructuralFacts, submitStructuralFacts, assembleStructuralGraph, assembleNativePublicGraph, assembleNativeFlows, findNodes, getNodeDetails, getEntryFlows, getRequestFlows, createContextRef, resolveNativeContextRef, getNativeFlowLensCore, getNativeNodeContextCard, getNativeFlowContextCard, getRelatedTests, getChangeImpact, persistStructuralGraph, persistNativePublicGraph, persistNativePublicGraphPatch, refreshNativeSessionGraph, refreshNativeJsSessionGraph, getNativeStructuralDelta, getNativePublicGraphSnapshot, getNativeCurrentPublicGraph, getNativePublicGraphDelta, getNativeChangedContexts, and shutdown.",
+                "Supported methods are health, initialize, nativeIncrementalManifest, nativeBoundedDiscovery, refreshNativeProject, refreshNativePersistentProject, nativeJsRecordCache, nativeJsStructuralFacts, submitStructuralFacts, assembleStructuralGraph, assembleNativePublicGraph, assembleNativeFlows, findNodes, getNodeDetails, getEntryFlows, getRequestFlows, createContextRef, resolveNativeContextRef, getNativeFlowLensCore, getNativeNodeContextCard, getNativeFlowContextCard, getNativeScanStatus, getNativeProjectOverviewCore, getRelatedTests, getChangeImpact, persistStructuralGraph, persistNativePublicGraph, persistNativePublicGraphPatch, refreshNativeSessionGraph, refreshNativeJsSessionGraph, getNativeStructuralDelta, getNativePublicGraphSnapshot, getNativeCurrentPublicGraph, getNativePublicGraphDelta, getNativeChangedContexts, and shutdown.",
             ),
             false,
         ),
@@ -6428,9 +8034,12 @@ pub fn serve_jsonl<R: BufRead, W: Write>(reader: R, mut writer: W) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::{
-        NATIVE_PROTOCOL_VERSION, STRUCTURAL_FACT_BATCH_SCHEMA, build_isolated_incremental_graph,
-        isolated_structural_change_path, same_canonical_json, serve_jsonl,
-        structural_facts_canonical_json, structural_facts_digest, structural_topology_digest,
+        NATIVE_PROTOCOL_VERSION, NativeProtocolSession, STRUCTURAL_FACT_BATCH_SCHEMA,
+        build_isolated_incremental_graph, hydrate_cached_query_batch,
+        isolated_structural_change_path, native_entry_source_nodes,
+        refresh_native_js_session_graph, refresh_native_persistent_project, same_canonical_json,
+        serve_jsonl, structural_facts_canonical_json, structural_facts_digest,
+        structural_topology_digest,
     };
     use crate::structural_graph::build_structural_graph;
     use serde_json::{Value, json};
@@ -6457,6 +8066,245 @@ mod tests {
             "params": params,
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn refresh_native_project_executes_and_verifies_a_package_scoped_plan() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-bounded-protocol-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("apps/api/src")).unwrap();
+        fs::create_dir_all(root.join("apps/web/src")).unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"name":"monorepo","scripts":{"root":"node apps/api/src/main.ts"}}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("apps/api/package.json"),
+            r#"{"name":"api","scripts":{"api":"node src/main.ts"}}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("apps/api/src/main.ts"),
+            "export const api = true;\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("apps/web/src/main.ts"),
+            "export const web = true;\n",
+        )
+        .unwrap();
+        let input = format!(
+            "{}\n",
+            request(
+                "bounded",
+                "refreshNativeProject",
+                json!({
+                    "projectRoot": root,
+                    "sessionProjectId": "session:bounded-test",
+                    "packagePath": "apps/api",
+                    "limits": { "maxFiles": 10, "maxBytes": 100000, "budgetMs": 10000 },
+                }),
+            )
+        );
+        let result = responses(&input);
+        assert_eq!(result[0]["status"], "ok");
+        assert_eq!(
+            result[0]["result"]["sourceAuthority"],
+            "rust-native-bounded/v1"
+        );
+        assert_eq!(result[0]["result"]["boundedDiscovery"]["verified"], true);
+        assert_eq!(result[0]["result"]["boundedDiscovery"]["candidateFiles"], 1);
+        assert_eq!(
+            result[0]["result"]["graph"]["project"]["projectId"],
+            "session:bounded-test"
+        );
+        assert_eq!(result[0]["result"]["graph"]["project"]["name"], "api");
+        assert_eq!(
+            result[0]["result"]["graph"]["analysis"]["nativeBoundedPackagePath"],
+            "apps/api"
+        );
+        let node_ids = result[0]["result"]["graph"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|node| node.get("id").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert!(node_ids.contains(&"command:apps/api/package.json:api"));
+        assert!(!node_ids.contains(&"command:package.json:root"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn explicit_empty_changed_paths_reuses_the_native_source_session_without_reading_disk() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-empty-change-session-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/main.ts"), "export const current = true;\n").unwrap();
+        let params = json!({
+            "projectRoot": root,
+            "sessionProjectId": "session:empty-change",
+        });
+        let mut session = NativeProtocolSession::default();
+        let initial = refresh_native_js_session_graph(&mut session, &params).unwrap();
+        assert_eq!(initial["publicGraphVersion"], 1);
+        fs::remove_file(root.join("src/main.ts")).unwrap();
+        let no_op = refresh_native_js_session_graph(
+            &mut session,
+            &json!({
+                "projectRoot": root,
+                "sessionProjectId": "session:empty-change",
+                "changedPaths": [],
+            }),
+        )
+        .unwrap();
+        assert_eq!(no_op["status"], "reused");
+        assert_eq!(no_op["publicGraphVersion"], 1);
+        assert_eq!(no_op["sourceRefresh"]["mode"], "no-op-session");
+        assert_eq!(no_op["sourceRefresh"]["parsedFiles"], 0);
+        assert_eq!(no_op["sourceRefresh"]["reusedFiles"], 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refresh_native_persistent_project_promotes_without_returning_a_fact_batch() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-persistent-project-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src/main.ts"),
+            "export const persistent = true;\n",
+        )
+        .unwrap();
+        let result = responses(&format!(
+            "{}\n",
+            request(
+                "persistent",
+                "refreshNativePersistentProject",
+                json!({ "projectRoot": root }),
+            )
+        ));
+        assert_eq!(result[0]["status"], "ok");
+        assert_eq!(
+            result[0]["result"]["sourceAuthority"],
+            "rust-native-persistent/v1"
+        );
+        assert!(result[0]["result"].get("batch").is_none());
+        assert_eq!(
+            result[0]["result"]["graphHandle"]["schemaVersion"],
+            "flopeek-native-graph-handle/v1"
+        );
+        assert_eq!(result[0]["result"]["graphHandle"]["persistence"], "sqlite");
+        assert!(result[0]["result"]["graph"].is_object());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn persistent_native_project_reuses_one_sqlite_connection_for_changed_path_refresh() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-persistent-connection-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        let source = root.join("src/main.ts");
+        fs::write(&source, "export const initial = true;\n").unwrap();
+        let mut session = NativeProtocolSession::default();
+        let initial =
+            refresh_native_persistent_project(&mut session, &json!({ "projectRoot": root }))
+                .unwrap();
+        assert_eq!(initial["publicGraphVersion"], 1);
+        assert_eq!(session.persistent_connections.len(), 1);
+        let mut query = json!({
+            "projectRoot": root,
+            "projectId": initial["graphHandle"]["projectId"],
+            "factsDigest": initial["graphHandle"]["factsDigest"],
+        });
+        hydrate_cached_query_batch(&mut session, &mut query).unwrap();
+        assert!(query["batch"].is_object());
+        assert_eq!(session.persistent_connections.len(), 1);
+        fs::write(&source, "export const changed = true;\n").unwrap();
+        let refreshed = refresh_native_persistent_project(
+            &mut session,
+            &json!({
+                "projectRoot": root,
+                "changedPaths": ["src/main.ts"],
+            }),
+        )
+        .unwrap();
+        assert_eq!(session.persistent_connections.len(), 1);
+        assert_eq!(refreshed["sourceRefresh"]["parsedFiles"], 1);
+        assert_eq!(
+            refreshed["sourceRefresh"]["changedPaths"],
+            json!(["src/main.ts"])
+        );
+        assert_eq!(
+            refreshed["receipt"]["profile"]["structuralRecordCacheWriteMode"],
+            "changed-paths"
+        );
+        assert_eq!(
+            refreshed["receipt"]["profile"]["structuralRecordCacheWritePaths"],
+            1
+        );
+        drop(session);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn persistent_native_project_explicit_no_op_reuses_the_session_snapshot_without_a_write() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-persistent-no-op-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/main.ts"), "export const stable = true;\n").unwrap();
+        let mut session = NativeProtocolSession::default();
+        let initial =
+            refresh_native_persistent_project(&mut session, &json!({ "projectRoot": root }))
+                .unwrap();
+        let reused = refresh_native_persistent_project(
+            &mut session,
+            &json!({ "projectRoot": root, "changedPaths": [] }),
+        )
+        .unwrap();
+        assert_eq!(reused["status"], "reused");
+        assert_eq!(reused["publicGraphVersion"], initial["publicGraphVersion"]);
+        assert!(reused.get("graph").is_none());
+        assert_eq!(
+            reused["publicGraphReuse"]["schemaVersion"],
+            "flopeek-native-public-graph-reuse/v1"
+        );
+        assert_eq!(reused["receipt"]["stored"], false);
+        assert_eq!(reused["sourceRefresh"]["mode"], "no-op-session");
+        assert_eq!(reused["sourceRefresh"]["parsedFiles"], 0);
+        assert_eq!(session.persistent_connections.len(), 1);
+        drop(session);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -6587,6 +8435,38 @@ mod tests {
     }
 
     #[test]
+    fn native_request_entry_selection_matches_ordered_entry_source_expansion() {
+        let graph = json!({
+            "nodes": [
+                { "id": "endpoint:orders", "kind": "endpoint", "type": "endpoint", "layer": "application" },
+                { "id": "file:handler", "kind": "file", "type": "module", "layer": "application" },
+                { "id": "file:repository", "kind": "file", "type": "module", "layer": "application" },
+                { "id": "file:unrelated", "kind": "file", "type": "module", "layer": "application" }
+            ],
+            "edges": [
+                { "source": "endpoint:orders", "target": "file:handler", "type": "handles" },
+                { "source": "file:handler", "target": "file:repository", "type": "imports" },
+                { "source": "file:repository", "target": "file:unrelated", "type": "imports" }
+            ]
+        });
+        let visible = graph["nodes"].as_array().unwrap();
+        let selection = native_entry_source_nodes(&graph, visible);
+        let selected = selection
+            .iter()
+            .map(|node| node["id"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            selected,
+            vec![
+                "endpoint:orders",
+                "file:handler",
+                "file:repository",
+                "file:unrelated"
+            ]
+        );
+    }
+
+    #[test]
     fn isolated_structural_record_assembly_matches_a_full_graph_rebuild() {
         let mut first = structural_facts(json!({
             "symbols": [{ "type": "function", "name": "before" }]
@@ -6674,7 +8554,7 @@ mod tests {
         ));
         assert_eq!(result.len(), 2);
         assert_eq!(result[0]["status"], "ok");
-        assert_eq!(result[0]["result"]["publicNodeIdsEnabled"], false);
+        assert_eq!(result[0]["result"]["publicNodeIdsEnabled"], true);
         assert!(
             result[0]["result"]["capabilities"]
                 .as_array()

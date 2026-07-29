@@ -426,10 +426,7 @@ function agentEntryInventory(graph) {
   };
 }
 
-function createAgentContext(graph, projection, mode, scope, focusId) {
-  const derivedCache = listArtifactCacheAudit(graph.project.root, graph);
-  const derivedCacheEvents = (derivedCache.events || []).slice(0, 10);
-  const derivedCacheEventTotal = derivedCache.eventCatalog?.total || derivedCacheEvents.length;
+function createAgentContextStatic(graph, projection, mode, scope, focusId) {
   const projectionMeaning = mode === "overview"
     ? "Each visible node is a feature summary that aggregates source nodes. It is not a source file, runtime service, or execution step."
     : mode === "requests"
@@ -496,6 +493,33 @@ function createAgentContext(graph, projection, mode, scope, focusId) {
       portableFormats: ["json", "markdown"],
       foreignImport: { access: "read-only", trust: "foreign-unverified", automaticAdoption: false },
     },
+    trustAnalytics: {
+      schemaVersion: TRUST_ANALYTICS_SCHEMA,
+      httpEndpoint: "/api/trust-analytics",
+      mcpTool: "get_trust_analytics",
+      purpose: "Inspect evidence availability, provenance, and freshness without collapsing unlike evidence classes into a truth score.",
+      compositeScore: false,
+    },
+    productProof: {
+      schemaVersion: PRODUCT_PROOF_SCHEMA,
+      httpEndpoint: "/api/product-proof",
+      mcpTool: "get_product_proof",
+      purpose: "Inspect bounded public benchmark evidence, current-repository facts, feature proof surfaces, reproduction commands, and claim boundaries.",
+    },
+  };
+}
+
+// Local audit stores are intentionally outside the native graph authority.
+// They enrich a static context already assembled by Rust (or by the JS core),
+// but never select graph evidence, derive topology, or alter a projection.
+function attachLocalAgentContext(graph, staticContext, scope) {
+  const derivedCache = listArtifactCacheAudit(graph.project.root, graph);
+  const derivedCacheEvents = (derivedCache.events || []).slice(0, 10);
+  const derivedCacheEventTotal = derivedCache.eventCatalog?.total || derivedCacheEvents.length;
+  const { trustAnalytics, productProof, ...staticEvidence } = staticContext;
+  if (staticEvidence.cache === null && graph.analysis.cache === undefined) staticEvidence.cache = undefined;
+  return {
+    ...staticEvidence,
     runtimeEvidence: runtimeEvidenceSummary(graph.project.root, graph),
     derivedCache: {
       schemaVersion: derivedCache.schemaVersion,
@@ -517,20 +541,13 @@ function createAgentContext(graph, projection, mode, scope, focusId) {
     semanticSuggestions: semanticSuggestionsForGraph(graph, scope),
     semanticSuggestionFeedback: semanticSuggestionFeedbackPolicy(graph.project.root, graph),
     agentEvidenceTrace: agentEvidenceTracePolicy(graph.project.root, graph),
-    trustAnalytics: {
-      schemaVersion: TRUST_ANALYTICS_SCHEMA,
-      httpEndpoint: "/api/trust-analytics",
-      mcpTool: "get_trust_analytics",
-      purpose: "Inspect evidence availability, provenance, and freshness without collapsing unlike evidence classes into a truth score.",
-      compositeScore: false,
-    },
-    productProof: {
-      schemaVersion: PRODUCT_PROOF_SCHEMA,
-      httpEndpoint: "/api/product-proof",
-      mcpTool: "get_product_proof",
-      purpose: "Inspect bounded public benchmark evidence, current-repository facts, feature proof surfaces, reproduction commands, and claim boundaries.",
-    },
+    trustAnalytics,
+    productProof,
   };
+}
+
+function createAgentContext(graph, projection, mode, scope, focusId) {
+  return attachLocalAgentContext(graph, createAgentContextStatic(graph, projection, mode, scope, focusId), scope);
 }
 
 function getAgentBootstrap(graph, options = {}) {
@@ -631,6 +648,47 @@ function attachNodeExtensions(graph, detail) {
   };
 }
 
+// The native core owns static projection selection, hierarchy aggregation,
+// bounds, and flow catalog construction.  This adapter deliberately receives
+// an already bounded public view and only attaches local audit/cache metadata
+// that has no graph-authority equivalent in SQLite yet.
+function attachNativeProjectOverview(graph, coreView) {
+  if (!coreView || coreView.schemaVersion !== "flopeek-native-view-projection-core/v1" || !coreView.view || !coreView.display) {
+    throw new TypeError("Native core returned an invalid view projection.");
+  }
+  const { agentContextCore, ...nativeView } = coreView;
+  if (!agentContextCore || agentContextCore.schemaVersion !== "flopeek-agent-context/v1") {
+    throw new TypeError("Native core returned no static agent context.");
+  }
+  const { mode, scope, focusId } = nativeView.view;
+  const projection = {
+    nodes: nativeView.nodes,
+    edges: nativeView.edges,
+    sourceNodeCount: nativeView.view.sourceNodeCount,
+    hierarchy: nativeView.view.hierarchy,
+    display: nativeView.display,
+  };
+  // Keep the established artifact-audit contract without recomputing the
+  // projection.  The native result is the value persisted under the same key
+  // that the former JavaScript projector used, so cache hits remain a local
+  // transport optimization and never become a second graph authority.
+  if (mode !== "dependencies") {
+    getOrCreateArtifact(graph.project.root, graph, "feature-summary", {
+      mode,
+      scope,
+      level: nativeView.view.level,
+      focusId,
+      semanticHierarchyVersion: 2,
+    }, () => projection, { dependencyPaths: ["*"] });
+  }
+  const staticContext = agentContextCore;
+  return {
+    ...nativeView,
+    schemaVersion: VIEW_PROJECTION_SCHEMA,
+    aiContext: attachLocalAgentContext(graph, staticContext, scope),
+  };
+}
+
 function getNodeDetails(graph, id) {
   const node = graph.nodes.find((candidate) => candidate.id === id);
   if (!node) return null;
@@ -691,6 +749,40 @@ function buildFlowContextCard(graph, flowId, scope = "application", options = {}
 function getFlowContextCard(graph, flowId, format = "json", scope = "application", options = {}) {
   const card = buildFlowContextCard(graph, flowId, scope, options);
   return card ? createContextPacket(card, format) : null;
+}
+
+// Rust owns the static Flow Context Card for the native core. This adapter
+// intentionally adds only local human/agent metadata; it must not rebuild the
+// Flow Lens, related-test selection, card bounds, or any graph-derived field.
+function attachNativeFlowContextCard(graph, coreCard, lens) {
+  if (!coreCard || coreCard.schemaVersion !== "flopeek-context/v1" || coreCard.kind !== "flow") {
+    throw new TypeError("Native core returned an invalid Flow Context Card.");
+  }
+  if (!lens?.flow?.id || lens.flow.id !== coreCard.flow?.id) {
+    throw new TypeError("Native core Flow Context Card does not match its Flow Lens.");
+  }
+  const verification = lens.verification || null;
+  return {
+    ...coreCard,
+    semanticSuggestion: lens.semanticSuggestion || null,
+    agentSemanticProposal: lens.agentSemanticProposal || null,
+    semanticFeedback: lens.semanticFeedback || null,
+    flowInterface: lens.flowInterface || null,
+    verification,
+    humanVerification: verification?.record ? {
+      title: verification.record.title,
+      description: verification.record.description,
+      owner: verification.record.owner,
+      risk: verification.record.risk,
+      questions: verification.record.questions,
+      verifiedBy: verification.record.verifiedBy,
+      verifiedAt: verification.record.verifiedAt,
+      sourceGraphVersion: verification.record.sourceGraphVersion,
+      status: verification.status,
+      knowledgeClass: "human-verified",
+    } : null,
+    unresolvedQuestions: lens.unresolvedQuestions,
+  };
 }
 
 function resolveContextRef(graph, contextRef) {
@@ -1407,6 +1499,7 @@ module.exports = {
   getChangedContexts,
   getFlowComparison,
   getFlowContextCard,
+  attachNativeFlowContextCard,
   getFlowProjection,
   attachFlowExtensions,
   getFlowSuggestion,
@@ -1456,6 +1549,9 @@ module.exports = {
   exportHandoffWorkspace,
   importHandoffWorkspace,
   projectView,
+  attachNativeProjectOverview,
+  attachLocalAgentContext,
+  createAgentContextStatic,
   pruneDerivedArtifacts,
   recordAgentEvidenceTrace,
   recordAgentSemanticProposal,

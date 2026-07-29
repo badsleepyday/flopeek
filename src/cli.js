@@ -23,9 +23,10 @@ const { cacheHygiene, pruneArtifactCache } = require("./artifact-cache");
 const { pruneGraphDeltas, readGraphDelta, readLatestGraphDelta } = require("./graph-state");
 const { discoverRepository } = require("./repository-discovery");
 const { activateOnWorkspaceHub, startWorkspaceServer } = require("./workspace-server");
-const { createSurfaceCoreClient } = require("./core-runtime");
+const { createSurfaceCoreRuntime } = require("./core-runtime");
 
 let core = null;
+let coreRuntime = null;
 
 function parseArgs(argv) {
   const result = { command: "serve", evaluation: null, cacheAction: "status", showcaseAction: "run", workAction: "list", continueAction: "list", planAction: "list", reconcileAction: "list", recordId: null, checkpointId: null, overlayId: null, reconciliationId: null, planRef: null, contextRef: null, inputFile: null, root: process.cwd(), port: 4780, portFallback: true, global: false, workspaceId: null, serviceLabel: null, open: true, cache: true, format: "summary", changed: [], base: null, commit: "HEAD", from: "HEAD~1", to: "HEAD", fromVersion: null, toVersion: null, force: false, limit: null, keepDeltas: null, history: false, apply: false, iterations: 3, platforms: [], dryRun: false, strict: false, casesFile: null, runsFile: null, condition: "both", keepWorkspace: false, timeBudgetMs: null, maxFiles: null, maxBytes: null, packagePath: null, coreMode: null, mode: "overview", scope: "application", level: "feature", focus: null, maxNodes: null, maxEdges: null };
@@ -141,7 +142,7 @@ Package identity:
   flopeek --version
 
 Agent tools (MCP over stdio):
-  flopeek mcp [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [--no-cache] [--core-mode js|shadow|native]
+  flopeek mcp [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [--no-cache] [--core-mode js|shadow|native|native-experimental]
   flopeek bootstrap [repository] [--format summary|json]
 
 Agent host integration (project-local and non-destructive):
@@ -151,7 +152,7 @@ Agent host integration (project-local and non-destructive):
 
 Graph workflow:
   flopeek discover [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [--format summary|json]
-  flopeek scan [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [--format summary|json|mermaid] [--no-cache] [--core-mode js|shadow|native]
+  flopeek scan [repository] [--package relative/path] [--budget-ms number] [--max-files number] [--max-bytes number] [--format summary|json|mermaid] [--no-cache] [--core-mode js|shadow|native|native-experimental]
   flopeek view [repository] [--mode overview|requests|dependencies] [--scope application|runtime|framework|devtool|all] [--level domain|feature|component|symbol] [--focus node-id] [--max-nodes number] [--max-edges number] [--format summary|json] [--no-cache]
   flopeek impact [repository] [--changed path[,path] | --base git-ref] [--format summary|json]
   flopeek snapshot [repository] [--commit git-ref] [--force] [--format summary|json]
@@ -350,7 +351,10 @@ function printPlanReconciliation(result, action) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  core ||= createSurfaceCoreClient({ coreMode: options.coreMode });
+  if (!coreRuntime) {
+    coreRuntime = createSurfaceCoreRuntime({ coreMode: options.coreMode });
+    core = coreRuntime.core;
+  }
   if (options.command === "help" || options.command === "h") return printHelp();
   if (options.command === "version" || options.command === "v") return console.log(packageInfo.version);
   if (options.command === "mcp") return runMcpServer(options);
@@ -447,6 +451,8 @@ async function main() {
       let result;
       try {
         const coordinator = createScanCoordinator(options.root, {
+          coreClient: core,
+          coreRuntime: coreRuntime.selection,
           cache: options.cache,
           timeBudgetMs: options.timeBudgetMs,
           maxFiles: options.maxFiles,
@@ -486,6 +492,7 @@ async function main() {
     // `--no-cache` is the safe inspection mode: it must not leave Flopeek
     // metadata behind merely to obtain a generated project identity.
     const graph = await core.scan(options.root, { persistIdentity: options.cache });
+    graph.analysis.coreRuntime = coreRuntime.selection;
     graph.analysis.cacheState = options.cache
       ? summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-scan" }))
       : { status: "disabled", path: path.join(graph.project.root, ".flopeek", "graph.json"), diagnostics: [], contract: null, migrated: false };

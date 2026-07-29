@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
-const { assignWorkflow, availableGraphDelta, createContinuationCheckpoint, createPlannedOverlay, createWorkRecord, exportHandoffWorkspace, findNodes, getAgentBootstrap, getAgentEvidenceTraces, getAgentSemanticProposal, getArtifactCacheAudit, getCacheHygiene, getChangeImpact, getChangedContexts, getCheckpointDivergence, getContextCard, getContinuationCheckpoint, getContinuationComparison, getContinuationContext, getDurableBrief, getEntryFlows, getFlowComparison, getFlowContextCard, getFlowProjection, getFlowSuggestion, getFlowVerification, getFlowVerificationHistory, getGraphDelta, getHandoffContext, getHandoffQuality, getHandoffWorkspace, getNodeDetails, getPlanReconciliation, getPlannedOverlay, getProductProof, getProjectHome, getRelatedImplementations, getRuntimeEvidence, getSemanticReviewQueue, getSemanticSuggestionFeedback, getTestRuns, getTrustAnalytics, getVerifiedSemanticMemory, getWorkDependencyStatus, getWorkRecordWorkflow, getWorkTimeline, importHandoffWorkspace, latestAvailableGraphDelta, listContinuationCheckpoints, listDurableBriefManifests, listHandoffWorkspaces, listImportedHandoffs, listPlanReconciliations, listPlannedOverlays, listSemanticSuggestionFeedback, listWorkRecords, listWorkflows, materializeDurableBrief, projectView, recordAgentEvidenceTrace, recordAgentSemanticProposal, recordPlanReconciliation, recordRuntimeEvidence, recordSemanticSuggestionFeedback, recordTestRunEvent, recordWorkEvent, resolveContextRef, resolvePlanRef, saveHandoffNote, saveHandoffWorkspace, saveWorkflow, transitionWorkRecord, updateWorkPlan, verifyFlow } = require("./graph-service");
+const { assignWorkflow, availableGraphDelta, createContinuationCheckpoint, createPlannedOverlay, createWorkRecord, exportHandoffWorkspace, findNodes, getAgentBootstrap, getAgentEvidenceTraces, getAgentSemanticProposal, getArtifactCacheAudit, getCacheHygiene, getChangeImpact, getChangedContexts, getCheckpointDivergence, getContextCard, getContinuationCheckpoint, getContinuationComparison, getContinuationContext, getDurableBrief, getEntryFlows, getFlowComparison, getFlowProjection, getFlowSuggestion, getFlowVerification, getFlowVerificationHistory, getGraphDelta, getHandoffContext, getHandoffQuality, getHandoffWorkspace, getNodeDetails, getPlanReconciliation, getPlannedOverlay, getProductProof, getProjectHome, getRelatedImplementations, getRuntimeEvidence, getSemanticReviewQueue, getSemanticSuggestionFeedback, getTestRuns, getTrustAnalytics, getVerifiedSemanticMemory, getWorkDependencyStatus, getWorkRecordWorkflow, getWorkTimeline, importHandoffWorkspace, latestAvailableGraphDelta, listContinuationCheckpoints, listDurableBriefManifests, listHandoffWorkspaces, listImportedHandoffs, listPlanReconciliations, listPlannedOverlays, listSemanticSuggestionFeedback, listWorkRecords, listWorkflows, materializeDurableBrief, projectView, recordAgentEvidenceTrace, recordAgentSemanticProposal, recordPlanReconciliation, recordRuntimeEvidence, recordSemanticSuggestionFeedback, recordTestRunEvent, recordWorkEvent, resolveContextRef, resolvePlanRef, saveHandoffNote, saveHandoffWorkspace, saveWorkflow, transitionWorkRecord, updateWorkPlan, verifyFlow } = require("./graph-service");
 const { listWorkDependencyStatuses } = require("./graph-service");
 const { getActiveBranchGitEvidence, getGitContextContinuity } = require("./graph-service");
 const { benchmarkRepository } = require("./benchmark");
@@ -11,7 +11,7 @@ const { readGraphCacheResult, summarizeCacheResult } = require("./graph-cache");
 const { createScanCoordinator } = require("./scan-coordinator");
 const { listServeWorkspace, registerServeWorkspace, unregisterServeWorkspace } = require("./serve-workspace");
 const { parseFlowLensMaxStepsQuery } = require("./flow-lens-options");
-const { createSurfaceCoreClient } = require("./core-runtime");
+const { createSurfaceCoreRuntime } = require("./core-runtime");
 
 const PUBLIC_DIRECTORY = path.join(__dirname, "..", "public");
 const VENDOR_ASSETS = new Map([
@@ -168,7 +168,8 @@ async function listenOnAvailablePort(server, requestedPort, options = {}) {
 async function startServer(options) {
   let root = fs.realpathSync(options.root);
   const ownsCoreClient = !options.coreClient;
-  const core = options.coreClient || createSurfaceCoreClient(options);
+  const runtime = options.coreClient ? null : createSurfaceCoreRuntime(options);
+  const core = options.coreClient || runtime.core;
   let closeCorePromise = null;
   const closeOwnedCore = () => {
     if (!ownsCoreClient) return Promise.resolve();
@@ -195,6 +196,7 @@ async function startServer(options) {
   };
   const createCoordinator = (targetRoot = root, coordinatorOptions = {}) => createScanCoordinator(targetRoot, {
     coreClient: coordinatorOptions.coreClient || core,
+    coreRuntime: coordinatorOptions.coreRuntime || runtime?.selection || options.coreRuntime,
     cache: options.cache,
     timeBudgetMs: options.timeBudgetMs,
     maxFiles: options.maxFiles,
@@ -550,7 +552,7 @@ async function startServer(options) {
       }
       if (request.method === "GET" && url.pathname === "/api/flow-context-card") {
         const requestedMaxSteps = parseFlowLensMaxStepsQuery(url.searchParams.get("maxSteps"));
-        const card = getFlowContextCard(currentGraph(), url.searchParams.get("flow"), url.searchParams.get("format") || "json", url.searchParams.get("scope") || "application", { maxSteps: requestedMaxSteps });
+        const card = await core.getFlowContextCard(currentGraph(), url.searchParams.get("flow"), url.searchParams.get("format") || "json", url.searchParams.get("scope") || "application", { maxSteps: requestedMaxSteps });
         return card ? send(response, 200, card) : send(response, 404, { error: "Detected flow not found in the selected scope." });
       }
       if (request.method === "GET" && url.pathname === "/api/flow-verification") {

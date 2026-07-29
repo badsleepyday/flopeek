@@ -38,7 +38,7 @@ async function main() {
   copyRepository(source, jsRoot);
   copyRepository(source, nativeRoot);
   const javascript = createJsCoreClient();
-  const native = createNativeCoreClient({ nativeOptions: releaseNativeOptions() });
+  const native = createNativeCoreClient({ nativeOptions: releaseNativeOptions(), sourceAuthority: "rust" });
   const javascriptPhases = [];
   const nativePhases = [];
   const javascriptCoordinator = createScanCoordinator(jsRoot, { cache: true, coreClient: javascript, onCoreProfile: (entry) => javascriptPhases.push(entry) });
@@ -78,7 +78,7 @@ async function main() {
       repository: path.basename(source),
       states,
       parity: "Every profiled state has exact flopeek-core-compatibility/v1 digest and graph-statistics parity.",
-      limitation: "One isolated profile run identifies local phase cost; it is not a performance median or cutover proof.",
+      limitation: "One isolated strict-Rust-source profile run identifies local phase cost; it is not a performance median, combined-RSS measurement, or cutover proof.",
     }, null, 2)}\n`);
   } finally {
     await native.close();

@@ -3,20 +3,23 @@
 const {
   attachFlowExtensions,
   attachNodeExtensions,
+  attachNativeFlowContextCard,
+  attachNativeProjectOverview,
   getAgentBootstrap,
   getChangedContexts,
   getContextCard,
   getFlowProjection,
-  projectView,
   resolveContextRef,
 } = require("./graph-service");
 
 const NATIVE_CORE_EXTENSION_METHODS = Object.freeze([
   "getScanStatus",
-  "getProjectOverview",
+  "attachProjectOverviewExtensions",
   "attachNodeExtensions",
   "attachFlowExtensions",
+  "attachFlowContextCard",
   "getNonApplicationFlowProjection",
+  "getNonApplicationFlowContextCard",
   "getEphemeralChangedContexts",
   "getFormattedContextCard",
   "resolveUnsupportedContextRef",
@@ -36,10 +39,12 @@ function assertNativeCoreExtensionAdapter(adapter) {
 function createNativeCoreExtensionAdapter() {
   return assertNativeCoreExtensionAdapter(Object.freeze({
     getScanStatus: (graph, options = {}) => getAgentBootstrap(graph, options),
-    getProjectOverview: (graph, options = {}) => projectView(graph, options),
+    attachProjectOverviewExtensions: (graph, coreView) => attachNativeProjectOverview(graph, coreView),
     attachNodeExtensions: (graph, detail) => attachNodeExtensions(graph, detail),
     attachFlowExtensions: (graph, lens) => attachFlowExtensions(graph, lens),
+    attachFlowContextCard: (graph, card, lens) => attachNativeFlowContextCard(graph, card, lens),
     getNonApplicationFlowProjection: (graph, flowId, scope, options = {}) => getFlowProjection(graph, flowId, scope, options),
+    getNonApplicationFlowContextCard: (graph, flowId, format, scope, options = {}) => getFlowContextCard(graph, flowId, format, scope, options),
     getEphemeralChangedContexts: (graph, options = {}) => getChangedContexts(graph, options),
     getFormattedContextCard: (graph, id, format) => getContextCard(graph, id, format),
     resolveUnsupportedContextRef: (graph, contextRef) => resolveContextRef(graph, contextRef),

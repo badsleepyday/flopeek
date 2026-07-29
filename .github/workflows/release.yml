@@ -7,10 +7,92 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
+  native-binaries:
+    name: Native ${{ matrix.package }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            package: '@flopeek/native-win32-x64'
+            os: win32
+            cpu: x64
+          - runner: windows-11-arm
+            package: '@flopeek/native-win32-arm64'
+            os: win32
+            cpu: arm64
+          - runner: ubuntu-latest
+            package: '@flopeek/native-linux-x64-gnu'
+            os: linux
+            cpu: x64
+          - runner: ubuntu-24.04-arm
+            package: '@flopeek/native-linux-arm64-gnu'
+            os: linux
+            cpu: arm64
+          - runner: macos-13
+            package: '@flopeek/native-darwin-x64'
+            os: darwin
+            cpu: x64
+          - runner: macos-14
+            package: '@flopeek/native-darwin-arm64'
+            os: darwin
+            cpu: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build checked release binary
+        run: cargo build --release --locked --manifest-path native/flopeek-core/Cargo.toml
+      - name: Test native core before packaging
+        run: cargo test --locked --manifest-path native/flopeek-core/Cargo.toml
+      - name: Create platform npm package
+        shell: pwsh
+        run: |
+          $binary = if ('${{ matrix.os }}' -eq 'win32') { 'native/flopeek-core/target/release/flopeek-native-core.exe' } else { 'native/flopeek-core/target/release/flopeek-native-core' }
+          node scripts/package-native-platform.js --package '${{ matrix.package }}' --os '${{ matrix.os }}' --cpu '${{ matrix.cpu }}' --binary $binary --output native-dist
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          npm pack ./native-dist --pack-destination release-assets
+          Get-FileHash release-assets/*.tgz -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $($_.Path | Split-Path -Leaf)" } | Set-Content release-assets/checksums-${{ matrix.os }}-${{ matrix.cpu }}.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.os }}-${{ matrix.cpu }}
+          path: release-assets/
+          if-no-files-found: error
+
+  publish-native-packages:
+    name: Publish native platform packages
+    needs: native-binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Publish checked platform tarballs
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "NPM_TOKEN is required: do not create a release whose npm package cannot resolve its native optional dependencies."
+            exit 1
+          fi
+          for package in release-assets/*.tgz; do
+            npm publish "$package" --access public --tag beta --provenance
+          done
+
   release:
     name: Verify and publish GitHub Release
+    needs: [native-binaries, publish-native-packages]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,13 +110,17 @@ jobs:
       - run: npm run test:package
       - run: npm run audit:package
       - run: npm run verify:clean-room
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
       - name: Create prerelease
         if: contains(github.ref_name, '-')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --target "$GITHUB_SHA" --title "Flopeek $GITHUB_REF_NAME" --generate-notes --prerelease
+        run: gh release create "$GITHUB_REF_NAME" release-assets/* --target "$GITHUB_SHA" --title "Flopeek $GITHUB_REF_NAME" --generate-notes --prerelease
       - name: Create stable release
         if: ${{ !contains(github.ref_name, '-') }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --target "$GITHUB_SHA" --title "Flopeek $GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" release-assets/* --target "$GITHUB_SHA" --title "Flopeek $GITHUB_REF_NAME" --generate-notes

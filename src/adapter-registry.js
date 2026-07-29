@@ -3,54 +3,7 @@
 const ADAPTER_CAPABILITY_SCHEMA = "flopeek-adapter-capabilities/v1";
 const AVAILABILITY = new Set(["bundled", "toolchain-conditional", "inventory-only"]);
 const LEVELS = new Set(["exact-static", "supported-subset", "structure-only", "inventory-only", "unsupported"]);
-
-const adapters = [
-  {
-    id: "csharp", languages: ["csharp"], extensions: [".cs"], parser: "csharp-roslyn", availability: "toolchain-conditional", requiredToolchain: ".NET SDK with Roslyn assemblies",
-    capabilities: { structure: "exact-static", imports: "exact-static", directCalls: "unsupported", frameworkFacts: [] },
-    resolverCapabilities: [], evidenceClass: "exact-static", limitations: ["Call graph and runtime dispatch are not implemented."],
-  },
-  {
-    id: "go", languages: ["go"], extensions: [".go"], parser: "go-parser", availability: "toolchain-conditional", requiredToolchain: "Go toolchain",
-    capabilities: { structure: "exact-static", imports: "exact-static", directCalls: "supported-subset", frameworkFacts: ["local go.mod module packages"] },
-    resolverCapabilities: ["static local module packages"], evidenceClass: "exact-static", limitations: ["Build tags, function values, method dispatch, ambiguous package functions, and package-name mismatches are unsupported."],
-  },
-  {
-    id: "inventory", languages: ["assembly", "astro", "c", "cpp", "headers", "kotlin", "makefile", "ruby", "scala", "shell", "swift", "vue"], extensions: [".asm", ".astro", ".bash", ".c", ".cc", ".cpp", ".cxx", ".h", ".kt", ".kts", ".rb", ".scala", ".sh", ".swift", ".vue", ".zsh"], filenames: ["Makefile"], parser: "inventory", availability: "inventory-only", requiredToolchain: null,
-    capabilities: { structure: "inventory-only", imports: "unsupported", directCalls: "unsupported", frameworkFacts: [] },
-    resolverCapabilities: [], evidenceClass: "inventory-only", limitations: ["Files are classified but receive no structural relationships."],
-  },
-  {
-    id: "java", languages: ["java"], extensions: [".java"], parser: "tree-sitter-java", availability: "bundled", requiredToolchain: null,
-    capabilities: { structure: "exact-static", imports: "exact-static", directCalls: "supported-subset", frameworkFacts: [] },
-    resolverCapabilities: [], evidenceClass: "exact-static", limitations: ["Instance, qualified, overloaded, reflection, and DI/container dispatch are unsupported."],
-  },
-  {
-    id: "php", languages: ["php"], extensions: [".php"], parser: "php-parser", availability: "bundled", requiredToolchain: null,
-    capabilities: { structure: "exact-static", imports: "exact-static", directCalls: "supported-subset", frameworkFacts: [] },
-    resolverCapabilities: [], evidenceClass: "exact-static", limitations: ["Composer autoloading, dynamic include, method/static dispatch, and container calls are unsupported."],
-  },
-  {
-    id: "python", languages: ["python"], extensions: [".py"], parser: "python-lezer", availability: "bundled", requiredToolchain: null,
-    capabilities: { structure: "exact-static", imports: "supported-subset", directCalls: "supported-subset", frameworkFacts: ["literal HTTP decorators", "Flask and Blueprint literal routes", "narrow Django management commands", "narrow Click, Typer, and Flask CLI command declarations"] },
-    resolverCapabilities: ["relative and src-package imports"], evidenceClass: "exact-static", limitations: ["Attribute calls, dynamic dispatch, dynamic decorator configuration, framework app registration/initialization, computed command names, and indirect management-command base classes are unsupported."],
-  },
-  {
-    id: "rust", languages: ["rust"], extensions: [".rs"], parser: "tree-sitter-rust", availability: "bundled", requiredToolchain: null,
-    capabilities: { structure: "exact-static", imports: "supported-subset", directCalls: "supported-subset", frameworkFacts: ["conventional Cargo src module layout"] },
-    resolverCapabilities: ["crate/self/super modules in conventional Cargo src roots"], evidenceClass: "exact-static", limitations: ["Macros, traits, function values, qualified module calls, custom targets, and #[path] modules are unsupported."],
-  },
-  {
-    id: "svelte", languages: ["svelte"], extensions: [".svelte"], parser: "svelte-compiler", availability: "bundled", requiredToolchain: null,
-    capabilities: { structure: "exact-static", imports: "supported-subset", directCalls: "supported-subset", frameworkFacts: ["SvelteKit file-system routes"] },
-    resolverCapabilities: ["supported script imports"], evidenceClass: "exact-static", limitations: ["Reactive and runtime component behavior are not traced."],
-  },
-  {
-    id: "typescript", languages: ["javascript", "jsx", "tsx", "typescript"], extensions: [".cjs", ".js", ".jsx", ".mjs", ".ts", ".tsx"], parser: "typescript-ast", availability: "bundled", requiredToolchain: null,
-    capabilities: { structure: "exact-static", imports: "exact-static", directCalls: "supported-subset", frameworkFacts: ["Express", "Fastify", "NestJS", "Next.js", "Prisma", "TypeORM", "Drizzle", "BullMQ", "node-cron module-scope literal default-import schedules"] },
-    resolverCapabilities: ["relative paths", "tsconfig/jsconfig paths", "static Vite/Webpack aliases", "package imports/exports", "npm/pnpm workspaces", "Yarn PnP JSON"], evidenceClass: "exact-static", limitations: ["Dynamic imports, general method dispatch, callbacks, dependency injection, reflection, and runtime loading are unsupported."],
-  },
-];
+const adapterContract = require("../contracts/adapter-capabilities.json");
 
 function normalizeAdapter(adapter) {
   return {
@@ -96,7 +49,7 @@ function validateAdapterRegistry(registry) {
 }
 
 function getAdapterRegistry() {
-  const registry = { schema: ADAPTER_CAPABILITY_SCHEMA, adapters: adapters.map(normalizeAdapter).sort((left, right) => left.id.localeCompare(right.id)) };
+  const registry = { schema: adapterContract.schema, adapters: adapterContract.adapters.map(normalizeAdapter).sort((left, right) => left.id.localeCompare(right.id)) };
   validateAdapterRegistry(registry);
   return registry;
 }

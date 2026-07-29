@@ -5,7 +5,6 @@ const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const { CORE_CLIENT_SCHEMA, assertCoreClient } = require("./core-client");
 const { createContextPacket, parseContextRef } = require("./context-card");
-const { createFlowContextCard } = require("./flow-context-card");
 const { assertNativeCoreExtensionAdapter, createNativeCoreExtensionAdapter } = require("./native-core-extension-adapter");
 const { createNativeIncrementalSession } = require("./native-incremental-coordinator");
 const { resolveProjectIdentity } = require("./project-identity");
@@ -42,12 +41,34 @@ function nativeCancellationError() {
   return error;
 }
 
+function nativeGraphHandle(result) {
+  const handle = result?.graphHandle;
+  if (!handle || handle.schemaVersion !== "flopeek-native-graph-handle/v1"
+    || typeof handle.projectId !== "string" || !handle.projectId
+    || typeof handle.factsDigest !== "string" || !handle.factsDigest
+    || handle.persistence !== "sqlite") {
+    throw new TypeError("Native persistent lifecycle returned an invalid graph handle.");
+  }
+  return handle;
+}
+
 async function prepareRustNativeBatch(native, inputRoot, options = {}) {
   const root = fs.realpathSync(inputRoot);
-  const response = await native.request("nativeJsStructuralFacts", {
+  const request = (changedPaths) => native.request("nativeJsStructuralFacts", {
     projectRoot: root,
+    ...(Array.isArray(changedPaths) ? { changedPaths } : {}),
     ...(options.ephemeral === true ? { ephemeral: true, sessionProjectId: options.sessionProjectId } : {}),
   });
+  let response;
+  try {
+    response = await request(options.changedPaths);
+  } catch (error) {
+    // A config, directory, or unsupported file event invalidates the session's
+    // candidate set. Reconcile explicitly; never retain a partial set merely
+    // to preserve an incremental fast path.
+    if (error?.code !== "native-session-reconcile-required") throw error;
+    response = await request(null);
+  }
   if (response?.schemaVersion !== "flopeek-native-source-facts/v1" || !Array.isArray(response.records)
     || !response.nativeEnvelope || typeof response.nativeEnvelope !== "object" || Array.isArray(response.nativeEnvelope)) {
     throw new TypeError("Rust source authority returned an invalid native StructuralFactBatch envelope.");
@@ -89,6 +110,37 @@ async function prepareRustNativeBatch(native, inputRoot, options = {}) {
         reusedFiles: Math.max(0, sourceRecords.length - (Number(response.parsedFiles) || 0)),
         removedFiles: Array.isArray(response.removedPaths) ? response.removedPaths.length : 0,
         changedPaths: first ? [] : changedPaths,
+      },
+    },
+    preparedFacts: null,
+    publicEnvelope: null,
+  };
+}
+
+function reuseRustNativeBatch(previous) {
+  const batch = previous?.batch;
+  if (!batch || !Array.isArray(batch.records)) {
+    throw new Error("Rust native no-op refresh requires the previous complete structural fact batch.");
+  }
+  return {
+    batch,
+    response: null,
+    prepared: {
+      root: null,
+      sourceRecords: batch.records.map((record) => ({
+        relativePath: record.relativePath,
+        sourceHash: record.sourceHash,
+        sourceScope: record.sourceScope,
+        language: record.language,
+      })),
+      graphContext: previous.graphContext || null,
+      refresh: {
+        strategy: "incremental-content-analysis",
+        mode: "incremental",
+        analyzedFiles: 0,
+        reusedFiles: batch.records.length,
+        removedFiles: 0,
+        changedPaths: [],
       },
     },
     preparedFacts: null,
@@ -311,13 +363,24 @@ function createNativeCoreClient(options = {}) {
       });
     } catch (error) {
       if (error?.code !== "native-query-fact-cache-miss") throw error;
+      if (batch.schemaVersion === "flopeek-native-graph-handle/v1") {
+        const current = await native.request("getNativeCurrentPublicGraph", {
+          projectRoot: root,
+          projectId: batch.projectId,
+        });
+        if (!current?.batch || typeof current.batch !== "object") throw error;
+        const restored = withNativePublicGraphVersion(current.batch, graph.state.graphVersion);
+        batches.set(graph, restored);
+        return native.request(method, { ...params, batch: restored });
+      }
       return native.request(method, { ...params, batch });
     }
   };
   const extensionAdapterMethods = Object.freeze([
-    "getScanStatus",
-    "getProjectOverview",
+    "local-view-metadata",
+    "local-flow-card-metadata",
     "non-application-flow-projection",
+    "non-application-flow-context-card",
     "ephemeral-changed-contexts",
     "formatted-context-card",
     "unsupported-context-ref",
@@ -340,10 +403,10 @@ function createNativeCoreClient(options = {}) {
         scanners.set(key, scanner);
       }
       const authorityRoot = scanner?.root || fs.realpathSync(root);
-      const previous = cacheDisabled
-        ? null
-        : sourceAuthority === "rust"
-          ? nativeSourceStates.get(key)
+      const previous = sourceAuthority === "rust"
+        ? nativeSourceStates.get(key)
+        : cacheDisabled
+          ? null
           : persistentBatches.get(scanner);
       // Process startup has no dependency on parser facts. Start it before
       // JavaScript prepares the StructuralFactBatch so cold launch latency is
@@ -359,16 +422,88 @@ function createNativeCoreClient(options = {}) {
       // A Rust-owned no-cache scan keeps the complete source-to-graph path in
       // the native session.  Besides enforcing the no-SQLite contract, this
       // avoids sending a full batch Rust -> Node -> Rust just to build a graph.
-      const directRustEphemeral = sourceAuthority === "rust" && cacheDisabled;
+      const directRustBounded = sourceAuthority === "rust" && scanOptions.nativeBounded === true;
+      const directRustPersistent = sourceAuthority === "rust" && !cacheDisabled && !directRustBounded;
+      const directRustEphemeral = sourceAuthority === "rust" && cacheDisabled && !directRustBounded;
       let directEphemeralResult = null;
-      const preparation = directRustEphemeral
+      const preparation = directRustBounded
         ? await (async () => {
           await nativeStartPromise;
           throwIfNativeScanCancelled(scanOptions.signal);
-          directEphemeralResult = await requestNativeWithSignal(native, scanOptions.signal, "refreshNativeJsSessionGraph", {
+          directEphemeralResult = await requestNativeWithSignal(native, scanOptions.signal, "refreshNativeProject", {
             projectRoot: authorityRoot,
             sessionProjectId: cacheDisabledProjectId(authorityRoot),
+            ...(typeof scanOptions.packagePath === "string" && scanOptions.packagePath.trim()
+              ? { packagePath: scanOptions.packagePath.trim() }
+              : {}),
+            limits: {
+              ...(Number.isSafeInteger(scanOptions.maxFiles) ? { maxFiles: scanOptions.maxFiles } : {}),
+              ...(Number.isSafeInteger(scanOptions.maxBytes) ? { maxBytes: scanOptions.maxBytes } : {}),
+              ...(Number.isSafeInteger(scanOptions.timeBudgetMs) ? { budgetMs: scanOptions.timeBudgetMs } : {}),
+            },
           });
+          if (!directEphemeralResult?.batch || typeof directEphemeralResult.batch !== "object") {
+            throw new Error("Native bounded source scan returned no structural fact batch.");
+          }
+          return {
+            batch: directEphemeralResult.batch,
+            prepared: { sourceRecords: directEphemeralResult.batch.records || [], graphContext: null },
+            preparedFacts: null,
+            publicEnvelope: null,
+          };
+        })()
+        : directRustPersistent
+        ? await (async () => {
+          await nativeStartPromise;
+          throwIfNativeScanCancelled(scanOptions.signal);
+          const request = (changedPaths) => requestNativeWithSignal(native, scanOptions.signal, "refreshNativePersistentProject", {
+            projectRoot: authorityRoot,
+            ...(Array.isArray(changedPaths) ? { changedPaths } : {}),
+          });
+          try {
+            directEphemeralResult = await request(scanOptions.changedPaths);
+          } catch (error) {
+            if (error?.code === "native-source-adapter-unavailable") {
+              const separator = typeof error.message === "string" ? error.message.lastIndexOf(":") : -1;
+              error.unsupportedPaths = separator >= 0
+                ? error.message.slice(separator + 1).replace(/\.$/, "").split(",").map((value) => value.trim()).filter(Boolean)
+                : [];
+            }
+            if (error?.code !== "native-session-reconcile-required") throw error;
+            directEphemeralResult = await request(null);
+          }
+          const handle = nativeGraphHandle(directEphemeralResult);
+          return {
+            batch: handle,
+            prepared: {
+              sourceRecords: [],
+              graphContext: null,
+              refresh: directEphemeralResult.sourceRefresh || null,
+            },
+            preparedFacts: null,
+            publicEnvelope: null,
+          };
+        })()
+        : directRustEphemeral
+        ? previous && Array.isArray(scanOptions.changedPaths) && scanOptions.changedPaths.length === 0
+          ? reuseRustNativeBatch(previous)
+          : await (async () => {
+          await nativeStartPromise;
+          throwIfNativeScanCancelled(scanOptions.signal);
+          const directParams = {
+            projectRoot: authorityRoot,
+            sessionProjectId: cacheDisabledProjectId(authorityRoot),
+            ...(Array.isArray(scanOptions.changedPaths) ? { changedPaths: scanOptions.changedPaths } : {}),
+          };
+          try {
+            directEphemeralResult = await requestNativeWithSignal(native, scanOptions.signal, "refreshNativeJsSessionGraph", directParams);
+          } catch (error) {
+            if (error?.code !== "native-session-reconcile-required") throw error;
+            directEphemeralResult = await requestNativeWithSignal(native, scanOptions.signal, "refreshNativeJsSessionGraph", {
+              projectRoot: authorityRoot,
+              sessionProjectId: cacheDisabledProjectId(authorityRoot),
+            });
+          }
           if (!directEphemeralResult?.batch || typeof directEphemeralResult.batch !== "object") {
             throw new Error("Native ephemeral source scan returned no structural fact batch.");
           }
@@ -378,9 +513,11 @@ function createNativeCoreClient(options = {}) {
             preparedFacts: null,
             publicEnvelope: null,
           };
-        })()
+          })()
         : sourceAuthority === "rust"
-          ? await prepareRustNativeBatch(native, authorityRoot, { previous })
+          ? previous && Array.isArray(scanOptions.changedPaths) && scanOptions.changedPaths.length === 0
+            ? reuseRustNativeBatch(previous)
+            : await prepareRustNativeBatch(native, authorityRoot, { previous, changedPaths: scanOptions.changedPaths })
           : prepareStructuralFactBatch(scanner, scanOptions.changedPaths, {
             onProfile: profile,
             buildBatch: cacheDisabled || !previous,
@@ -451,6 +588,12 @@ function createNativeCoreClient(options = {}) {
         };
         profile?.({ phase: "native-core-public-graph-patch", milliseconds: 0, transport: "collections", ...patchStats });
       }
+      // A declared empty changed-path set is a real session no-op. Rust keeps
+      // the graph payload, while this boundary owns the precise event-driven
+      // refresh telemetry exposed to product surfaces.
+      if (sourceAuthority === "rust" && preparation.response === null && result?.graph?.analysis) {
+        result.graph.analysis.refresh = prepared.refresh;
+      }
       profile?.({ phase: "native-core-lifecycle", milliseconds: lifecycleMilliseconds, cacheDisabled, factPatch: usedFactPatch });
       const responseStats = typeof native.getLastResponseStats === "function" ? native.getLastResponseStats() : null;
       if (responseStats) {
@@ -510,16 +653,30 @@ function createNativeCoreClient(options = {}) {
           migrated: false,
         };
       }
-      batches.set(result.graph, withNativePublicGraphVersion(batch, result.publicGraphVersion));
-      roots.set(result.graph, cacheDisabled ? null : authorityRoot);
-      if (!cacheDisabled) {
-        const state = { batch, graphContext: prepared.graphContext, graph: result.graph };
-        if (sourceAuthority === "rust") nativeSourceStates.set(key, state);
-        else persistentBatches.set(scanner, state);
+      if (directRustBounded && result.graph?.analysis) {
+        result.graph.analysis.nativeBoundedDiscovery = result.boundedDiscovery || null;
       }
+      const queryBatch = directRustPersistent
+        ? nativeGraphHandle(result)
+        : withNativePublicGraphVersion(batch, result.publicGraphVersion);
+      batches.set(result.graph, queryBatch);
+      roots.set(result.graph, cacheDisabled ? null : authorityRoot);
+      const state = { batch: queryBatch, graphContext: prepared.graphContext, graph: result.graph };
+      if (sourceAuthority === "rust") nativeSourceStates.set(key, state);
+      else if (!cacheDisabled) persistentBatches.set(scanner, state);
       report("native-core-scan-total", scanStarted, { cacheDisabled, scannerReused });
       return result.graph;
     };
+
+  const getNativeFlowContextCard = async (graph, flowId, format = "json", scope = "application", queryOptions = {}) => {
+    if (scope !== "application") return extensions.getNonApplicationFlowContextCard(graph, flowId, format, scope, queryOptions);
+    const maxSteps = queryOptions.maxSteps;
+    const coreCard = await requestNativeQuery("getNativeFlowContextCard", graph, { flowId, maxSteps });
+    if (!coreCard) return null;
+    const lens = await requestNativeQuery("getNativeFlowLensCore", graph, { flowId, maxSteps });
+    const card = extensions.attachFlowContextCard(graph, coreCard, extensions.attachFlowExtensions(graph, lens));
+    return createContextPacket(card, format);
+  };
 
   return assertCoreClient(Object.freeze({
     schemaVersion: CORE_CLIENT_SCHEMA,
@@ -546,8 +703,21 @@ function createNativeCoreClient(options = {}) {
       roots.set(result.graph, durableRoot);
       return result.graph;
     },
-    getScanStatus: (graph, queryOptions = {}) => extensions.getScanStatus(graph, queryOptions),
-    getProjectOverview: (graph, queryOptions = {}) => extensions.getProjectOverview(graph, queryOptions),
+    getScanStatus: async (graph, queryOptions = {}) => requestNativeQuery("getNativeScanStatus", graph, {
+      scanOutcome: queryOption(queryOptions, "scanOutcome"),
+      project: queryOption(queryOptions, "project"),
+    }),
+    getProjectOverview: async (graph, queryOptions = {}) => {
+      const coreView = await requestNativeQuery("getNativeProjectOverviewCore", graph, {
+        mode: queryOption(queryOptions, "mode"),
+        scope: queryOption(queryOptions, "scope"),
+        level: queryOption(queryOptions, "level"),
+        focus: queryOption(queryOptions, "focus"),
+        maxNodes: queryOption(queryOptions, "maxNodes"),
+        maxEdges: queryOption(queryOptions, "maxEdges"),
+      });
+      return extensions.attachProjectOverviewExtensions(graph, coreView);
+    },
     findNodes: async (graph, queryOptions = {}) => requestNativeQuery("findNodes", graph, {
       query: queryOption(queryOptions, "q", "query") || "",
       scope: queryOption(queryOptions, "scope"),
@@ -572,6 +742,7 @@ function createNativeCoreClient(options = {}) {
       });
       return extensions.attachFlowExtensions(graph, lens);
     },
+    getFlowContextCard: getNativeFlowContextCard,
     getChangeImpact: async (graph, changedPaths, queryOptions = {}) => {
       const impact = await requestNativeQuery("getChangeImpact", graph, {
         changedPaths: Array.isArray(changedPaths) ? changedPaths : [changedPaths],
@@ -627,11 +798,9 @@ function createNativeCoreClient(options = {}) {
         contextRef,
       });
       if (!resolution.card || parsed.kind !== "flow" || !["current", "stale"].includes(resolution.status)) return resolution;
-      const lens = await requestNativeQuery("getNativeFlowLensCore", graph, {
-        flowId: parsed.contextId,
-      });
-      const extendedLens = extensions.attachFlowExtensions(graph, lens);
-      return { ...resolution, resolvedRef: extendedLens.flow.contextRef, card: createFlowContextCard(graph, extendedLens) };
+      const packet = await getNativeFlowContextCard(graph, parsed.contextId);
+      if (!packet?.card) return resolution;
+      return { ...resolution, resolvedRef: packet.card.contextRef, card: packet.card };
     },
     getNativeFlowLensCore: async (graph, flowId, maxSteps = 12) => requestNativeQuery("getNativeFlowLensCore", graph, { flowId, maxSteps }),
     getNativeNodeContextCard: async (graph, nodeId) => requestNativeQuery("getNativeNodeContextCard", graph, { nodeId }),

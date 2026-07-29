@@ -1,12 +1,17 @@
 use crate::inventory::{
+    MAX_NATIVE_SOURCE_FILE_BYTES, NativeBoundedDiscovery, discover_native_bounded_project,
     scan_native_ephemeral_inventory_with_paths, scan_native_inventory_with_paths,
 };
-use crate::js_batch::{build_native_js_entry_facts, build_native_js_structural_records};
+use crate::js_batch::{
+    build_native_js_entry_facts, build_native_js_entry_facts_for_manifests,
+    build_native_js_structural_records, build_native_js_structural_records_with_source_hashes,
+    native_public_source_hash,
+};
 use crate::js_resolver::{NativeJsResolutionFacts, resolve_native_js_imports};
-use crate::project_identity::ProjectIdentity;
+use crate::project_identity::{ProjectIdentity, resolve_ephemeral_project_identity};
 use crate::scope::read_native_scope;
 use crate::store::open_native_store;
-use rusqlite::{OptionalExtension, params};
+use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -160,6 +165,10 @@ pub struct NativeJsSymbol {
 pub struct NativeJsFactsStatus {
     pub project_root: PathBuf,
     pub project_identity: ProjectIdentity,
+    /// True only for a full cold/reconciled source acquisition. This is kept
+    /// explicit because an initial inventory may internally list every file as
+    /// changed, which must never leak as incremental public telemetry.
+    pub initial_scan: bool,
     pub adapter_version: String,
     pub parsed_files: usize,
     pub reused_files: usize,
@@ -170,14 +179,301 @@ pub struct NativeJsFactsStatus {
     pub changed_paths: Vec<String>,
     pub reused_paths: Vec<String>,
     pub removed_paths: Vec<String>,
+    // Includes direct source events plus importers whose resolved-record
+    // payload changed. This is intentionally separate from public refresh
+    // telemetry so SQLite can selectively write every affected record without
+    // overstating the user's changed-path event.
+    pub changed_record_paths: Vec<String>,
     pub source_scope_counts: BTreeMap<String, usize>,
     pub scope_source: String,
     pub flow_entries_tests: bool,
     pub flow_entries_fixtures: bool,
     pub facts: BTreeMap<String, NativeJsFacts>,
+    /// Public SHA-256 hashes already read during this process. Unlike the
+    /// inventory's durable BLAKE3 detector, these are session-local graph
+    /// contract values and avoid reopening unchanged sources on refresh.
+    pub source_hashes: BTreeMap<String, String>,
     pub resolution: BTreeMap<String, NativeJsResolutionFacts>,
     pub structural_records: Vec<serde_json::Value>,
     pub entry_facts: serde_json::Value,
+}
+
+/// Return a truthful lifecycle projection for an explicit no-op event. The
+/// complete parser/graph facts remain session-owned, but a caller observing
+/// refresh telemetry must not see cold-scan parse counts after `changedPaths`
+/// explicitly declared that nothing changed.
+pub fn reuse_native_js_facts_session(previous: &NativeJsFactsStatus) -> NativeJsFactsStatus {
+    let mut next = previous.clone();
+    next.initial_scan = false;
+    next.parsed_files = 0;
+    next.reused_files = next.facts.len();
+    next.failed_files = next
+        .facts
+        .values()
+        .filter(|fact| fact.status == "parse-failed")
+        .count();
+    next.removed_facts = 0;
+    next.changed_paths.clear();
+    next.reused_paths = next.candidate_paths.clone();
+    next.removed_paths.clear();
+    next.changed_record_paths.clear();
+    next
+}
+
+// Refresh one already-initialized no-cache session without re-walking the
+// repository. Directory, scope/config, and non-JS/TS events deliberately
+// require reconciliation because their candidate set cannot be inferred from a
+// single path event safely.
+pub fn refresh_native_js_facts_session(
+    previous: &NativeJsFactsStatus,
+    changed_paths: &[String],
+) -> Result<NativeJsFactsStatus, String> {
+    let scope = read_native_scope(&previous.project_root)?;
+    let mut next = previous.clone();
+    next.initial_scan = false;
+    // Package manifests are never admitted to this changed-path fast path:
+    // their events require reconciliation above.  Therefore package-command
+    // entries are stable for an ordinary JS/TS source edit.  The only
+    // source-derived entry family is node-cron, so retain the existing entry
+    // projection unless a changed fact can add, remove, or invalidate one.
+    let mut entry_facts_affected = false;
+    let mut changed = BTreeSet::new();
+    for path in changed_paths {
+        let normalized = path.replace('\\', "/");
+        if normalized.is_empty()
+            || normalized.starts_with('/')
+            || normalized
+                .split('/')
+                .any(|segment| segment == ".." || segment.is_empty())
+        {
+            return Err(format!("native-session-reconcile-required:{path}"));
+        }
+        if normalized == ".flopeek/config.json" || normalized.ends_with('/') {
+            return Err(format!("native-session-reconcile-required:{normalized}"));
+        }
+        if language_for_path(&normalized).is_none() {
+            return Err(format!("native-session-reconcile-required:{normalized}"));
+        }
+        let absolute = previous.project_root.join(&normalized);
+        let was_candidate = previous.candidate_paths.contains(&normalized);
+        let is_candidate = native_js_incremental_candidate(&scope, &normalized, &absolute)?;
+        // Watchers can report ignored directories and a stale delete event for
+        // a path that was never in the graph. Those events are safe no-ops;
+        // admitting them would make incremental discovery diverge from the
+        // initial inventory contract.
+        if was_candidate || is_candidate {
+            changed.insert(normalized);
+        }
+    }
+    let mut parsed_files = 0;
+    let mut removed_paths = Vec::new();
+    let mut added_paths = BTreeSet::new();
+    for path in &changed {
+        let absolute = previous.project_root.join(path);
+        entry_facts_affected |= previous
+            .facts
+            .get(path)
+            .is_some_and(native_js_fact_affects_entry_projection);
+        if !absolute.is_file() {
+            next.facts.remove(path);
+            next.candidate_paths.retain(|candidate| candidate != path);
+            removed_paths.push(path.clone());
+            continue;
+        }
+        let source = fs::read_to_string(&absolute).map_err(|error| {
+            format!("Unable to read JavaScript/TypeScript source {path}: {error}")
+        })?;
+        let fact = parse_native_js_facts(path, &source).ok_or_else(|| {
+            format!("No native JavaScript/TypeScript parser is registered for {path}.")
+        })?;
+        entry_facts_affected |= native_js_fact_affects_entry_projection(&fact);
+        parsed_files += 1;
+        next.facts.insert(path.clone(), fact);
+        next.source_hashes
+            .insert(path.clone(), native_public_source_hash(&source));
+        if !next.candidate_paths.contains(path) {
+            next.candidate_paths.push(path.clone());
+            added_paths.insert(path.clone());
+        }
+    }
+    for path in &removed_paths {
+        next.source_hashes.remove(path);
+    }
+    next.candidate_paths
+        .sort_by(|left, right| js_locale_compare(left, right));
+    let known_records = next
+        .candidate_paths
+        .iter()
+        .map(|path| (path.clone(), scope.classify(path).as_str().to_string()))
+        .collect::<Vec<_>>();
+    let known_paths = known_records
+        .iter()
+        .map(|(path, _)| path.clone())
+        .collect::<BTreeSet<_>>();
+    let source_scopes = known_records.iter().cloned().collect::<BTreeMap<_, _>>();
+    let record_orders = known_records
+        .iter()
+        .enumerate()
+        .map(|(order, (path, _))| (path.clone(), order))
+        .collect::<BTreeMap<_, _>>();
+    // A changed source can alter its own imports or invalidate imports that
+    // previously resolved to it. New files are deliberately conservative:
+    // unresolved relative imports may now bind, so their resolution requires
+    // a pass over the existing facts, but still never reparses or rereads
+    // their source bodies.
+    let mut affected_resolution_paths = next
+        .resolution
+        .iter()
+        .filter(|(_, resolution)| {
+            resolution
+                .resolved_imports
+                .iter()
+                .any(|import| changed.contains(&import.target_path))
+        })
+        .map(|(path, _)| path.clone())
+        .collect::<BTreeSet<_>>();
+    affected_resolution_paths.extend(
+        changed
+            .iter()
+            .filter(|path| next.facts.contains_key(*path))
+            .cloned(),
+    );
+    if !added_paths.is_empty() || !removed_paths.is_empty() {
+        // Candidate membership changes recordOrder for subsequent files. Keep
+        // the public batch deterministic by rebuilding records from cached
+        // facts/hashes, not by reparsing or rereading every source file.
+        affected_resolution_paths = next.facts.keys().cloned().collect();
+    }
+    for path in &removed_paths {
+        next.resolution.remove(path);
+    }
+    let affected_facts = affected_resolution_paths
+        .iter()
+        .filter_map(|path| {
+            next.facts
+                .get(path)
+                .cloned()
+                .map(|facts| (path.clone(), facts))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let refreshed_resolution =
+        resolve_native_js_imports(&next.project_root, &affected_facts, &known_paths);
+    next.resolution.extend(refreshed_resolution);
+    let refreshed_records = build_native_js_structural_records_with_source_hashes(
+        &next.project_root,
+        &affected_facts,
+        &next.resolution,
+        &source_scopes,
+        &record_orders,
+        Some(&next.source_hashes),
+    )?;
+    let refreshed_paths = affected_facts.keys().cloned().collect::<BTreeSet<_>>();
+    next.structural_records.retain(|record| {
+        match record
+            .get("relativePath")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some(path) => {
+                !refreshed_paths.contains(path)
+                    && !removed_paths.iter().any(|removed| removed == path)
+            }
+            None => true,
+        }
+    });
+    next.structural_records.extend(refreshed_records);
+    next.structural_records.sort_by_key(|record| {
+        record
+            .get("recordOrder")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(u64::MAX)
+    });
+    if entry_facts_affected || !added_paths.is_empty() || !removed_paths.is_empty() {
+        next.entry_facts =
+            build_native_js_entry_facts(&next.project_root, &next.facts, &next.structural_records);
+    }
+    next.parsed_files = parsed_files;
+    next.reused_files = next.facts.len().saturating_sub(parsed_files);
+    next.failed_files = next
+        .facts
+        .values()
+        .filter(|fact| fact.status == "parse-failed")
+        .count();
+    next.removed_facts = removed_paths.len();
+    next.candidate_files = next.candidate_paths.len();
+    next.changed_paths = changed.into_iter().collect();
+    next.reused_paths = next
+        .candidate_paths
+        .iter()
+        .filter(|path| !next.changed_paths.contains(path))
+        .cloned()
+        .collect();
+    next.removed_paths = removed_paths;
+    next.changed_record_paths = refreshed_paths
+        .into_iter()
+        .chain(next.removed_paths.iter().cloned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    next.source_scope_counts = ["application", "test", "fixture", "generated", "excluded"]
+        .into_iter()
+        .map(|name| (name.to_string(), 0usize))
+        .collect();
+    for (_, source_scope) in known_records {
+        *next.source_scope_counts.entry(source_scope).or_default() += 1;
+    }
+    next.scope_source = scope.source;
+    next.flow_entries_tests = scope.flow_entries_tests;
+    next.flow_entries_fixtures = scope.flow_entries_fixtures;
+    Ok(next)
+}
+
+fn native_js_fact_affects_entry_projection(fact: &NativeJsFacts) -> bool {
+    !fact.structural.schedules.is_empty() || !fact.structural.unsupported_schedules.is_empty()
+}
+
+fn native_js_incremental_candidate(
+    scope: &crate::scope::NativeScope,
+    relative_path: &str,
+    absolute_path: &Path,
+) -> Result<bool, String> {
+    let segments = relative_path.split('/').collect::<Vec<_>>();
+    if segments
+        .iter()
+        .take(segments.len().saturating_sub(1))
+        .any(|segment| {
+            segment.starts_with('.')
+                || matches!(
+                    *segment,
+                    ".flopeek"
+                        | ".flowpeek"
+                        | ".git"
+                        | ".next"
+                        | ".nuxt"
+                        | ".project-flow"
+                        | ".turbo"
+                        | "build"
+                        | "coverage"
+                        | "dist"
+                        | "node_modules"
+                        | "out"
+                        | "target"
+                        | "vendor"
+                )
+        })
+        || scope.classify(relative_path) == crate::scope::SourceScope::Excluded
+    {
+        return Ok(false);
+    }
+    let metadata = match fs::symlink_metadata(absolute_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(format!(
+                "Unable to inspect JavaScript/TypeScript source {relative_path}: {error}"
+            ));
+        }
+    };
+    Ok(metadata.file_type().is_file() && metadata.len() <= MAX_NATIVE_SOURCE_FILE_BYTES)
 }
 
 fn language_for_path(path: &str) -> Option<Language> {
@@ -1181,7 +1477,7 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
     let project_root = inventory.project_root.clone();
     let project_identity = inventory.project_identity.clone();
     let scope = read_native_scope(&project_root)?;
-    let connection = open_native_store(&project_root).map_err(|error| error.to_string())?;
+    let mut connection = open_native_store(&project_root).map_err(|error| error.to_string())?;
     let project_pk: i64 = connection
         .query_row(
             "SELECT project_pk FROM projects WHERE project_id = ?1",
@@ -1230,20 +1526,44 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
         .enumerate()
         .map(|(order, (path, _))| (path.clone(), order))
         .collect::<BTreeMap<_, _>>();
+    // A warm repository used to perform one SQLite SELECT for every candidate
+    // source file.  Load this adapter's complete cache once instead: the
+    // source inventory already gives us the exact (path, hash) key for each
+    // lookup, and the in-memory map preserves the same cache-hit contract.
+    // This is intentionally a read-only preload; writes remain limited to
+    // parser misses below so a refresh never rewrites reusable facts.
+    let cached_facts = {
+        let mut statement = connection
+            .prepare(
+                "SELECT path, source_hash, payload_json
+                 FROM parser_facts
+                 WHERE project_pk = ?1 AND adapter_version = ?2",
+            )
+            .map_err(|error| error.to_string())?;
+        statement
+            .query_map(params![project_pk, NATIVE_JS_ADAPTER_VERSION], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|(path, source_hash, payload)| ((path, source_hash), payload))
+            .collect::<BTreeMap<_, _>>()
+    };
     let mut parsed_files = 0;
     let mut reused_files = 0;
     let mut failed_files = 0;
     let mut facts = BTreeMap::new();
+    let mut parser_cache_misses = Vec::new();
     for (path, source_hash) in &candidates {
-        let cached = connection
-            .query_row(
-                "SELECT payload_json FROM parser_facts
-                 WHERE project_pk = ?1 AND path = ?2 AND source_hash = ?3 AND adapter_version = ?4",
-                params![project_pk, path, source_hash, NATIVE_JS_ADAPTER_VERSION],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(|error| error.to_string())?;
+        let cached = cached_facts
+            .get(&(path.clone(), source_hash.clone()))
+            .cloned();
         let fact = if let Some(payload) = cached {
             reused_files += 1;
             serde_json::from_str(&payload).map_err(|error| {
@@ -1257,20 +1577,11 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
             let parsed = parse_native_js_facts(path, &source).ok_or_else(|| {
                 format!("No native JavaScript/TypeScript parser is registered for {path}.")
             })?;
-            connection
-                .execute(
-                    "DELETE FROM parser_facts
-                     WHERE project_pk = ?1 AND path = ?2 AND adapter_version = ?3 AND source_hash != ?4",
-                    params![project_pk, path, NATIVE_JS_ADAPTER_VERSION, source_hash],
-                )
-                .map_err(|error| error.to_string())?;
-            connection
-                .execute(
-                    "INSERT INTO parser_facts(project_pk, path, source_hash, adapter_version, payload_json)
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![project_pk, path, source_hash, NATIVE_JS_ADAPTER_VERSION, serde_json::to_string(&parsed).map_err(|error| error.to_string())?],
-                )
-                .map_err(|error| error.to_string())?;
+            parser_cache_misses.push((
+                path.clone(),
+                source_hash.clone(),
+                serde_json::to_string(&parsed).map_err(|error| error.to_string())?,
+            ));
             parsed
         };
         if fact.status == "parse-failed" {
@@ -1278,14 +1589,40 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
         }
         facts.insert(path.clone(), fact);
     }
-    let removed_facts = connection
-        .execute(
-            "DELETE FROM parser_facts
-             WHERE project_pk = ?1 AND adapter_version = ?2
-               AND path NOT IN (SELECT path FROM inventory_files WHERE project_pk = ?1)",
-            params![project_pk, NATIVE_JS_ADAPTER_VERSION],
-        )
-        .map_err(|error| error.to_string())?;
+    // Parser cache mutation is one transaction per scan, not two implicit
+    // transactions per parsed file. This keeps the inventory's cache contract
+    // intact while avoiding WAL/fsync amplification on a cold scan.
+    let removed_facts = {
+        let transaction = connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        for (path, source_hash, payload) in &parser_cache_misses {
+            transaction
+                .execute(
+                    "DELETE FROM parser_facts
+                     WHERE project_pk = ?1 AND path = ?2 AND adapter_version = ?3 AND source_hash != ?4",
+                    params![project_pk, path, NATIVE_JS_ADAPTER_VERSION, source_hash],
+                )
+                .map_err(|error| error.to_string())?;
+            transaction
+                .execute(
+                    "INSERT INTO parser_facts(project_pk, path, source_hash, adapter_version, payload_json)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![project_pk, path, source_hash, NATIVE_JS_ADAPTER_VERSION, payload],
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        let removed = transaction
+            .execute(
+                "DELETE FROM parser_facts
+                 WHERE project_pk = ?1 AND adapter_version = ?2
+                   AND path NOT IN (SELECT path FROM inventory_files WHERE project_pk = ?1)",
+                params![project_pk, NATIVE_JS_ADAPTER_VERSION],
+            )
+            .map_err(|error| error.to_string())?;
+        transaction.commit().map_err(|error| error.to_string())?;
+        removed
+    };
     let resolution = resolve_native_js_imports(&project_root, &facts, &known_paths);
     let structural_records = build_native_js_structural_records(
         &project_root,
@@ -1298,6 +1635,7 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
     Ok(NativeJsFactsStatus {
         project_root,
         project_identity,
+        initial_scan: true,
         adapter_version: NATIVE_JS_ADAPTER_VERSION.to_string(),
         parsed_files,
         reused_files,
@@ -1305,14 +1643,24 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
         removed_facts,
         candidate_files: inventory.candidate_files,
         candidate_paths: inventory.candidate_paths.unwrap_or_default(),
-        changed_paths: inventory.changed_paths,
+        changed_paths: Vec::new(),
         reused_paths: inventory.reused_paths,
         removed_paths: inventory.removed_paths,
+        changed_record_paths: Vec::new(),
         source_scope_counts: inventory.source_scope_counts,
         scope_source: inventory.scope_source,
         flow_entries_tests: scope.flow_entries_tests,
         flow_entries_fixtures: scope.flow_entries_fixtures,
         facts,
+        source_hashes: structural_records
+            .iter()
+            .filter_map(|record| {
+                Some((
+                    record.get("relativePath")?.as_str()?.to_string(),
+                    record.get("sourceHash")?.as_str()?.to_string(),
+                ))
+            })
+            .collect(),
         resolution,
         structural_records,
         entry_facts,
@@ -1326,7 +1674,7 @@ pub fn scan_native_js_facts_ephemeral(
     input_root: &Path,
     session_project_id: Option<&str>,
 ) -> Result<NativeJsFactsStatus, String> {
-    let inventory = scan_native_ephemeral_inventory_with_paths(input_root, session_project_id)?;
+    let mut inventory = scan_native_ephemeral_inventory_with_paths(input_root, session_project_id)?;
     let project_root = inventory.project_root.clone();
     let project_identity = inventory.project_identity.clone();
     let scope = read_native_scope(&project_root)?;
@@ -1354,6 +1702,103 @@ pub fn scan_native_js_facts_ephemeral(
     let mut parsed_files = 0;
     let mut failed_files = 0;
     let mut facts = BTreeMap::new();
+    let mut source_hashes = BTreeMap::new();
+    let mut ephemeral_js_source_texts = std::mem::take(&mut inventory.ephemeral_js_source_texts);
+    for path in known_paths
+        .iter()
+        .filter(|path| language_for_path(path).is_some())
+    {
+        parsed_files += 1;
+        let source = match ephemeral_js_source_texts.remove(path) {
+            Some(source) => source,
+            // Keep the existing read/error contract for invalid UTF-8 input.
+            None => fs::read_to_string(project_root.join(path)).map_err(|error| {
+                format!("Unable to read JavaScript/TypeScript source {path}: {error}")
+            })?,
+        };
+        let fact = parse_native_js_facts(path, &source).ok_or_else(|| {
+            format!("No native JavaScript/TypeScript parser is registered for {path}.")
+        })?;
+        source_hashes.insert(path.clone(), native_public_source_hash(&source));
+        if fact.status == "parse-failed" {
+            failed_files += 1;
+        }
+        facts.insert(path.clone(), fact);
+    }
+    let resolution = resolve_native_js_imports(&project_root, &facts, &known_paths);
+    let structural_records = build_native_js_structural_records_with_source_hashes(
+        &project_root,
+        &facts,
+        &resolution,
+        &source_scopes,
+        &record_orders,
+        Some(&source_hashes),
+    )?;
+    let entry_facts = build_native_js_entry_facts(&project_root, &facts, &structural_records);
+    Ok(NativeJsFactsStatus {
+        project_root,
+        project_identity,
+        initial_scan: true,
+        adapter_version: NATIVE_JS_ADAPTER_VERSION.to_string(),
+        parsed_files,
+        reused_files: 0,
+        failed_files,
+        removed_facts: 0,
+        candidate_files: inventory.candidate_files,
+        candidate_paths: inventory.candidate_paths.unwrap_or_default(),
+        changed_paths: Vec::new(),
+        reused_paths: Vec::new(),
+        removed_paths: Vec::new(),
+        changed_record_paths: Vec::new(),
+        source_scope_counts: inventory.source_scope_counts,
+        scope_source: inventory.scope_source,
+        flow_entries_tests: scope.flow_entries_tests,
+        flow_entries_fixtures: scope.flow_entries_fixtures,
+        facts,
+        source_hashes,
+        resolution,
+        structural_records,
+        entry_facts,
+    })
+}
+
+/// Execute only a previously native-discovered bounded source set. This path
+/// never opens SQLite and keeps package scans session-only until a complete,
+/// verified plan is assembled by the protocol lifecycle.
+pub fn scan_native_js_facts_ephemeral_bounded(
+    input_root: &Path,
+    session_project_id: Option<&str>,
+    package_path: Option<&str>,
+    max_files: Option<usize>,
+    max_bytes: Option<i64>,
+    budget_ms: Option<u64>,
+) -> Result<(NativeJsFactsStatus, NativeBoundedDiscovery), String> {
+    let discovery =
+        discover_native_bounded_project(input_root, package_path, max_files, max_bytes, budget_ms)?;
+    let project_root = discovery.project_root.clone();
+    let scope = read_native_scope(&project_root)?;
+    let project_identity =
+        resolve_ephemeral_project_identity(scope.project_id.as_deref(), session_project_id)?;
+    let mut known_records = discovery
+        .candidates
+        .iter()
+        .map(|candidate| (candidate.path.clone(), candidate.source_scope.clone()))
+        .collect::<Vec<_>>();
+    known_records.sort_by(|left, right| js_locale_compare(&left.0, &right.0));
+    let known_paths = known_records
+        .iter()
+        .map(|(path, _)| path.clone())
+        .collect::<BTreeSet<_>>();
+    let source_scopes = known_records.iter().cloned().collect::<BTreeMap<_, _>>();
+    let record_orders = known_records
+        .iter()
+        .enumerate()
+        .map(|(order, (path, _))| (path.clone(), order))
+        .collect::<BTreeMap<_, _>>();
+    let mut parsed_files = 0;
+    let mut failed_files = 0;
+    let mut facts = BTreeMap::new();
+    let mut source_hashes = BTreeMap::new();
     for path in known_paths
         .iter()
         .filter(|path| language_for_path(path).is_some())
@@ -1365,49 +1810,76 @@ pub fn scan_native_js_facts_ephemeral(
         let fact = parse_native_js_facts(path, &source).ok_or_else(|| {
             format!("No native JavaScript/TypeScript parser is registered for {path}.")
         })?;
+        source_hashes.insert(path.clone(), native_public_source_hash(&source));
         if fact.status == "parse-failed" {
             failed_files += 1;
         }
         facts.insert(path.clone(), fact);
     }
     let resolution = resolve_native_js_imports(&project_root, &facts, &known_paths);
-    let structural_records = build_native_js_structural_records(
+    let structural_records = build_native_js_structural_records_with_source_hashes(
         &project_root,
         &facts,
         &resolution,
         &source_scopes,
         &record_orders,
+        Some(&source_hashes),
     )?;
-    let entry_facts = build_native_js_entry_facts(&project_root, &facts, &structural_records);
-    Ok(NativeJsFactsStatus {
+    let allowed_manifests = discovery
+        .package_path
+        .as_ref()
+        .map(|package_path| BTreeSet::from([format!("{package_path}/package.json")]));
+    let entry_facts = build_native_js_entry_facts_for_manifests(
+        &project_root,
+        &facts,
+        &structural_records,
+        allowed_manifests.as_ref(),
+    );
+    let mut source_scope_counts = ["application", "test", "fixture", "generated", "excluded"]
+        .into_iter()
+        .map(|name| (name.to_string(), 0usize))
+        .collect::<BTreeMap<_, _>>();
+    for (_, source_scope) in known_records {
+        *source_scope_counts.entry(source_scope).or_default() += 1;
+    }
+    let candidate_paths = discovery
+        .candidates
+        .iter()
+        .map(|candidate| candidate.path.clone())
+        .collect::<Vec<_>>();
+    let status = NativeJsFactsStatus {
         project_root,
         project_identity,
+        initial_scan: true,
         adapter_version: NATIVE_JS_ADAPTER_VERSION.to_string(),
         parsed_files,
         reused_files: 0,
         failed_files,
         removed_facts: 0,
-        candidate_files: inventory.candidate_files,
-        candidate_paths: inventory.candidate_paths.unwrap_or_default(),
-        changed_paths: inventory.changed_paths,
+        candidate_files: candidate_paths.len(),
+        candidate_paths,
+        changed_paths: Vec::new(),
         reused_paths: Vec::new(),
         removed_paths: Vec::new(),
-        source_scope_counts: inventory.source_scope_counts,
-        scope_source: inventory.scope_source,
+        changed_record_paths: Vec::new(),
+        source_scope_counts,
+        scope_source: scope.source,
         flow_entries_tests: scope.flow_entries_tests,
         flow_entries_fixtures: scope.flow_entries_fixtures,
         facts,
+        source_hashes,
         resolution,
         structural_records,
         entry_facts,
-    })
+    };
+    Ok((status, discovery))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        js_locale_compare, parse_native_js_facts, scan_native_js_facts,
-        scan_native_js_facts_ephemeral,
+        js_locale_compare, parse_native_js_facts, refresh_native_js_facts_session,
+        scan_native_js_facts, scan_native_js_facts_ephemeral,
     };
     use std::fs;
 
@@ -1560,6 +2032,110 @@ mod tests {
         assert_eq!(status.reused_files, 0);
         assert_eq!(status.project_identity.source, "session");
         assert!(!root.join(".flopeek").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn incremental_session_ignores_events_outside_the_initial_inventory_contract() {
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-js-ignored-event-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src/main.ts"),
+            "export const main = () => true;\n",
+        )
+        .unwrap();
+        let initial = scan_native_js_facts_ephemeral(&root, Some("session:ignored-event")).unwrap();
+        fs::create_dir_all(root.join("node_modules/injected")).unwrap();
+        fs::write(
+            root.join("node_modules/injected/index.ts"),
+            "export const injected = () => false;\n",
+        )
+        .unwrap();
+        let refreshed = refresh_native_js_facts_session(
+            &initial,
+            &["node_modules/injected/index.ts".to_string()],
+        )
+        .unwrap();
+        assert_eq!(refreshed.parsed_files, 0);
+        assert_eq!(refreshed.changed_paths, Vec::<String>::new());
+        assert_eq!(refreshed.candidate_paths, vec!["src/main.ts"]);
+        assert!(
+            !refreshed
+                .facts
+                .contains_key("node_modules/injected/index.ts")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn incremental_session_reuses_manifest_entries_for_an_ordinary_source_edit() {
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-js-entry-reuse-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"scripts":{"start":"node src/main.ts"}}"#,
+        )
+        .unwrap();
+        fs::write(root.join("src/main.ts"), "export const stable = true;\n").unwrap();
+        let initial = scan_native_js_facts_ephemeral(&root, Some("session:entry-reuse")).unwrap();
+        assert_eq!(
+            initial.entry_facts["entryPoints"]["supported"]["packageScripts"][0]["id"],
+            "command:package.json:start"
+        );
+        // The unreported manifest deletion is intentionally not part of this
+        // event contract. A subsequent package/config event will reconcile;
+        // this source-only event must not re-walk manifests or lose the last
+        // complete entry projection.
+        fs::remove_file(root.join("package.json")).unwrap();
+        fs::write(root.join("src/main.ts"), "export const changed = true;\n").unwrap();
+        let refreshed =
+            refresh_native_js_facts_session(&initial, &["src/main.ts".to_string()]).unwrap();
+        assert_eq!(refreshed.parsed_files, 1);
+        assert_eq!(refreshed.entry_facts, initial.entry_facts);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn incremental_session_marks_reverse_importers_for_selective_record_writes() {
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-js-reverse-importers-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src/dependency.ts"),
+            "export const dependency = true;\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("src/importer.ts"),
+            "import { dependency } from './dependency'; export const value = dependency;\n",
+        )
+        .unwrap();
+        let initial =
+            scan_native_js_facts_ephemeral(&root, Some("session:reverse-importers")).unwrap();
+        fs::remove_file(root.join("src/dependency.ts")).unwrap();
+        let refreshed =
+            refresh_native_js_facts_session(&initial, &["src/dependency.ts".to_string()]).unwrap();
+        assert_eq!(
+            refreshed.changed_record_paths,
+            vec!["src/dependency.ts", "src/importer.ts"]
+        );
+        assert!(
+            refreshed
+                .resolution
+                .get("src/importer.ts")
+                .is_some_and(|facts| facts.resolved_imports.is_empty())
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { CORE_MODE_SCHEMA, CoreModeError, requestedCoreMode, selectCoreMode } = require("../../src/core-mode");
-const { createConfiguredCoreClient, createSurfaceCoreClient } = require("../../src/core-runtime");
+const { createConfiguredCoreClient, createSurfaceCoreClient, createSurfaceCoreRuntime } = require("../../src/core-runtime");
 const { createJsCoreClient } = require("../../src/js-core-client");
 
 function completeEvidence() {
@@ -64,6 +64,17 @@ test("native request falls back explicitly until the gate and a trusted native c
   const eligible = selectCoreMode({ mode: "native", rolloutEvidence: completeEvidence(), nativeAvailable: true });
   assert.equal(eligible.selectedImplementation, "native");
   assert.equal(eligible.fallback.reason, "native-runtime-fallback-required");
+});
+
+test("native experimental is an explicit dogfood selection, never a rollout-approved native default", async () => {
+  const nativeCore = { ...createJsCoreClient(), implementation: "native-experimental", backendAuthority: "rust-sqlite" };
+  const runtime = createSurfaceCoreRuntime({ coreMode: "native-experimental", nativeCore });
+  assert.equal(runtime.selection.requestedMode, "native-experimental");
+  assert.equal(runtime.selection.selectedImplementation, "native");
+  assert.equal(runtime.selection.experimental, true);
+  assert.equal(runtime.selection.gate.eligible, false);
+  assert.equal(runtime.core.implementation, "native-experimental");
+  await runtime.core.close();
 });
 
 test("configured core activates shadow only through the supplied native protocol client", async () => {

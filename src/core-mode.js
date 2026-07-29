@@ -3,7 +3,7 @@
 const { evaluateNativeDefaultRollout } = require("./native-rollout-gate");
 
 const CORE_MODE_SCHEMA = "flopeek-core-mode/v1";
-const CORE_MODES = Object.freeze(["js", "shadow", "native"]);
+const CORE_MODES = Object.freeze(["js", "shadow", "native", "native-experimental"]);
 
 class CoreModeError extends Error {
   constructor(message) {
@@ -46,6 +46,39 @@ function selectCoreMode(options = {}) {
       selectedImplementation: "javascript",
       nativeShadow: true,
       fallback: null,
+      gate,
+    });
+  }
+  // Dogfooding must never masquerade as a rollout-approved default. This mode
+  // deliberately bypasses the default gate, but remains explicit in every
+  // surface selection record and still uses the normal rollback boundary.
+  if (requestedMode === "native-experimental") {
+    if (nativeAvailable) {
+      return Object.freeze({
+        schemaVersion: CORE_MODE_SCHEMA,
+        requestedMode,
+        selectedImplementation: "native",
+        nativeShadow: false,
+        experimental: true,
+        fallback: Object.freeze({
+          reason: "native-experimental-runtime-fallback-required",
+          required: "automatic-javascript-fallback-required",
+          gateReasons: gate.reasons,
+        }),
+        gate,
+      });
+    }
+    return Object.freeze({
+      schemaVersion: CORE_MODE_SCHEMA,
+      requestedMode,
+      selectedImplementation: "javascript",
+      nativeShadow: false,
+      experimental: true,
+      fallback: Object.freeze({
+        reason: "native-experimental-runtime-unavailable",
+        required: "automatic-javascript-fallback-required",
+        gateReasons: gate.reasons,
+      }),
       gate,
     });
   }

@@ -16,9 +16,11 @@ test("public Core CI proves package and clean-room behavior on the declared Node
   assert.match(workflow, /runs-on:\s*\$\{\{ matrix\.os \}\}/);
   assert.match(workflow, /uses: dtolnay\/rust-toolchain@stable/);
   assert.match(publicSourceRunner, /lanes\["public-source"\]\.unshift\("test\/unit\/native-inventory-parity\.test\.js"\)/);
-  for (const command of ["cargo test --manifest-path native/flopeek-core/Cargo.toml --locked", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --version", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-facts .", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-graph .", "node scripts/verify-branch-name.js", "npm run verify:core-baseline", "npm run test:public-source", "npm run test:package", "npm run audit:package", "npm run verify:clean-room"]) {
+  for (const command of ["npm run test:native-core", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --version", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-facts .", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-graph .", "node scripts/verify-branch-name.js", "npm run verify:core-baseline", "npm run test:public-source", "npm run test:package", "npm run audit:package", "npm run verify:clean-room"]) {
     assert.match(workflow, new RegExp(`- run: ${command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   }
+  const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+  assert.match(packageJson.scripts["test:native-core"], /node scripts\/smoke-native-release\.js/);
 });
 
 test("tagged Core releases verify source and package evidence before creating a GitHub Release", () => {
@@ -29,6 +31,9 @@ test("tagged Core releases verify source and package evidence before creating a 
   for (const command of ["npm run test:public-source", "npm run test:package", "npm run audit:package", "npm run verify:clean-room"]) {
     assert.match(workflow, new RegExp(`- run: ${command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   }
+  assert.match(workflow, /name: Publish native platform packages/);
+  assert.match(workflow, /npm publish "\$package" --access public --tag beta --provenance/);
+  assert.match(workflow, /needs: \[native-binaries, publish-native-packages\]/);
+  assert.match(workflow, /NPM_TOKEN is required: do not create a release/);
   assert.match(workflow, /gh release create/);
-  assert.doesNotMatch(workflow, /npm publish/);
 });

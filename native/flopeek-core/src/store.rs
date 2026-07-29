@@ -40,6 +40,23 @@ pub struct NativeGraphPromotionTiming {
     pub total_ms: u64,
 }
 
+/// All inputs that must be atomically promoted with a completed graph build.
+/// A typed request keeps the durable SQLite boundary coherent as the native
+/// lifecycle grows, instead of relying on positional optional arguments.
+#[derive(Debug, Clone, Copy)]
+pub struct NativeGraphPromotionRequest<'a> {
+    pub project_id: &'a str,
+    pub graph_version: i64,
+    pub public_graph_version: i64,
+    pub payload: &'a serde_json::Value,
+    pub compatibility_digest: &'a str,
+    pub adjacent_delta: Option<&'a serde_json::Value>,
+    pub facts_digest: Option<&'a str>,
+    pub structural_batch: Option<&'a serde_json::Value>,
+    pub changed_record_paths: Option<&'a BTreeSet<String>>,
+    pub reuse_public_components: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct NativeCompleteGraphPayload {
     pub graph_version: i64,
@@ -755,68 +772,41 @@ pub fn begin_graph_build(
 
 pub fn promote_graph_build(
     connection: &mut Connection,
-    project_id: &str,
-    graph_version: i64,
-    public_graph_version: i64,
-    payload: &serde_json::Value,
-    compatibility_digest: &str,
-    adjacent_delta: Option<&serde_json::Value>,
-    facts_digest: Option<&str>,
-    structural_batch: Option<&serde_json::Value>,
+    request: NativeGraphPromotionRequest<'_>,
 ) -> rusqlite::Result<()> {
-    promote_graph_build_with_changed_records(
-        connection,
-        project_id,
-        graph_version,
-        public_graph_version,
-        payload,
-        compatibility_digest,
-        adjacent_delta,
-        facts_digest,
-        structural_batch,
-        None,
-        false,
-    )
-    .map(|_| ())
+    promote_graph_build_with_changed_records(connection, request).map(|_| ())
 }
 
 pub fn promote_graph_build_with_changed_records(
     connection: &mut Connection,
-    project_id: &str,
-    graph_version: i64,
-    public_graph_version: i64,
-    payload: &serde_json::Value,
-    compatibility_digest: &str,
-    adjacent_delta: Option<&serde_json::Value>,
-    facts_digest: Option<&str>,
-    structural_batch: Option<&serde_json::Value>,
-    changed_record_paths: Option<&BTreeSet<String>>,
-    reuse_public_components: bool,
+    request: NativeGraphPromotionRequest<'_>,
 ) -> rusqlite::Result<NativeGraphPromotionTiming> {
     let started = Instant::now();
-    if contains_source_body(payload)
-        || adjacent_delta.is_some_and(contains_source_body)
-        || structural_batch.is_some_and(contains_source_body)
-        || !payload
+    if contains_source_body(request.payload)
+        || request.adjacent_delta.is_some_and(contains_source_body)
+        || request.structural_batch.is_some_and(contains_source_body)
+        || !request
+            .payload
             .get("schemaVersion")
             .is_some_and(|value| value.is_string())
-        || !is_sha256_digest(compatibility_digest)
-        || public_graph_version < 0
+        || !is_sha256_digest(request.compatibility_digest)
+        || request.public_graph_version < 0
     {
         return Err(rusqlite::Error::InvalidQuery);
     }
     let public_cache_started = Instant::now();
-    let public_graph_cache = native_public_graph_cache(payload, reuse_public_components)?;
+    let public_graph_cache =
+        native_public_graph_cache(request.payload, request.reuse_public_components)?;
     let public_cache_ms = public_cache_started.elapsed().as_millis() as u64;
-    if let Some(batch) = structural_batch {
-        let facts_digest = facts_digest.ok_or(rusqlite::Error::InvalidQuery)?;
+    if let Some(batch) = request.structural_batch {
+        let facts_digest = request.facts_digest.ok_or(rusqlite::Error::InvalidQuery)?;
         if batch.get("factsDigest").and_then(serde_json::Value::as_str) != Some(facts_digest) {
             return Err(rusqlite::Error::InvalidQuery);
         }
     }
     let transaction_started = Instant::now();
     let transaction = connection.transaction()?;
-    let project_pk = project_pk(&transaction, project_id)?;
+    let project_pk = project_pk(&transaction, request.project_id)?;
     let previous_graph_version: Option<i64> = transaction.query_row(
         "SELECT current_graph_version FROM projects WHERE project_pk = ?1",
         [project_pk],
@@ -825,7 +815,7 @@ pub fn promote_graph_build_with_changed_records(
     let changed = transaction.execute(
         "UPDATE graph_versions SET status = 'complete', compatibility_digest = ?1, public_graph_version = ?2, completed_at_ms = ?3
          WHERE project_pk = ?4 AND graph_version = ?5 AND status = 'building'",
-        rusqlite::params![compatibility_digest, public_graph_version, now_ms()?, project_pk, graph_version],
+        rusqlite::params![request.compatibility_digest, request.public_graph_version, now_ms()?, project_pk, request.graph_version],
     )?;
     if changed != 1 {
         return Err(rusqlite::Error::QueryReturnedNoRows);
@@ -834,35 +824,39 @@ pub fn promote_graph_build_with_changed_records(
     promote_native_public_graph_cache(
         &transaction,
         project_pk,
-        graph_version,
+        request.graph_version,
         previous_graph_version,
         &public_graph_cache,
-        reuse_public_components,
+        request.reuse_public_components,
     )?;
     let public_cache_write_ms = public_cache_write_started.elapsed().as_millis() as u64;
     let delta_write_started = Instant::now();
-    if let (Some(from_graph_version), Some(delta)) = (previous_graph_version, adjacent_delta) {
+    if let (Some(from_graph_version), Some(delta)) =
+        (previous_graph_version, request.adjacent_delta)
+    {
         let delta_json = serde_json::to_string(delta)
             .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
         transaction.execute(
             "INSERT INTO graph_deltas(project_pk, from_graph_version, to_graph_version, payload_json)
              VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![project_pk, from_graph_version, graph_version, delta_json],
+            rusqlite::params![project_pk, from_graph_version, request.graph_version, delta_json],
         )?;
     }
     let delta_write_ms = delta_write_started.elapsed().as_millis() as u64;
     let structural_fact_cache_started = Instant::now();
-    if let Some(batch) = structural_batch {
+    if let Some(batch) = request.structural_batch {
         // The old cache remains live until this transaction commits.  A
         // cancellation, validation failure, or crash therefore leaves the
         // previous complete graph and its matching batch untouched.
         promote_native_structural_batch_cache(
             &transaction,
             project_pk,
-            graph_version,
+            request.graph_version,
             batch,
-            facts_digest.expect("validated with structural batch"),
-            changed_record_paths,
+            request
+                .facts_digest
+                .expect("validated with structural batch"),
+            request.changed_record_paths,
         )?;
     } else {
         transaction.execute(
@@ -882,7 +876,7 @@ pub fn promote_graph_build_with_changed_records(
     let project_pointer_started = Instant::now();
     transaction.execute(
         "UPDATE projects SET current_graph_version = ?1 WHERE project_pk = ?2",
-        rusqlite::params![graph_version, project_pk],
+        rusqlite::params![request.graph_version, project_pk],
     )?;
     let project_pointer_ms = project_pointer_started.elapsed().as_millis() as u64;
     transaction.commit()?;
@@ -1362,7 +1356,7 @@ pub fn initialize_native_store(root: &Path) -> rusqlite::Result<NativeStoreStatu
         connection.query_row("PRAGMA busy_timeout", [], |row| row.get::<_, i64>(0))?;
     let quick_check =
         connection.query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))?;
-    if quick_check.to_ascii_lowercase() != "ok" {
+    if !quick_check.eq_ignore_ascii_case("ok") {
         return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
             std::io::Error::other(format!("SQLite quick_check failed: {quick_check}")),
         )));
@@ -1381,11 +1375,12 @@ pub fn initialize_native_store(root: &Path) -> rusqlite::Result<NativeStoreStatu
 #[cfg(test)]
 mod tests {
     use super::{
-        NATIVE_STORE_RELATIVE_PATH, NATIVE_STORE_SCHEMA_VERSION, NativeGraphVersion,
-        begin_graph_build, complete_graph_delta, complete_graph_payload, current_complete_graph,
-        current_structural_batch, initialize_native_store, native_delta_retention_plan,
-        open_native_store, promote_graph_build, promote_graph_build_with_changed_records,
-        prune_native_graph_deltas, recover_incomplete_graph_builds,
+        NATIVE_STORE_RELATIVE_PATH, NATIVE_STORE_SCHEMA_VERSION, NativeGraphPromotionRequest,
+        NativeGraphVersion, begin_graph_build, complete_graph_delta, complete_graph_payload,
+        current_complete_graph, current_structural_batch, initialize_native_store,
+        native_delta_retention_plan, open_native_store, promote_graph_build,
+        promote_graph_build_with_changed_records, prune_native_graph_deltas,
+        recover_incomplete_graph_builds,
     };
     use serde_json::json;
     use std::fs;
@@ -1458,14 +1453,18 @@ mod tests {
         );
         promote_graph_build(
             &mut connection,
-            "project:fixture",
-            first.graph_version,
-            0,
-            &json!({ "schemaVersion": "native-shadow/v1", "nodes": [] }),
-            &digest_one,
-            None,
-            None,
-            None,
+            NativeGraphPromotionRequest {
+                project_id: "project:fixture",
+                graph_version: first.graph_version,
+                public_graph_version: 0,
+                payload: &json!({ "schemaVersion": "native-shadow/v1", "nodes": [] }),
+                compatibility_digest: &digest_one,
+                adjacent_delta: None,
+                facts_digest: None,
+                structural_batch: None,
+                changed_record_paths: None,
+                reuse_public_components: false,
+            },
         )
         .unwrap();
         let first_complete = NativeGraphVersion {
@@ -1487,14 +1486,18 @@ mod tests {
         assert!(
             promote_graph_build(
                 &mut connection,
-                "project:fixture",
-                invalid.graph_version,
-                1,
-                &json!({ "schemaVersion": "native-shadow/v1", "nodes": [] }),
-                "not-a-sha256-digest",
-                None,
-                None,
-                None,
+                NativeGraphPromotionRequest {
+                    project_id: "project:fixture",
+                    graph_version: invalid.graph_version,
+                    public_graph_version: 1,
+                    payload: &json!({ "schemaVersion": "native-shadow/v1", "nodes": [] }),
+                    compatibility_digest: "not-a-sha256-digest",
+                    adjacent_delta: None,
+                    facts_digest: None,
+                    structural_batch: None,
+                    changed_record_paths: None,
+                    reuse_public_components: false
+                },
             )
             .is_err()
         );
@@ -1520,14 +1523,18 @@ mod tests {
         assert!(
             promote_graph_build(
                 &mut connection,
-                "project:fixture",
-                interrupted.graph_version,
-                1,
-                &json!({ "schemaVersion": "native-shadow/v1", "nodes": [] }),
-                &digest_one,
-                None,
-                None,
-                None,
+                NativeGraphPromotionRequest {
+                    project_id: "project:fixture",
+                    graph_version: interrupted.graph_version,
+                    public_graph_version: 1,
+                    payload: &json!({ "schemaVersion": "native-shadow/v1", "nodes": [] }),
+                    compatibility_digest: &digest_one,
+                    adjacent_delta: None,
+                    facts_digest: None,
+                    structural_batch: None,
+                    changed_record_paths: None,
+                    reuse_public_components: false
+                },
             )
             .is_err()
         );
@@ -1536,14 +1543,18 @@ mod tests {
                 .unwrap();
         promote_graph_build(
             &mut connection,
-            "project:fixture",
-            second.graph_version,
-            1,
-            &json!({ "schemaVersion": "native-shadow/v1", "nodes": [] }),
-            &digest_two,
-            Some(&json!({ "added": ["node:next"] })),
-            None,
-            None,
+            NativeGraphPromotionRequest {
+                project_id: "project:fixture",
+                graph_version: second.graph_version,
+                public_graph_version: 1,
+                payload: &json!({ "schemaVersion": "native-shadow/v1", "nodes": [] }),
+                compatibility_digest: &digest_two,
+                adjacent_delta: Some(&json!({ "added": ["node:next"] })),
+                facts_digest: None,
+                structural_batch: None,
+                changed_record_paths: None,
+                reuse_public_components: false,
+            },
         )
         .unwrap();
         assert_eq!(
@@ -1587,14 +1598,18 @@ mod tests {
         let digest_one = format!("sha256:{}", "1".repeat(64));
         promote_graph_build(
             &mut connection,
-            project,
-            first.graph_version,
-            1,
-            &first_payload,
-            &digest_one,
-            None,
-            None,
-            None,
+            NativeGraphPromotionRequest {
+                project_id: project,
+                graph_version: first.graph_version,
+                public_graph_version: 1,
+                payload: &first_payload,
+                compatibility_digest: &digest_one,
+                adjacent_delta: None,
+                facts_digest: None,
+                structural_batch: None,
+                changed_record_paths: None,
+                reuse_public_components: false,
+            },
         )
         .unwrap();
         assert_eq!(
@@ -1651,14 +1666,18 @@ mod tests {
         let digest_two = format!("sha256:{}", "2".repeat(64));
         promote_graph_build(
             &mut connection,
-            project,
-            second.graph_version,
-            2,
-            &second_payload,
-            &digest_two,
-            None,
-            None,
-            None,
+            NativeGraphPromotionRequest {
+                project_id: project,
+                graph_version: second.graph_version,
+                public_graph_version: 2,
+                payload: &second_payload,
+                compatibility_digest: &digest_two,
+                adjacent_delta: None,
+                facts_digest: None,
+                structural_batch: None,
+                changed_record_paths: None,
+                reuse_public_components: false,
+            },
         )
         .unwrap();
         assert_eq!(
@@ -1718,16 +1737,18 @@ mod tests {
         let digest_three = format!("sha256:{}", "3".repeat(64));
         promote_graph_build_with_changed_records(
             &mut connection,
-            project,
-            third.graph_version,
-            3,
-            &second_payload,
-            &digest_three,
-            None,
-            None,
-            None,
-            None,
-            true,
+            NativeGraphPromotionRequest {
+                project_id: project,
+                graph_version: third.graph_version,
+                public_graph_version: 3,
+                payload: &second_payload,
+                compatibility_digest: &digest_three,
+                adjacent_delta: None,
+                facts_digest: None,
+                structural_batch: None,
+                changed_record_paths: None,
+                reuse_public_components: true,
+            },
         )
         .unwrap();
         assert_eq!(
@@ -1804,14 +1825,18 @@ mod tests {
         let first = begin_graph_build(&mut connection, project, &facts_one, &facts_one).unwrap();
         promote_graph_build(
             &mut connection,
-            project,
-            first.graph_version,
-            1,
-            &json!({ "schemaVersion": "native-shadow/v1", "nodes": [] }),
-            &format!("sha256:{}", "c".repeat(64)),
-            None,
-            Some(&facts_one),
-            Some(&first_batch),
+            NativeGraphPromotionRequest {
+                project_id: project,
+                graph_version: first.graph_version,
+                public_graph_version: 1,
+                payload: &json!({ "schemaVersion": "native-shadow/v1", "nodes": [] }),
+                compatibility_digest: &format!("sha256:{}", "c".repeat(64)),
+                adjacent_delta: None,
+                facts_digest: Some(&facts_one),
+                structural_batch: Some(&first_batch),
+                changed_record_paths: None,
+                reuse_public_components: false,
+            },
         )
         .unwrap();
         assert_eq!(
@@ -1829,14 +1854,18 @@ mod tests {
         let second = begin_graph_build(&mut connection, project, &facts_two, &facts_two).unwrap();
         promote_graph_build(
             &mut connection,
-            project,
-            second.graph_version,
-            2,
-            &json!({ "schemaVersion": "native-shadow/v1", "nodes": [] }),
-            &format!("sha256:{}", "e".repeat(64)),
-            None,
-            Some(&facts_two),
-            Some(&second_batch),
+            NativeGraphPromotionRequest {
+                project_id: project,
+                graph_version: second.graph_version,
+                public_graph_version: 2,
+                payload: &json!({ "schemaVersion": "native-shadow/v1", "nodes": [] }),
+                compatibility_digest: &format!("sha256:{}", "e".repeat(64)),
+                adjacent_delta: None,
+                facts_digest: Some(&facts_two),
+                structural_batch: Some(&second_batch),
+                changed_record_paths: None,
+                reuse_public_components: false,
+            },
         )
         .unwrap();
         assert_eq!(
@@ -1883,14 +1912,7 @@ mod tests {
             });
             promote_graph_build(
                 &mut connection,
-                "project:retention",
-                candidate.graph_version,
-                public_graph_version,
-                &json!({ "schemaVersion": "native-shadow/v1", "nodes": [], "version": public_graph_version }),
-                &digest,
-                delta.as_ref(),
-                None,
-                None,
+                NativeGraphPromotionRequest { project_id: "project:retention", graph_version: candidate.graph_version, public_graph_version, payload: &json!({ "schemaVersion": "native-shadow/v1", "nodes": [], "version": public_graph_version }), compatibility_digest: &digest, adjacent_delta: delta.as_ref(), facts_digest: None, structural_batch: None, changed_record_paths: None, reuse_public_components: false },
             )
             .unwrap();
             versions.push(candidate.graph_version);

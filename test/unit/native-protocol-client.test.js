@@ -8,6 +8,7 @@ const test = require("node:test");
 const { NativeProtocolClient } = require("../../src/native-protocol-client");
 const { createRepositoryScanner } = require("../../src/scanner");
 const { createStructuralFactBatch } = require("../../src/structural-fact-adapter-host");
+const { getAdapterRegistry } = require("../../src/adapter-registry");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const MANIFEST = path.join(ROOT, "native", "flopeek-core", "Cargo.toml");
@@ -28,7 +29,8 @@ test("persistent native protocol client preserves one session and reports typed 
   await client.start();
   const health = await client.request("health");
   assert.equal(health.implementation, "rust");
-  assert.equal(health.publicNodeIdsEnabled, false);
+  assert.equal(health.publicNodeIdsEnabled, true);
+  assert.deepEqual(health.adapterCapabilities, getAdapterRegistry());
   assert.deepEqual(client.getLastResponseStats().requestId, "native-1");
   assert.ok(client.getLastResponseStats().requestBytes > 0);
   assert.ok(client.getLastResponseStats().responseBytes > 0);

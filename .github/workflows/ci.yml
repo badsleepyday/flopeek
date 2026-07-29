@@ -24,7 +24,7 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
-      - run: cargo test --manifest-path native/flopeek-core/Cargo.toml --locked
+      - run: npm run test:native-core
       - run: cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --version
       - run: cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-facts .
       - run: cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-graph .

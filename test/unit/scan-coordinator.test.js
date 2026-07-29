@@ -9,6 +9,9 @@ const test = require("node:test");
 const { createContextRef } = require("../../src/context-card");
 const { resolveContextRef } = require("../../src/graph-service");
 const { createJsCoreClient } = require("../../src/js-core-client");
+const { createNativeCoreClient } = require("../../src/native-core-client");
+const { NativeProtocolClient } = require("../../src/native-protocol-client");
+const { createSurfaceCoreRuntime } = require("../../src/core-runtime");
 const { createScanCoordinator } = require("../../src/scan-coordinator");
 const { scanRepository, writeGraphCache } = require("../../src/scanner");
 
@@ -192,6 +195,47 @@ test("unbounded coordinator exposes the same terminal outcome around incremental
   assert.equal(second.outcome.refresh.mode, "incremental");
   assert.equal(second.graph.analysis.refresh.analyzedFiles, 1);
   assert.equal(second.outcome.activeGraph.graphVersion, 2);
+});
+
+test("strict Rust core executes a bounded package scan without the JavaScript worker", async (t) => {
+  const root = fixture(t);
+  addScopedPackages(root);
+  const core = createNativeCoreClient({
+    native: new NativeProtocolClient({ ...NATIVE, cwd: ROOT, requestTimeoutMs: 120_000 }),
+    sourceAuthority: "rust",
+  });
+  t.after(() => core.close());
+  const coordinator = createScanCoordinator(root, {
+    packagePath: "apps/api",
+    maxFiles: 20,
+    maxBytes: 1_000_000,
+    timeBudgetMs: 30_000,
+    coreClient: core,
+  });
+  const result = await coordinator.refresh(null, "native-package-initial");
+  assert.equal(result.outcome.status, "complete");
+  assert.equal(result.outcome.coreRuntime.boundedNative.status, "completed");
+  assert.equal(result.graph.analysis.nativeBoundedDiscovery.verified, true);
+  assert.equal(result.graph.analysis.nativeBoundedDiscovery.packagePath, "apps/api");
+  assert.equal(result.graph.nodes.some((node) => node.path === "packages/core/src/core.ts"), false);
+  assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
+});
+
+test("native-experimental surface runtime retains Rust bounded authority through its rollback wrapper", async (t) => {
+  const root = fixture(t);
+  addScopedPackages(root);
+  const native = new NativeProtocolClient({ ...NATIVE, cwd: ROOT, requestTimeoutMs: 120_000 });
+  const runtime = createSurfaceCoreRuntime({ coreMode: "native-experimental", native });
+  t.after(() => runtime.core.close());
+  const coordinator = createScanCoordinator(root, {
+    packagePath: "apps/api",
+    coreClient: runtime.core,
+    coreRuntime: runtime.selection,
+  });
+  const result = await coordinator.refresh(null, "native-experimental-package");
+  assert.equal(result.outcome.status, "complete");
+  assert.equal(result.outcome.coreRuntime.boundedNative.sourceAuthority, "rust");
+  assert.equal(result.graph.analysis.nativeBoundedDiscovery.verified, true);
 });
 
 test("unbounded coordinator refreshes through its injected CoreClient", async (t) => {

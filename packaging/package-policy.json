@@ -33,7 +33,8 @@
     "benchmarks/renderer-projection-corpus.json",
     "benchmarks/semantic-flow-suggestions.json",
     "benchmarks/semantic-suggestion-feedback-contract.json",
-    "benchmarks/monorepo-package-selection.json"
+    "benchmarks/monorepo-package-selection.json",
+    "contracts/adapter-capabilities.json"
   ],
   "allowedDirectories": [
     "docs",
@@ -91,6 +92,6 @@
     ".pem",
     ".pfx"
   ],
-  "maximumEntries": 190,
-  "maximumUnpackedBytes": 2700000
+  "maximumEntries": 200,
+  "maximumUnpackedBytes": 3000000
 }

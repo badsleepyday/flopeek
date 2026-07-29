@@ -288,7 +288,16 @@ fn public_source_hash(root: &Path, path: &str) -> Result<String, String> {
         })?
         .replace("\r\n", "\n")
         .replace('\r', "\n");
-    Ok(format!("{:x}", Sha256::digest(source.as_bytes())))
+    Ok(native_public_source_hash(&source))
+}
+
+/// Flopeek's public graph contract uses a normalized SHA-256 source hash.
+/// Keeping this separate from the inventory's BLAKE3 change detector lets a
+/// long-lived native session retain contract hashes without reopening every
+/// unchanged source file during an incremental refresh.
+pub fn native_public_source_hash(source: &str) -> String {
+    let normalized = source.replace("\r\n", "\n").replace('\r', "\n");
+    format!("{:x}", Sha256::digest(normalized.as_bytes()))
 }
 
 fn projected_result(facts: &NativeJsFacts, resolution: &NativeJsResolutionFacts) -> Value {
@@ -337,6 +346,24 @@ pub fn build_native_js_structural_records(
     source_scopes: &BTreeMap<String, String>,
     record_orders: &BTreeMap<String, usize>,
 ) -> Result<Vec<Value>, String> {
+    build_native_js_structural_records_with_source_hashes(
+        root,
+        facts,
+        resolution,
+        source_scopes,
+        record_orders,
+        None,
+    )
+}
+
+pub fn build_native_js_structural_records_with_source_hashes(
+    root: &Path,
+    facts: &BTreeMap<String, NativeJsFacts>,
+    resolution: &BTreeMap<String, NativeJsResolutionFacts>,
+    source_scopes: &BTreeMap<String, String>,
+    record_orders: &BTreeMap<String, usize>,
+    source_hashes: Option<&BTreeMap<String, String>>,
+) -> Result<Vec<Value>, String> {
     let descriptions = descriptions(root);
     let mut records = facts
         .iter()
@@ -379,7 +406,10 @@ pub fn build_native_js_structural_records(
                 "sourceScope": scope,
                 "fileNodeType": file_type,
                 "fileMetadata": file_metadata,
-                "sourceHash": public_source_hash(root, path)?,
+                "sourceHash": source_hashes
+                    .and_then(|hashes| hashes.get(path).cloned())
+                    .map(Ok)
+                    .unwrap_or_else(|| public_source_hash(root, path))?,
                 "result": result,
             }))
         })
@@ -477,6 +507,18 @@ pub fn build_native_js_entry_facts(
     facts: &BTreeMap<String, NativeJsFacts>,
     records: &[Value],
 ) -> Value {
+    build_native_js_entry_facts_for_manifests(root, facts, records, None)
+}
+
+/// Package-scoped scans may deliberately constrain manifest-derived entries to
+/// the selected package. File parsing still receives repository-relative
+/// paths, while command facts never leak from an ancestor monorepo manifest.
+pub fn build_native_js_entry_facts_for_manifests(
+    root: &Path,
+    facts: &BTreeMap<String, NativeJsFacts>,
+    records: &[Value],
+    allowed_manifests: Option<&BTreeSet<String>>,
+) -> Value {
     let by_path = records
         .iter()
         .filter_map(|record| {
@@ -494,7 +536,10 @@ pub fn build_native_js_entry_facts(
     let mut unsupported_schedules = Vec::new();
     let mut entry_metadata = Map::new();
     let mut edge_metadata = Map::new();
-    for manifest_path in local_package_manifests(root, records) {
+    for manifest_path in local_package_manifests(root, records)
+        .into_iter()
+        .filter(|manifest| allowed_manifests.is_none_or(|allowed| allowed.contains(manifest)))
+    {
         let Ok(content) = fs::read_to_string(root.join(&manifest_path)) else {
             continue;
         };
@@ -623,10 +668,10 @@ pub fn build_native_js_entry_facts(
                     .cmp(&right["scriptName"].as_str()),
             )
     });
-    package_scripts.sort_by(|left, right| left.to_string().cmp(&right.to_string()));
-    unsupported_package_scripts.sort_by(|left, right| left.to_string().cmp(&right.to_string()));
-    schedules.sort_by(|left, right| left.to_string().cmp(&right.to_string()));
-    unsupported_schedules.sort_by(|left, right| left.to_string().cmp(&right.to_string()));
+    package_scripts.sort_by_key(|left| left.to_string());
+    unsupported_package_scripts.sort_by_key(|left| left.to_string());
+    schedules.sort_by_key(|left| left.to_string());
+    unsupported_schedules.sort_by_key(|left| left.to_string());
     json!({
         "packageCommands": package_commands,
         "entryMetadata": entry_metadata,

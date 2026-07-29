@@ -1,20 +1,28 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const { createHash } = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const { createCoreCompatibilityProjection } = require("../../src/core-compatibility");
-const { scanWithNativeIncremental, selectNativeBinary } = require("../../src/native-incremental-coordinator");
+const {
+  nativePlatformPackageName, readPlatformNativePackageMetadata, resolvePlatformNativeBinary,
+  scanWithNativeIncremental, selectNativeBinary, verifyPlatformNativeBinary,
+} = require("../../src/native-incremental-coordinator");
 const { scanRepository } = require("../../src/scanner");
 
 const ROOT = path.join(__dirname, "..", "..");
 const MANIFEST = path.join(ROOT, "native", "flopeek-core", "Cargo.toml");
 const NATIVE = { command: "cargo", args: ["run", "--quiet", "--manifest-path", MANIFEST, "--"] };
 
-test("native binary selection prefers explicit configuration, then release, then debug", () => {
+test("native binary selection prefers explicit configuration, platform package, release, then debug", () => {
   const allAvailable = () => true;
+  assert.deepEqual(
+    selectNativeBinary({ configured: "", platform: "C:/platform/flopeek.exe", release: "C:/release.exe", debug: "C:/debug.exe" }, allAvailable),
+    { command: "C:/platform/flopeek.exe", args: [] },
+  );
   assert.deepEqual(
     selectNativeBinary({ configured: "C:/custom/flopeek.exe", release: "C:/release.exe", debug: "C:/debug.exe" }, allAvailable),
     { command: "C:/custom/flopeek.exe", args: [] },
@@ -27,6 +35,41 @@ test("native binary selection prefers explicit configuration, then release, then
     selectNativeBinary({ configured: "", release: "C:/release.exe", debug: "C:/debug.exe" }, (candidate) => candidate.endsWith("debug.exe")),
     { command: "C:/debug.exe", args: [] },
   );
+});
+
+test("native platform packages resolve deterministically and remain optional", () => {
+  assert.equal(nativePlatformPackageName("win32", "x64"), "@flopeek/native-win32-x64");
+  assert.equal(nativePlatformPackageName("linux", "arm64"), "@flopeek/native-linux-arm64-gnu");
+  assert.equal(nativePlatformPackageName("freebsd", "x64"), null);
+  assert.equal(resolvePlatformNativeBinary(() => { throw new Error("not installed"); }, "linux", "x64"), null);
+  assert.equal(
+    resolvePlatformNativeBinary((request) => {
+      assert.equal(request, "@flopeek/native-win32-x64/bin/flopeek-native-core.exe");
+      return "C:/npm/native.exe";
+    }, "win32", "x64"),
+    "C:/npm/native.exe",
+  );
+});
+
+test("platform package metadata requires exact protocol, target, and binary checksum", () => {
+  const binary = Buffer.from("native binary fixture");
+  const binarySha256 = createHash("sha256").update(binary).digest("hex");
+  const manifest = JSON.stringify({
+    name: "@flopeek/native-win32-x64",
+    version: "0.2.1-beta.3",
+    os: ["win32"],
+    cpu: ["x64"],
+    flopeekNative: { protocolVersion: "flopeek-native-protocol/v1", binarySha256 },
+  });
+  const resolve = (request) => {
+    assert.equal(request, "@flopeek/native-win32-x64/package.json");
+    return "C:/npm/native/package.json";
+  };
+  const metadata = readPlatformNativePackageMetadata(resolve, () => manifest, "win32", "x64");
+  assert.deepEqual(metadata, { packageName: "@flopeek/native-win32-x64", version: "0.2.1-beta.3", binarySha256 });
+  assert.equal(verifyPlatformNativeBinary("C:/npm/native/bin/flopeek-native-core.exe", metadata, () => binary), true);
+  assert.equal(verifyPlatformNativeBinary("C:/npm/native/bin/flopeek-native-core.exe", metadata, () => Buffer.from("tampered")), false);
+  assert.equal(readPlatformNativePackageMetadata(resolve, () => JSON.stringify({ ...JSON.parse(manifest), flopeekNative: { protocolVersion: "other/v1", binarySha256 } }), "win32", "x64"), null);
 });
 
 function copiedFixture(name) {

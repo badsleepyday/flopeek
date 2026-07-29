@@ -120,12 +120,18 @@ class NativeProtocolClient {
   }
 
   async close() {
-    if (!this.child || this.closed) return;
+    const child = this.child;
+    if (!child || this.closed) return;
+    // `shutdown` is acknowledged before Rust drops its session-owned SQLite
+    // connections. Wait for the child exit so callers can immediately remove
+    // a temporary repository on Windows without racing an open database file.
+    const exited = new Promise((resolve) => child.once("exit", resolve));
     try {
       await this.request("shutdown");
     } finally {
-      this.child.stdin.end();
+      child.stdin.end();
     }
+    await exited;
   }
 
   // JSONL requests are sequential, so there is no second request that can

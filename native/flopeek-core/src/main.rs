@@ -70,7 +70,7 @@ fn native_status(root: PathBuf) -> Result<(), String> {
         "identity": {
             "schemaVersion": "flopeek-native-node-identity/v1",
             "algorithm": "blake3",
-            "publicNodeIdsEnabled": false,
+            "publicNodeIdsEnabled": true,
         },
         "limitation": "Normal Flopeek commands are delegated unchanged to the JavaScript CLI. SQLite and native IDs are bootstrap metadata only until compatibility parity promotes them."
     });

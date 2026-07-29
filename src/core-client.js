@@ -1,8 +1,8 @@
 "use strict";
 
-// v3 adds an explicit last-complete read so a native coordinator can recover
-// from SQLite without reaching into the legacy JSON graph cache.
-const CORE_CLIENT_SCHEMA = "flopeek-core-client/v3";
+// v4 adds Flow Context Cards to the shared query boundary, so product surfaces
+// do not bypass the selected core when rendering a bounded flow handoff.
+const CORE_CLIENT_SCHEMA = "flopeek-core-client/v4";
 
 const CORE_CLIENT_METHODS = Object.freeze([
   "scan",
@@ -15,6 +15,7 @@ const CORE_CLIENT_METHODS = Object.freeze([
   "getRequestFlows",
   "getEntryFlows",
   "getFlowProjection",
+  "getFlowContextCard",
   "getChangeImpact",
   "getChangedContexts",
   "getRelatedTests",

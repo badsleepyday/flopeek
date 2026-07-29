@@ -1,8 +1,20 @@
 # Flopeek native-core bootstrap
 
-This crate is the first native boundary for Flopeek. It is intentionally a Rust
-wrapper around the existing JavaScript CLI, so normal commands retain the
-JavaScript scanner, graph, Context Ref, and compatibility semantics.
+This crate contains Flopeek's experimental native core. For the promoted JS/TS
+subset, Rust owns discovery, parsing, import resolution, structural records,
+batch envelope, graph assembly, query authority, persistent SQLite lifecycle,
+and the no-cache session lifecycle. JavaScript remains the compatibility oracle
+and fallback, not a hidden parser host on the strict source path.
+
+This is not the default product core: non-JS/TS adapters, package-distributed
+binaries, large-repository incremental sessions, and the rollout evidence
+packet are still incomplete. Strict Rust JS/TS package scans are implemented:
+they discover and validate a bounded package subtree, reject limit overflow,
+verify the plan before graph assembly, retain only a session-memory graph, and
+never promote a partial/package graph to repository SQLite state. Use
+`native-experimental` only
+for explicit dogfooding; `native` remains rollout-gated and reports any
+JavaScript fallback in the surface selection record.
 
 ```powershell
 cargo test --manifest-path native/flopeek-core/Cargo.toml --locked
@@ -94,7 +106,7 @@ steps. The session closes after the scan, so this is not a cross-command daemon
 or a native-default cutover.
 
 The async scan coordinator exposes the migration mode through
-`FLOPEEK_CORE=js|shadow|native`. `js` remains the default. `shadow` is an
+`FLOPEEK_CORE=js|shadow|native|native-experimental`. `js` remains the default. `shadow` is an
 explicit cache-enabled, unbounded dogfood path: it uses the one JSONL session
 above, reuses that coordinator-owned session across refreshes, and reports the
 transport plus changed/reused counts in the scan outcome, but returns the
@@ -121,7 +133,8 @@ core queries, with JavaScript restricted to CI oracle and rollback.
 `--native-serve` is the persistent `flopeek-native-protocol/v1` JSON Lines
 bootstrap. Each request has a request ID and emits one typed response on stdout;
 diagnostics remain on stderr. The protocol includes `health`, `initialize`,
-`nativeIncrementalManifest`, `nativeJsRecordCache`, `submitStructuralFacts`,
+`nativeIncrementalManifest`, `nativeBoundedDiscovery`, `refreshNativeProject`,
+`refreshNativePersistentProject`, `nativeJsRecordCache`, `submitStructuralFacts`,
 `assembleStructuralGraph`, the shadow query methods, `persistStructuralGraph`,
 and `shutdown`.
 `submitStructuralFacts` accepts only
@@ -129,6 +142,14 @@ and `shutdown`.
 rejects source-body fields, invalid paths, invalid SHA-256 file hashes, and a
 batch whose SHA-256 digest does not equal its canonical payload. It is validated
 transport input (`stored: false`), not public graph promotion or output.
+`refreshNativePersistentProject` is the strict Rust JS/TS durable path: Rust
+keeps source-session facts, graph promotion, and the SQLite connection in one
+JSONL process and returns a versioned graph handle rather than a full fact
+batch for Node to send back. Cached native core queries reuse that same
+connection; a full batch is requested only as an explicit compatibility
+fallback after a verified cache miss. Client shutdown waits for process exit so
+session-owned SQLite handles are released before temporary repositories are
+removed on Windows.
 `assembleStructuralGraph` is an equally non-authoritative shadow subset
 for file/symbol/endpoint/runtime IDs and local structural edges (including
 resolved internal imports, imported direct calls, external dependencies, and

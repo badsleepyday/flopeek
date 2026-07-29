@@ -66,7 +66,7 @@ fn normalise_rule(value: &str, field: &str, allow_glob: bool) -> Result<String, 
         .split('/')
         .filter(|segment| !segment.is_empty())
         .collect::<Vec<_>>();
-    if segments.iter().any(|segment| *segment == "..") {
+    if segments.contains(&"..") {
         return Err(format!(
             "{field} entries must not traverse outside the repository."
         ));

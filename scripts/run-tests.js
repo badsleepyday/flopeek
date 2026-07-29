@@ -18,7 +18,7 @@ const lanes = {
   viewer: ["test/scanner.test.js", "test/unit/viewer-empty-flow-state.test.js", "test/unit/viewer-observable-qa.test.js"],
   showcase: ["test/showcase.test.js"],
   "agent-comparison": ["test/unit/agent-comparison.test.js"],
-  package: ["test/unit/package-policy.test.js", "test/unit/clean-room-package.test.js"],
+  package: ["test/unit/package-policy.test.js", "test/unit/clean-room-package.test.js", "test/unit/native-platform-package.test.js"],
   docs: ["test/unit/documentation-assets.test.js"],
 };
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/documentation-assets.test.js");

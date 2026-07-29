@@ -2,14 +2,73 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { NativeProtocolClient } = require("./native-protocol-client");
+const { createHash } = require("node:crypto");
+const { NATIVE_PROTOCOL_VERSION, NativeProtocolClient } = require("./native-protocol-client");
 const { createRepositoryScanner } = require("./scanner");
 
 const NATIVE_MANIFEST_SCHEMA = "flopeek-native-incremental-manifest/v1";
 const NATIVE_RECORD_CACHE_SCHEMA = "flopeek-native-js-record-cache/v1";
 
-function selectNativeBinary({ configured, release, debug }, exists = fs.existsSync) {
+function nativePlatformPackageName(platform = process.platform, arch = process.arch) {
+  const target = {
+    "win32:x64": "@flopeek/native-win32-x64",
+    "win32:arm64": "@flopeek/native-win32-arm64",
+    "darwin:x64": "@flopeek/native-darwin-x64",
+    "darwin:arm64": "@flopeek/native-darwin-arm64",
+    "linux:x64": "@flopeek/native-linux-x64-gnu",
+    "linux:arm64": "@flopeek/native-linux-arm64-gnu",
+  }[`${platform}:${arch}`];
+  return target || null;
+}
+
+function resolvePlatformNativeBinary(resolve = require.resolve, platform = process.platform, arch = process.arch) {
+  const packageName = nativePlatformPackageName(platform, arch);
+  if (!packageName) return null;
+  try {
+    const name = platform === "win32" ? "flopeek-native-core.exe" : "flopeek-native-core";
+    return resolve(`${packageName}/bin/${name}`);
+  } catch {
+    return null;
+  }
+}
+
+function readPlatformNativePackageMetadata(
+  resolve = require.resolve,
+  readFile = fs.readFileSync,
+  platform = process.platform,
+  arch = process.arch,
+) {
+  const packageName = nativePlatformPackageName(platform, arch);
+  if (!packageName) return null;
+  try {
+    const manifest = JSON.parse(readFile(resolve(`${packageName}/package.json`), "utf8"));
+    const metadata = manifest.flopeekNative;
+    if (manifest.name !== packageName
+      || !Array.isArray(manifest.os) || !manifest.os.includes(platform)
+      || !Array.isArray(manifest.cpu) || !manifest.cpu.includes(arch)
+      || !metadata || metadata.protocolVersion !== NATIVE_PROTOCOL_VERSION
+      || typeof metadata.binarySha256 !== "string" || !/^[a-f0-9]{64}$/.test(metadata.binarySha256)) {
+      return null;
+    }
+    return Object.freeze({ packageName, version: manifest.version, binarySha256: metadata.binarySha256 });
+  } catch {
+    return null;
+  }
+}
+
+function verifyPlatformNativeBinary(binary, metadata, readFile = fs.readFileSync) {
+  if (!binary || !metadata?.binarySha256) return false;
+  try {
+    const actual = createHash("sha256").update(readFile(binary)).digest("hex");
+    return actual === metadata.binarySha256;
+  } catch {
+    return false;
+  }
+}
+
+function selectNativeBinary({ configured, platform, release, debug }, exists = fs.existsSync) {
   if (configured) return { command: configured, args: [] };
+  if (platform && exists(platform)) return { command: platform, args: [] };
   // A workspace often rebuilds tests in debug after an optimized binary was
   // produced. Timestamp ordering would silently downgrade normal CoreClient
   // usage to debug; prefer the artifact intended for packaging and retain
@@ -21,13 +80,16 @@ function selectNativeBinary({ configured, release, debug }, exists = fs.existsSy
 
 function defaultNativeBinary() {
   const name = process.platform === "win32" ? "flopeek-native-core.exe" : "flopeek-native-core";
+  const platform = resolvePlatformNativeBinary();
+  const platformMetadata = platform ? readPlatformNativePackageMetadata() : null;
   const selected = selectNativeBinary({
     configured: process.env.FLOPEEK_NATIVE_CORE,
+    platform: platformMetadata && verifyPlatformNativeBinary(platform, platformMetadata) ? platform : null,
     release: path.join(__dirname, "..", "native", "flopeek-core", "target", "release", name),
     debug: path.join(__dirname, "..", "native", "flopeek-core", "target", "debug", name),
   });
   if (selected) return selected;
-  throw new Error("Native Flopeek binary is unavailable. Build native/flopeek-core first or set FLOPEEK_NATIVE_CORE.");
+  throw new Error("Native Flopeek binary is unavailable. Install the matching @flopeek/native platform package, build native/flopeek-core, or set FLOPEEK_NATIVE_CORE.");
 }
 
 function createNativeIncrementalSession(native, options = {}) {
@@ -165,6 +227,10 @@ module.exports = {
   NATIVE_RECORD_CACHE_SCHEMA,
   createNativeIncrementalSession,
   defaultNativeBinary,
+  nativePlatformPackageName,
+  readPlatformNativePackageMetadata,
+  verifyPlatformNativeBinary,
+  resolvePlatformNativeBinary,
   selectNativeBinary,
   scanWithNativeIncremental,
 };

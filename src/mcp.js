@@ -1,11 +1,11 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const packageInfo = require("../package.json");
-const { assignWorkflow, availableGraphDelta, createContinuationCheckpoint, createPlannedOverlay, createWorkRecord, findNodes, getActiveBranchGitEvidence, getAgentBootstrap, getAgentEvidenceTraces, getAgentSemanticProposal, getCacheHygiene, getChangeImpact, getChangedContexts, getCheckpointDivergence, getContextCard, getContinuationCheckpoint, getContinuationComparison, getContinuationContext, getEntryFlows, getFlowComparison, getFlowContextCard, getFlowProjection, getFlowVerification, getGitContextContinuity, getGraphDelta, getHandoffContext, getNodeDetails, getPlanReconciliation, getPlannedOverlay, getProductProof, getRelatedImplementations, getRelatedTests, getRequestFlows, getSemanticSuggestionFeedback, getTestRuns, getTrustAnalytics, getVerifiedSemanticMemory, getWorkDependencyStatus, getWorkRecordWorkflow, getWorkTimeline, latestAvailableGraphDelta, listContinuationCheckpoints, listPlanReconciliations, listPlannedOverlays, listWorkRecords, listWorkflows, projectView, recordAgentEvidenceTrace, recordAgentSemanticProposal, recordPlanReconciliation, recordSemanticSuggestionFeedback, recordTestRunEvent, recordWorkEvent, resolveContextRef, resolvePlanRef, saveWorkflow, transitionWorkRecord, updateWorkPlan } = require("./graph-service");
+const { assignWorkflow, availableGraphDelta, createContinuationCheckpoint, createPlannedOverlay, createWorkRecord, findNodes, getActiveBranchGitEvidence, getAgentBootstrap, getAgentEvidenceTraces, getAgentSemanticProposal, getCacheHygiene, getChangeImpact, getChangedContexts, getCheckpointDivergence, getContextCard, getContinuationCheckpoint, getContinuationComparison, getContinuationContext, getEntryFlows, getFlowComparison, getFlowProjection, getFlowVerification, getGitContextContinuity, getGraphDelta, getHandoffContext, getNodeDetails, getPlanReconciliation, getPlannedOverlay, getProductProof, getRelatedImplementations, getRelatedTests, getRequestFlows, getSemanticSuggestionFeedback, getTestRuns, getTrustAnalytics, getVerifiedSemanticMemory, getWorkDependencyStatus, getWorkRecordWorkflow, getWorkTimeline, latestAvailableGraphDelta, listContinuationCheckpoints, listPlanReconciliations, listPlannedOverlays, listWorkRecords, listWorkflows, projectView, recordAgentEvidenceTrace, recordAgentSemanticProposal, recordPlanReconciliation, recordSemanticSuggestionFeedback, recordTestRunEvent, recordWorkEvent, resolveContextRef, resolvePlanRef, saveWorkflow, transitionWorkRecord, updateWorkPlan } = require("./graph-service");
 const { createScanCoordinator } = require("./scan-coordinator");
 const { compareGitSnapshots, createGitSnapshot } = require("./history");
 const { DEFAULT_FLOW_LENS_MAX_STEPS, MAX_FLOW_LENS_STEPS, MIN_FLOW_LENS_STEPS } = require("./flow-lens-options");
-const { createSurfaceCoreClient } = require("./core-runtime");
+const { createSurfaceCoreRuntime } = require("./core-runtime");
 
 function jsonResult(value) {
   return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
@@ -23,7 +23,8 @@ async function createMcpServer(options) {
   const root = fs.realpathSync(options.root);
   if (!fs.statSync(root).isDirectory()) throw new Error("MCP repository target must be a directory.");
   const ownsCoreClient = !options.coreClient;
-  const core = options.coreClient || createSurfaceCoreClient(options);
+  const runtime = options.coreClient ? null : createSurfaceCoreRuntime(options);
+  const core = options.coreClient || runtime.core;
   let closeCorePromise = null;
   const closeOwnedCore = () => {
     if (!ownsCoreClient) return Promise.resolve();
@@ -32,6 +33,7 @@ async function createMcpServer(options) {
   };
   const coordinator = createScanCoordinator(root, {
     coreClient: core,
+    coreRuntime: runtime?.selection || options.coreRuntime,
     cache: options.cache,
     timeBudgetMs: options.timeBudgetMs,
     maxFiles: options.maxFiles,
@@ -295,8 +297,8 @@ async function createMcpServer(options) {
       scope: z.enum(["application", "all"]).optional(),
       maxSteps: z.number().int().min(MIN_FLOW_LENS_STEPS).max(MAX_FLOW_LENS_STEPS).optional(),
     },
-  }, ({ flowId, format = "json", scope = "application", maxSteps = DEFAULT_FLOW_LENS_MAX_STEPS }) => {
-    const card = getFlowContextCard(currentGraph(), flowId, format, scope, { maxSteps });
+  }, async ({ flowId, format = "json", scope = "application", maxSteps = DEFAULT_FLOW_LENS_MAX_STEPS }) => {
+    const card = await core.getFlowContextCard(currentGraph(), flowId, format, scope, { maxSteps });
     if (!card) throw new Error(`Flow not found: ${flowId}`);
     return card;
   });

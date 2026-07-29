@@ -9,10 +9,10 @@ use rusqlite::{OptionalExtension, params};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 pub const NATIVE_INVENTORY_SCHEMA: &str = "flopeek-native-inventory/v1";
-const MAX_SOURCE_FILE_BYTES: u64 = 1_000_000;
+pub const MAX_NATIVE_SOURCE_FILE_BYTES: u64 = 1_000_000;
 /// Ephemeral JSONL source transfer is deliberately bounded. It may reduce
 /// duplicate cold-scan reads, but must never become a source-body cache.
 const MAX_SOURCE_BATCH_BYTES: usize = 32 * 1024 * 1024;
@@ -59,6 +59,54 @@ struct InventoryRecord {
     content_hash: String,
 }
 
+/// Limits checked during bounded discovery. This keeps an over-limit package
+/// from completing an otherwise unbounded metadata traversal before rejection.
+struct CandidateCollectionLimits {
+    max_files: Option<usize>,
+    max_bytes: Option<i64>,
+    started: Instant,
+    budget_ms: Option<u64>,
+    total_bytes: i64,
+}
+
+impl CandidateCollectionLimits {
+    fn check_budget(&self) -> Result<(), String> {
+        if let Some(limit) = self.budget_ms
+            && self.started.elapsed().as_millis() > u128::from(limit)
+        {
+            return Err(format!("native-bounded-budget-exceeded:{limit}"));
+        }
+        Ok(())
+    }
+
+    fn accept(&mut self, candidate: &CandidateFile, existing_files: usize) -> Result<(), String> {
+        self.check_budget()?;
+        let next_files = existing_files
+            .checked_add(1)
+            .ok_or_else(|| "native-bounded-max-files-exceeded:overflow".to_string())?;
+        if let Some(limit) = self.max_files
+            && next_files > limit
+        {
+            return Err(format!(
+                "native-bounded-max-files-exceeded:{limit}:{next_files}"
+            ));
+        }
+        self.total_bytes = self
+            .total_bytes
+            .checked_add(candidate.size_bytes)
+            .ok_or_else(|| "native-bounded-max-bytes-exceeded:overflow".to_string())?;
+        if let Some(limit) = self.max_bytes
+            && self.total_bytes > limit
+        {
+            return Err(format!(
+                "native-bounded-max-bytes-exceeded:{limit}:{}",
+                self.total_bytes
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeSourceBatchRecord {
     pub path: String,
@@ -84,11 +132,33 @@ pub struct NativeInventoryStatus {
     pub removed_paths: Vec<String>,
     pub source_batch_records: Option<Vec<NativeSourceBatchRecord>>,
     pub source_batch_omitted_files: usize,
+    /// Ephemeral-only parser input retained from the same read used for the
+    /// inventory hash. It is never serialized, persisted, or constructed by
+    /// the durable inventory path.
+    pub ephemeral_js_source_texts: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeIncrementalManifest {
     pub inventory: NativeInventoryStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeBoundedCandidate {
+    pub path: String,
+    pub size_bytes: i64,
+    pub modified_at_ns: i64,
+    pub source_scope: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeBoundedDiscovery {
+    pub project_root: PathBuf,
+    pub package_path: Option<String>,
+    pub scope_source: String,
+    pub candidates: Vec<NativeBoundedCandidate>,
+    pub total_bytes: i64,
+    pub plan_fingerprint: String,
 }
 
 fn now_millis() -> Result<i64, String> {
@@ -141,6 +211,20 @@ fn collect_candidates(
     source_scope_counts: &mut BTreeMap<String, usize>,
     output: &mut Vec<CandidateFile>,
 ) -> Result<(), String> {
+    collect_candidates_with_limits(root, directory, scope, source_scope_counts, output, None)
+}
+
+fn collect_candidates_with_limits(
+    root: &Path,
+    directory: &Path,
+    scope: &NativeScope,
+    source_scope_counts: &mut BTreeMap<String, usize>,
+    output: &mut Vec<CandidateFile>,
+    mut limits: Option<&mut CandidateCollectionLimits>,
+) -> Result<(), String> {
+    if let Some(limits) = limits.as_deref_mut() {
+        limits.check_budget()?;
+    }
     let mut entries = fs::read_dir(directory)
         .map_err(|error| format!("Unable to enumerate {}: {error}", directory.display()))?
         .collect::<Result<Vec<_>, _>>()
@@ -152,6 +236,9 @@ fn collect_candidates(
         })?;
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
+        if let Some(limits) = limits.as_deref_mut() {
+            limits.check_budget()?;
+        }
         let path = entry.path();
         let file_type = entry
             .file_type()
@@ -160,7 +247,14 @@ fn collect_candidates(
         let name = name.to_string_lossy();
         if file_type.is_dir() {
             if !name.starts_with('.') && !IGNORED_DIRECTORIES.contains(&name.as_ref()) {
-                collect_candidates(root, &path, scope, source_scope_counts, output)?;
+                collect_candidates_with_limits(
+                    root,
+                    &path,
+                    scope,
+                    source_scope_counts,
+                    output,
+                    limits.as_deref_mut(),
+                )?;
             }
             continue;
         }
@@ -169,7 +263,7 @@ fn collect_candidates(
         }
         let metadata = fs::metadata(&path)
             .map_err(|error| format!("Unable to read metadata for {}: {error}", path.display()))?;
-        if metadata.len() > MAX_SOURCE_FILE_BYTES {
+        if metadata.len() > MAX_NATIVE_SOURCE_FILE_BYTES {
             continue;
         }
         let relative_path = normalized_relative_path(root, &path)?;
@@ -180,14 +274,18 @@ fn collect_candidates(
         if source_scope == SourceScope::Excluded {
             continue;
         }
-        output.push(CandidateFile {
+        let candidate = CandidateFile {
             path: relative_path,
             size_bytes: i64::try_from(metadata.len()).map_err(|_| {
                 format!("File size exceeds SQLite integer range: {}", path.display())
             })?,
             modified_at_ns: modified_at_ns(&metadata)?,
             source_scope,
-        });
+        };
+        if let Some(limits) = limits.as_deref_mut() {
+            limits.accept(&candidate, output.len())?;
+        }
+        output.push(candidate);
     }
     Ok(())
 }
@@ -212,7 +310,7 @@ fn source_fingerprint(records: &[InventoryRecord]) -> String {
         hasher.update(record.candidate.source_scope.as_str().as_bytes());
         hasher.update(&[0]);
         hasher.update(record.content_hash.as_bytes());
-        hasher.update(&[b'\n']);
+        hasher.update(b"\n");
     }
     format!("blake3:{}", hasher.finalize().to_hex())
 }
@@ -474,6 +572,7 @@ fn scan_native_inventory_with_options(
         removed_paths,
         source_batch_records: include_source_batch.then_some(source_batch_records),
         source_batch_omitted_files,
+        ephemeral_js_source_texts: BTreeMap::new(),
     })
 }
 
@@ -530,10 +629,16 @@ pub fn scan_native_ephemeral_inventory_with_paths(
     )?;
     candidates.sort_by(|left, right| left.path.cmp(&right.path));
     let mut records = Vec::with_capacity(candidates.len());
+    let mut ephemeral_js_source_texts = BTreeMap::new();
     for candidate in candidates {
         let source_path = root.join(&candidate.path);
         let bytes = fs::read(&source_path)
             .map_err(|error| format!("Unable to read {}: {error}", source_path.display()))?;
+        if is_native_js_ts_path(&candidate.path)
+            && let Ok(source) = std::str::from_utf8(&bytes).map(str::to_owned)
+        {
+            ephemeral_js_source_texts.insert(candidate.path.clone(), source);
+        }
         records.push(InventoryRecord {
             candidate,
             content_hash: content_hash(&bytes),
@@ -561,6 +666,108 @@ pub fn scan_native_ephemeral_inventory_with_paths(
         removed_paths: Vec::new(),
         source_batch_records: None,
         source_batch_omitted_files: 0,
+        ephemeral_js_source_texts,
+    })
+}
+
+fn is_native_js_ts_path(path: &str) -> bool {
+    matches!(
+        path.rsplit('.').next().map(|extension| extension.to_ascii_lowercase()),
+        Some(extension) if matches!(extension.as_str(), "js" | "cjs" | "mjs" | "jsx" | "ts" | "tsx")
+    )
+}
+
+/// Produce a source-free, deterministic plan for a bounded/package scan.
+/// The plan is native-owned and validates its selected subtree before any
+/// parser or graph lifecycle runs. Exceeding a bound is an error, never a
+/// truncated plan that could later be promoted as a complete graph.
+pub fn discover_native_bounded_project(
+    input_root: &Path,
+    package_path: Option<&str>,
+    max_files: Option<usize>,
+    max_bytes: Option<i64>,
+    budget_ms: Option<u64>,
+) -> Result<NativeBoundedDiscovery, String> {
+    let started = Instant::now();
+    let root = displayable_root(fs::canonicalize(input_root).map_err(|error| {
+        format!(
+            "Unable to resolve project root {}: {error}",
+            input_root.display()
+        )
+    })?);
+    let selected = match package_path.filter(|value| !value.trim().is_empty()) {
+        Some(value) => {
+            let relative = Path::new(value);
+            if relative.is_absolute()
+                || relative
+                    .components()
+                    .any(|part| matches!(part, std::path::Component::ParentDir))
+            {
+                return Err(format!("native-bounded-invalid-package-path:{value}"));
+            }
+            let candidate =
+                displayable_root(fs::canonicalize(root.join(relative)).map_err(|error| {
+                    format!("native-bounded-invalid-package-path:{value}:{error}")
+                })?);
+            if !candidate.is_dir() || !candidate.starts_with(&root) {
+                return Err(format!("native-bounded-invalid-package-path:{value}"));
+            }
+            candidate
+        }
+        None => root.clone(),
+    };
+    let scope = read_native_scope(&root)?;
+    let mut counts = BTreeMap::new();
+    let mut candidates = Vec::new();
+    let mut limits = CandidateCollectionLimits {
+        max_files,
+        max_bytes,
+        started,
+        budget_ms,
+        total_bytes: 0,
+    };
+    collect_candidates_with_limits(
+        &root,
+        &selected,
+        &scope,
+        &mut counts,
+        &mut candidates,
+        Some(&mut limits),
+    )?;
+    candidates.sort_by(|left, right| left.path.cmp(&right.path));
+    let total_bytes = limits.total_bytes;
+    let candidates = candidates
+        .into_iter()
+        .map(|candidate| NativeBoundedCandidate {
+            path: candidate.path,
+            size_bytes: candidate.size_bytes,
+            modified_at_ns: candidate.modified_at_ns,
+            source_scope: candidate.source_scope.as_str().to_string(),
+        })
+        .collect::<Vec<_>>();
+    let mut hasher = Hasher::new();
+    for candidate in &candidates {
+        hasher.update(candidate.path.as_bytes());
+        hasher.update(&[0]);
+        hasher.update(candidate.size_bytes.to_string().as_bytes());
+        hasher.update(&[0]);
+        hasher.update(candidate.modified_at_ns.to_string().as_bytes());
+        hasher.update(&[0]);
+        hasher.update(candidate.source_scope.as_bytes());
+        hasher.update(b"\n");
+    }
+    let package_path = selected
+        .strip_prefix(&root)
+        .ok()
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(|path| path.to_string_lossy().replace('\\', "/"));
+    Ok(NativeBoundedDiscovery {
+        project_root: root,
+        package_path,
+        scope_source: scope.source,
+        candidates,
+        total_bytes,
+        plan_fingerprint: format!("blake3:{}", hasher.finalize().to_hex()),
     })
 }
 
@@ -582,7 +789,9 @@ pub fn scan_native_incremental_manifest_with_source_batch(
 
 #[cfg(test)]
 mod tests {
-    use super::{scan_native_inventory, scan_native_inventory_with_paths};
+    use super::{
+        discover_native_bounded_project, scan_native_inventory, scan_native_inventory_with_paths,
+    };
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -595,6 +804,52 @@ mod tests {
             "flopeek-native-inventory-{}-{unique}",
             std::process::id()
         ))
+    }
+
+    #[test]
+    fn bounded_discovery_scopes_a_package_and_rejects_non_complete_plans() {
+        let root = temporary_root();
+        fs::create_dir_all(root.join("apps/api/src")).unwrap();
+        fs::create_dir_all(root.join("apps/web/src")).unwrap();
+        fs::write(
+            root.join("apps/api/src/main.ts"),
+            "export const api = true;\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("apps/web/src/main.ts"),
+            "export const web = true;\n",
+        )
+        .unwrap();
+
+        let plan = discover_native_bounded_project(
+            &root,
+            Some("apps/api"),
+            Some(1),
+            Some(1_000),
+            Some(10_000),
+        )
+        .unwrap();
+        assert_eq!(plan.package_path.as_deref(), Some("apps/api"));
+        assert_eq!(plan.candidates.len(), 1);
+        assert_eq!(plan.candidates[0].path, "apps/api/src/main.ts");
+        assert!(plan.plan_fingerprint.starts_with("blake3:"));
+        assert!(
+            discover_native_bounded_project(&root, Some("apps/api"), Some(0), None, None)
+                .unwrap_err()
+                .starts_with("native-bounded-max-files-exceeded")
+        );
+        assert!(
+            discover_native_bounded_project(&root, Some("apps/api"), None, Some(1), None)
+                .unwrap_err()
+                .starts_with("native-bounded-max-bytes-exceeded")
+        );
+        assert!(
+            discover_native_bounded_project(&root, Some("../outside"), None, None, None)
+                .unwrap_err()
+                .starts_with("native-bounded-invalid-package-path")
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
