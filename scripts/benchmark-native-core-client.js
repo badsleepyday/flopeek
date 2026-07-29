@@ -57,14 +57,23 @@ async function refreshCoordinator(coordinator, request, implementation, state, r
   return result.graph;
 }
 
-function assertAuthorityArtifacts(jsRoot, nativeRoot) {
+function assertAuthorityArtifacts(jsRoot, nativeRoot, ephemeral = false) {
+  if (ephemeral) {
+    for (const root of [jsRoot, nativeRoot]) {
+      assert.equal(fs.existsSync(path.join(root, ".flopeek", "graph.json")), false, "Ephemeral authority must not create graph.json.");
+      assert.equal(fs.existsSync(path.join(root, ".flopeek", "native-core.sqlite3")), false, "Ephemeral authority must not create SQLite state.");
+      assert.equal(fs.existsSync(path.join(root, ".flopeek", "project.json")), false, "Ephemeral authority must not persist a project identity.");
+    }
+    return;
+  }
   assert.equal(fs.existsSync(path.join(jsRoot, ".flopeek", "graph.json")), true, "JavaScript authority must promote graph.json through ScanCoordinator.");
   assert.equal(fs.existsSync(path.join(jsRoot, ".flopeek", "native-core.sqlite3")), false, "JavaScript authority must not create the native SQLite graph.");
   assert.equal(fs.existsSync(path.join(nativeRoot, ".flopeek", "native-core.sqlite3")), true, "Native authority must promote its SQLite graph.");
   assert.equal(fs.existsSync(path.join(nativeRoot, ".flopeek", "graph.json")), false, "Native authority must not hide a JavaScript graph.json promotion.");
 }
 
-async function benchmarkCoreRoot(source, iteration, sandbox, nativeOptions = releaseNativeOptions()) {
+async function benchmarkCoreRoot(source, iteration, sandbox, nativeOptions = releaseNativeOptions(), options = {}) {
+  const ephemeral = options.ephemeral === true;
   const label = path.basename(source);
   const jsRoot = path.join(sandbox, `${label}-js-core-${iteration}`);
   const nativeRoot = path.join(sandbox, `${label}-native-core-${iteration}`);
@@ -77,8 +86,8 @@ async function benchmarkCoreRoot(source, iteration, sandbox, nativeOptions = rel
   assert.equal(native.parserHost, "rust-tree-sitter-js-ts/v13", "Benchmark must not retain a JavaScript parser host.");
   assert.equal(native.factEnvelopeHost, "rust-native-structural-batch/v1", "Benchmark must use the complete StructuralFactBatch envelope constructed by Rust.");
   assert.equal(Object.hasOwn(native, "queryFallbacks"), false, "Benchmark native side must not expose a hidden JavaScript core query fallback.");
-  const javascriptCoordinator = createScanCoordinator(jsRoot, { cache: true, coreClient: javascript });
-  const nativeCoordinator = createScanCoordinator(nativeRoot, { cache: true, coreClient: native });
+  const javascriptCoordinator = createScanCoordinator(jsRoot, { cache: !ephemeral, coreClient: javascript });
+  const nativeCoordinator = createScanCoordinator(nativeRoot, { cache: !ephemeral, coreClient: native });
   const samples = {};
   try {
     for (const [stateIndex, [state, mutate]] of [
@@ -102,7 +111,7 @@ async function benchmarkCoreRoot(source, iteration, sandbox, nativeOptions = rel
           : await elapsed(() => refreshCoordinator(nativeCoordinator, request, "native", state, label));
       }
       assertEquivalent(results.js.result, results.native.result, state, label);
-      assertAuthorityArtifacts(jsRoot, nativeRoot);
+      assertAuthorityArtifacts(jsRoot, nativeRoot, ephemeral);
       samples[state] = {
         jsMs: Number(results.js.elapsedMs.toFixed(3)),
         nativeMs: Number(results.native.elapsedMs.toFixed(3)),
@@ -116,7 +125,9 @@ async function benchmarkCoreRoot(source, iteration, sandbox, nativeOptions = rel
 }
 
 async function main() {
-  const { roots, iterations } = parseArguments(process.argv.slice(2));
+  const argumentList = process.argv.slice(2);
+  const ephemeral = argumentList.includes("--ephemeral");
+  const { roots, iterations } = parseArguments(argumentList.filter((value) => value !== "--ephemeral"));
   const nativeOptions = releaseNativeOptions();
   const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-native-core-benchmark-"));
   try {
@@ -124,20 +135,20 @@ async function main() {
     for (const root of roots) {
       const samples = [];
       for (let iteration = 1; iteration <= iterations; iteration += 1) {
-        samples.push(await benchmarkCoreRoot(root, iteration, sandbox, nativeOptions));
+        samples.push(await benchmarkCoreRoot(root, iteration, sandbox, nativeOptions, { ephemeral }));
       }
       rows.push(summarize(path.basename(root), samples));
     }
     process.stdout.write(`${JSON.stringify({
       schemaVersion: "flopeek-native-core-client-benchmark/v1",
-      mode: "scan-coordinator-js-json-vs-strict-rust-sqlite-authority",
+      mode: ephemeral ? "scan-coordinator-js-session-vs-strict-rust-session-authority" : "scan-coordinator-js-json-vs-strict-rust-sqlite-authority",
       nativeRuntime: "release-binary",
       iterations,
       rows,
       parity: "Every JS/native pair must complete through ScanCoordinator, have equal flopeek-core-compatibility/v1 SHA-256 digest and graph statistics, and promote only its declared persistence artifact before timing is retained.",
-      isolation: "Each implementation receives an independent disposable copy. Target repositories are read-only; generated Flopeek metadata exists only in the disposable copies.",
+      isolation: ephemeral ? "Each implementation receives an independent disposable copy and must leave no Flopeek repository metadata behind." : "Each implementation receives an independent disposable copy. Target repositories are read-only; generated Flopeek metadata exists only in the disposable copies.",
       ordering: "JS/native execution order alternates by iteration and scan state. Native retains exactly one JSONL process for cold, unchanged, and one-file-change states within one benchmark copy.",
-      limitation: "This measures equivalent product authority lifecycles: JavaScript parsing/graph assembly plus graph.json promotion versus promoted Rust JS/TS parsing, Rust graph assembly, SQLite promotion, and the persistent JSONL boundary. Repositories containing an unpromoted native source adapter are rejected instead of falling back inside the benchmark. This does not measure query latency, runtime behavior, or a universal speed guarantee.",
+      limitation: ephemeral ? "This measures one persistent process-local session without durable cache artifacts: JavaScript in-memory scanning versus strict Rust JS/TS parsing, Rust graph assembly, session-memory lifecycle, and JSONL transport. Repositories containing an unpromoted native source adapter are rejected instead of falling back inside the benchmark." : "This measures equivalent product authority lifecycles: JavaScript parsing/graph assembly plus graph.json promotion versus promoted Rust JS/TS parsing, Rust graph assembly, SQLite promotion, and the persistent JSONL boundary. Repositories containing an unpromoted native source adapter are rejected instead of falling back inside the benchmark. This does not measure query latency, runtime behavior, or a universal speed guarantee.",
     }, null, 2)}\n`);
   } finally {
     fs.rmSync(sandbox, { recursive: true, force: true });

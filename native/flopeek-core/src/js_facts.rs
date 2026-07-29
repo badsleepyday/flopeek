@@ -1,4 +1,6 @@
-use crate::inventory::scan_native_inventory_with_paths;
+use crate::inventory::{
+    scan_native_ephemeral_inventory_with_paths, scan_native_inventory_with_paths,
+};
 use crate::js_batch::{build_native_js_entry_facts, build_native_js_structural_records};
 use crate::js_resolver::{NativeJsResolutionFacts, resolve_native_js_imports};
 use crate::project_identity::ProjectIdentity;
@@ -1317,9 +1319,96 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
     })
 }
 
+// Strict native --no-cache path. It deliberately bypasses both the inventory
+// store and parser-fact cache: no `.flopeek` files, SQLite journal, or durable
+// identity may be created by a one-shot/session-memory scan.
+pub fn scan_native_js_facts_ephemeral(
+    input_root: &Path,
+    session_project_id: Option<&str>,
+) -> Result<NativeJsFactsStatus, String> {
+    let inventory = scan_native_ephemeral_inventory_with_paths(input_root, session_project_id)?;
+    let project_root = inventory.project_root.clone();
+    let project_identity = inventory.project_identity.clone();
+    let scope = read_native_scope(&project_root)?;
+    let mut known_records = inventory
+        .candidate_paths
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|path| {
+            let source_scope = scope.classify(&path).as_str().to_string();
+            (path, source_scope)
+        })
+        .collect::<Vec<_>>();
+    known_records.sort_by(|left, right| js_locale_compare(&left.0, &right.0));
+    let known_paths = known_records
+        .iter()
+        .map(|(path, _)| path.clone())
+        .collect::<BTreeSet<_>>();
+    let source_scopes = known_records.iter().cloned().collect::<BTreeMap<_, _>>();
+    let record_orders = known_records
+        .iter()
+        .enumerate()
+        .map(|(order, (path, _))| (path.clone(), order))
+        .collect::<BTreeMap<_, _>>();
+    let mut parsed_files = 0;
+    let mut failed_files = 0;
+    let mut facts = BTreeMap::new();
+    for path in known_paths
+        .iter()
+        .filter(|path| language_for_path(path).is_some())
+    {
+        parsed_files += 1;
+        let source = fs::read_to_string(project_root.join(path)).map_err(|error| {
+            format!("Unable to read JavaScript/TypeScript source {path}: {error}")
+        })?;
+        let fact = parse_native_js_facts(path, &source).ok_or_else(|| {
+            format!("No native JavaScript/TypeScript parser is registered for {path}.")
+        })?;
+        if fact.status == "parse-failed" {
+            failed_files += 1;
+        }
+        facts.insert(path.clone(), fact);
+    }
+    let resolution = resolve_native_js_imports(&project_root, &facts, &known_paths);
+    let structural_records = build_native_js_structural_records(
+        &project_root,
+        &facts,
+        &resolution,
+        &source_scopes,
+        &record_orders,
+    )?;
+    let entry_facts = build_native_js_entry_facts(&project_root, &facts, &structural_records);
+    Ok(NativeJsFactsStatus {
+        project_root,
+        project_identity,
+        adapter_version: NATIVE_JS_ADAPTER_VERSION.to_string(),
+        parsed_files,
+        reused_files: 0,
+        failed_files,
+        removed_facts: 0,
+        candidate_files: inventory.candidate_files,
+        candidate_paths: inventory.candidate_paths.unwrap_or_default(),
+        changed_paths: inventory.changed_paths,
+        reused_paths: Vec::new(),
+        removed_paths: Vec::new(),
+        source_scope_counts: inventory.source_scope_counts,
+        scope_source: inventory.scope_source,
+        flow_entries_tests: scope.flow_entries_tests,
+        flow_entries_fixtures: scope.flow_entries_fixtures,
+        facts,
+        resolution,
+        structural_records,
+        entry_facts,
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{js_locale_compare, parse_native_js_facts, scan_native_js_facts};
+    use super::{
+        js_locale_compare, parse_native_js_facts, scan_native_js_facts,
+        scan_native_js_facts_ephemeral,
+    };
     use std::fs;
 
     #[test]
@@ -1454,6 +1543,23 @@ mod tests {
                 .direct_calls
                 .contains(&"fetch".to_string())
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ephemeral_scan_keeps_inventory_and_parser_facts_out_of_the_repository() {
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-js-ephemeral-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/index.ts"), "export function run() {}\n").unwrap();
+        let status = scan_native_js_facts_ephemeral(&root, Some("session:test-ephemeral")).unwrap();
+        assert_eq!(status.parsed_files, 1);
+        assert_eq!(status.reused_files, 0);
+        assert_eq!(status.project_identity.source, "session");
+        assert!(!root.join(".flopeek").exists());
         fs::remove_dir_all(root).unwrap();
     }
 }

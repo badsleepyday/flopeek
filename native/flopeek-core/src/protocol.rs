@@ -2,7 +2,7 @@ use crate::inventory::{
     scan_native_incremental_manifest, scan_native_incremental_manifest_with_source_batch,
 };
 use crate::js_batch::native_manual_descriptions;
-use crate::js_facts::scan_native_js_facts;
+use crate::js_facts::{scan_native_js_facts, scan_native_js_facts_ephemeral};
 use crate::record_cache::{handle_native_js_record_cache_value, load_native_js_record_cache_raw};
 use crate::scope::read_native_scope;
 use crate::store::{
@@ -396,7 +396,17 @@ fn native_js_record_cache(params: &Value) -> Result<Value, NativeProtocolError> 
 
 fn native_js_structural_facts(params: &Value) -> Result<Value, NativeProtocolError> {
     let root = project_root(params)?;
-    let status = scan_native_js_facts(&root).map_err(|message| NativeProtocolError {
+    let ephemeral = params
+        .get("ephemeral")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let session_project_id = params.get("sessionProjectId").and_then(Value::as_str);
+    let status = (if ephemeral {
+        scan_native_js_facts_ephemeral(&root, session_project_id)
+    } else {
+        scan_native_js_facts(&root)
+    })
+    .map_err(|message| NativeProtocolError {
         code: "native-source-facts-failed",
         message,
     })?;
@@ -411,6 +421,7 @@ fn native_js_structural_facts(params: &Value) -> Result<Value, NativeProtocolErr
     Ok(json!({
         "schemaVersion": "flopeek-native-source-facts/v1",
         "adapterVersion": status.adapter_version,
+        "persistence": if ephemeral { "session-memory" } else { "sqlite" },
         "projectRoot": status.project_root,
         "projectIdentity": {
             "projectId": status.project_identity.project_id,
@@ -441,6 +452,37 @@ fn native_js_structural_facts(params: &Value) -> Result<Value, NativeProtocolErr
         "entryFacts": status.entry_facts,
         "nativeEnvelope": native_envelope,
     }))
+}
+
+// The ephemeral path must not serialize a complete StructuralFactBatch to Node
+// only to have Node send the identical payload back for session assembly. Keep
+// discovery, parsing, envelope construction, and graph assembly inside the
+// native JSONL process; the returned batch is retained only for the existing
+// CoreClient query contract during this process-local graph lineage.
+fn refresh_native_js_session_graph(
+    session: &mut NativeProtocolSession,
+    params: &Value,
+) -> Result<Value, NativeProtocolError> {
+    let root = project_root(params)?;
+    let session_project_id = params
+        .get("sessionProjectId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| NativeProtocolError {
+            code: "invalid-params",
+            message: "refreshNativeJsSessionGraph requires sessionProjectId.".to_string(),
+        })?;
+    let status =
+        scan_native_js_facts_ephemeral(&root, Some(session_project_id)).map_err(|message| {
+            NativeProtocolError {
+                code: "native-source-facts-failed",
+                message,
+            }
+        })?;
+    let batch = native_js_batch_envelope(&status)?;
+    let mut result = refresh_native_session_graph(session, &batch)?;
+    result["batch"] = batch;
+    result["sourceAuthority"] = json!("rust-native-ephemeral/v1");
+    Ok(result)
 }
 
 fn native_js_source_fingerprint(records: &[Value]) -> String {
@@ -6047,7 +6089,7 @@ fn handle_request(
                 request.request_id,
                 json!({
                     "implementation": "rust",
-                    "capabilities": ["health", "initialize", "nativeIncrementalManifest", "nativeJsRecordCache", "nativeJsStructuralFacts", "submitStructuralFacts", "assembleStructuralGraph", "assembleNativePublicGraph", "assembleNativeFlows", "findNodes", "getNodeDetails", "getEntryFlows", "getRequestFlows", "createContextRef", "resolveNativeContextRef", "getNativeFlowLensCore", "getNativeNodeContextCard", "getNativeFlowContextCard", "getRelatedTests", "getChangeImpact", "persistStructuralGraph", "persistNativePublicGraph", "persistNativePublicGraphPatch", "refreshNativeSessionGraph", "getNativeStructuralDelta", "getNativePublicGraphSnapshot", "getNativeCurrentPublicGraph", "getNativePublicGraphDelta", "getNativeChangedContexts", "shutdown"],
+                    "capabilities": ["health", "initialize", "nativeIncrementalManifest", "nativeJsRecordCache", "nativeJsStructuralFacts", "submitStructuralFacts", "assembleStructuralGraph", "assembleNativePublicGraph", "assembleNativeFlows", "findNodes", "getNodeDetails", "getEntryFlows", "getRequestFlows", "createContextRef", "resolveNativeContextRef", "getNativeFlowLensCore", "getNativeNodeContextCard", "getNativeFlowContextCard", "getRelatedTests", "getChangeImpact", "persistStructuralGraph", "persistNativePublicGraph", "persistNativePublicGraphPatch", "refreshNativeSessionGraph", "refreshNativeJsSessionGraph", "getNativeStructuralDelta", "getNativePublicGraphSnapshot", "getNativeCurrentPublicGraph", "getNativePublicGraphDelta", "getNativeChangedContexts", "shutdown"],
                     "storeAuthoritative": false,
                     "publicNodeIdsEnabled": false,
                 }),
@@ -6277,6 +6319,15 @@ fn handle_request(
                 false,
             ),
         },
+        "refreshNativeJsSessionGraph" => {
+            match refresh_native_js_session_graph(session, &request.params) {
+                Ok(result) => (success_response(request.request_id, result), false),
+                Err(error) => (
+                    error_response(Some(request.request_id), error.code, error.message),
+                    false,
+                ),
+            }
+        }
         "getNativeStructuralDelta" => match get_native_structural_delta(&request.params) {
             Ok(result) => (success_response(request.request_id, result), false),
             Err(error) => (
@@ -6320,7 +6371,7 @@ fn handle_request(
             error_response(
                 Some(request.request_id),
                 "unknown-method",
-                "Supported methods are health, initialize, nativeIncrementalManifest, nativeJsRecordCache, nativeJsStructuralFacts, submitStructuralFacts, assembleStructuralGraph, assembleNativePublicGraph, assembleNativeFlows, findNodes, getNodeDetails, getEntryFlows, getRequestFlows, createContextRef, resolveNativeContextRef, getNativeFlowLensCore, getNativeNodeContextCard, getNativeFlowContextCard, getRelatedTests, getChangeImpact, persistStructuralGraph, persistNativePublicGraph, persistNativePublicGraphPatch, refreshNativeSessionGraph, getNativeStructuralDelta, getNativePublicGraphSnapshot, getNativeCurrentPublicGraph, getNativePublicGraphDelta, getNativeChangedContexts, and shutdown.",
+                "Supported methods are health, initialize, nativeIncrementalManifest, nativeJsRecordCache, nativeJsStructuralFacts, submitStructuralFacts, assembleStructuralGraph, assembleNativePublicGraph, assembleNativeFlows, findNodes, getNodeDetails, getEntryFlows, getRequestFlows, createContextRef, resolveNativeContextRef, getNativeFlowLensCore, getNativeNodeContextCard, getNativeFlowContextCard, getRelatedTests, getChangeImpact, persistStructuralGraph, persistNativePublicGraph, persistNativePublicGraphPatch, refreshNativeSessionGraph, refreshNativeJsSessionGraph, getNativeStructuralDelta, getNativePublicGraphSnapshot, getNativeCurrentPublicGraph, getNativePublicGraphDelta, getNativeChangedContexts, and shutdown.",
             ),
             false,
         ),
@@ -6629,6 +6680,12 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .contains(&json!("nativeJsStructuralFacts"))
+        );
+        assert!(
+            result[0]["result"]["capabilities"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("refreshNativeJsSessionGraph"))
         );
         assert_eq!(result[1]["result"]["accepted"], true);
     }

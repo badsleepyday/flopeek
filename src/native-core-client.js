@@ -44,7 +44,10 @@ function nativeCancellationError() {
 
 async function prepareRustNativeBatch(native, inputRoot, options = {}) {
   const root = fs.realpathSync(inputRoot);
-  const response = await native.request("nativeJsStructuralFacts", { projectRoot: root });
+  const response = await native.request("nativeJsStructuralFacts", {
+    projectRoot: root,
+    ...(options.ephemeral === true ? { ephemeral: true, sessionProjectId: options.sessionProjectId } : {}),
+  });
   if (response?.schemaVersion !== "flopeek-native-source-facts/v1" || !Array.isArray(response.records)
     || !response.nativeEnvelope || typeof response.nativeEnvelope !== "object" || Array.isArray(response.nativeEnvelope)) {
     throw new TypeError("Rust source authority returned an invalid native StructuralFactBatch envelope.");
@@ -325,11 +328,6 @@ function createNativeCoreClient(options = {}) {
       const report = (phase, started, extra = {}) => profile?.({ phase, milliseconds: Number(process.hrtime.bigint() - started) / 1_000_000, ...extra });
       const scanStarted = process.hrtime.bigint();
       const cacheDisabled = scanOptions.persistIdentity === false;
-      if (sourceAuthority === "rust" && cacheDisabled) {
-        const error = new Error("Rust source authority does not yet support an ephemeral cache-disabled lifecycle.");
-        error.code = "native-source-cache-disabled-unavailable";
-        throw error;
-      }
       const key = scannerKey(root, scanOptions, cacheDisabled);
       let scanner = sourceAuthority === "rust" ? null : scanners.get(key);
       const scannerReused = sourceAuthority === "rust" ? nativeSourceStates.has(key) : Boolean(scanner);
@@ -358,12 +356,35 @@ function createNativeCoreClient(options = {}) {
       // observer so a startup failure never becomes an unhandled rejection.
       void nativeStartPromise.catch(() => {});
       const preparationStarted = process.hrtime.bigint();
-      const preparation = sourceAuthority === "rust"
-        ? await prepareRustNativeBatch(native, authorityRoot, { previous })
-        : prepareStructuralFactBatch(scanner, scanOptions.changedPaths, {
-          onProfile: profile,
-          buildBatch: cacheDisabled || !previous,
-        });
+      // A Rust-owned no-cache scan keeps the complete source-to-graph path in
+      // the native session.  Besides enforcing the no-SQLite contract, this
+      // avoids sending a full batch Rust -> Node -> Rust just to build a graph.
+      const directRustEphemeral = sourceAuthority === "rust" && cacheDisabled;
+      let directEphemeralResult = null;
+      const preparation = directRustEphemeral
+        ? await (async () => {
+          await nativeStartPromise;
+          throwIfNativeScanCancelled(scanOptions.signal);
+          directEphemeralResult = await requestNativeWithSignal(native, scanOptions.signal, "refreshNativeJsSessionGraph", {
+            projectRoot: authorityRoot,
+            sessionProjectId: cacheDisabledProjectId(authorityRoot),
+          });
+          if (!directEphemeralResult?.batch || typeof directEphemeralResult.batch !== "object") {
+            throw new Error("Native ephemeral source scan returned no structural fact batch.");
+          }
+          return {
+            batch: directEphemeralResult.batch,
+            prepared: { sourceRecords: directEphemeralResult.batch.records || [], graphContext: null },
+            preparedFacts: null,
+            publicEnvelope: null,
+          };
+        })()
+        : sourceAuthority === "rust"
+          ? await prepareRustNativeBatch(native, authorityRoot, { previous })
+          : prepareStructuralFactBatch(scanner, scanOptions.changedPaths, {
+            onProfile: profile,
+            buildBatch: cacheDisabled || !previous,
+          });
       const { prepared, preparedFacts, publicEnvelope } = preparation;
       let batch = preparation.batch;
       report("native-core-fact-batch", preparationStarted, {
@@ -380,7 +401,9 @@ function createNativeCoreClient(options = {}) {
       const lifecycleStarted = process.hrtime.bigint();
       let result;
       let usedFactPatch = false;
-      if (cacheDisabled) {
+      if (directEphemeralResult) {
+        result = directEphemeralResult;
+      } else if (cacheDisabled) {
         if (!batch) throw new Error("Cache-disabled native lifecycle requires a complete fact batch.");
         result = await requestNativeWithSignal(native, scanOptions.signal, "refreshNativeSessionGraph", batch);
       } else {

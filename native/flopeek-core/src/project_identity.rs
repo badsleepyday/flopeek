@@ -181,6 +181,34 @@ pub fn resolve_project_identity(
     })
 }
 
+// Ephemeral scans must never create `.flopeek/project.json`.  The caller owns
+// the session identifier, which keeps one JSONL process on one stable graph
+// lineage without making that identity durable in the source repository.
+pub fn resolve_ephemeral_project_identity(
+    configured_id: Option<&str>,
+    session_project_id: Option<&str>,
+) -> Result<ProjectIdentity, String> {
+    if let Some(project_id) = configured_id {
+        return Ok(ProjectIdentity {
+            project_id: project_id.to_string(),
+            source: "configured".to_string(),
+            status: "configured".to_string(),
+            origin_remote: None,
+            limitation: "This configured project identity is used for an ephemeral native session and is not written or modified during --no-cache scanning.".to_string(),
+        });
+    }
+    let project_id = session_project_id
+        .filter(|value| !value.trim().is_empty())
+        .ok_or("Ephemeral native scanning requires a session project identity.")?;
+    Ok(ProjectIdentity {
+        project_id: project_id.to_string(),
+        source: "session".to_string(),
+        status: "ephemeral".to_string(),
+        origin_remote: None,
+        limitation: "This identity exists only for the current native JSONL session and is never written to the source repository.".to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::resolve_project_identity;

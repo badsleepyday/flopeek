@@ -510,6 +510,28 @@ test("strict Rust source authority parses and resolves a TypeScript graph withou
   assert.equal(unchanged.state.graphVersion, refreshed.state.graphVersion);
 });
 
+test("strict Rust source authority supports a no-cache session without repository metadata", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-ephemeral-"));
+  fs.cpSync(FIXTURE, root, {
+    recursive: true,
+    filter: (source) => path.basename(source) !== ".flopeek",
+  });
+  const requests = [];
+  const native = createNativeCoreClient({ native: observedNativeRequests(requests), sourceAuthority: "rust" });
+  context.after(async () => {
+    await native.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const graph = await native.scan(root, { persistIdentity: false });
+  assert.equal(graph.analysis.graphState.persistence, "session-memory");
+  assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
+  assert.ok(requests.some((request) => request.method === "refreshNativeJsSessionGraph"));
+  assert.equal(requests.some((request) => request.method === "nativeJsStructuralFacts"), false);
+  const repeated = await native.refresh(root, { persistIdentity: false, changedPaths: [] });
+  assert.equal(repeated.state.graphVersion, graph.state.graphVersion);
+  assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
+});
+
 test("Rust JS/TS source authority preserves cold graph parity across every eligible baseline fixture", async (context) => {
   const eligible = new Set([
     "commonjs-call-flow",

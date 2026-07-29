@@ -1,5 +1,7 @@
 use crate::identity::{NodeIdentity, semantic_key, stable_node_id};
-use crate::project_identity::{ProjectIdentity, resolve_project_identity};
+use crate::project_identity::{
+    ProjectIdentity, resolve_ephemeral_project_identity, resolve_project_identity,
+};
 use crate::scope::{NativeScope, SourceScope, read_native_scope};
 use crate::store::open_native_store;
 use blake3::Hasher;
@@ -483,6 +485,83 @@ pub fn scan_native_inventory_with_paths(
     input_root: &Path,
 ) -> Result<NativeInventoryStatus, String> {
     scan_native_inventory_with_options(input_root, true, false)
+}
+
+// A --no-cache scan still needs the same deterministic discovery contract, but
+// it must not open SQLite, update inventory rows, or create project metadata.
+// All content hashes are intentionally computed in this process and discarded
+// with the JSONL session.
+pub fn scan_native_ephemeral_inventory_with_paths(
+    input_root: &Path,
+    session_project_id: Option<&str>,
+) -> Result<NativeInventoryStatus, String> {
+    let root = displayable_root(fs::canonicalize(input_root).map_err(|error| {
+        format!(
+            "Unable to resolve project root {}: {error}",
+            input_root.display()
+        )
+    })?);
+    if !root.is_dir() {
+        return Err(format!(
+            "Native inventory root is not a directory: {}",
+            root.display()
+        ));
+    }
+    let scope = read_native_scope(&root)?;
+    let project_identity =
+        resolve_ephemeral_project_identity(scope.project_id.as_deref(), session_project_id)?;
+    let mut source_scope_counts = [
+        SourceScope::Application,
+        SourceScope::Test,
+        SourceScope::Fixture,
+        SourceScope::Generated,
+        SourceScope::Excluded,
+    ]
+    .into_iter()
+    .map(|source_scope| (source_scope.as_str().to_string(), 0))
+    .collect::<BTreeMap<_, _>>();
+    let mut candidates = Vec::new();
+    collect_candidates(
+        &root,
+        &root,
+        &scope,
+        &mut source_scope_counts,
+        &mut candidates,
+    )?;
+    candidates.sort_by(|left, right| left.path.cmp(&right.path));
+    let mut records = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        let source_path = root.join(&candidate.path);
+        let bytes = fs::read(&source_path)
+            .map_err(|error| format!("Unable to read {}: {error}", source_path.display()))?;
+        records.push(InventoryRecord {
+            candidate,
+            content_hash: content_hash(&bytes),
+        });
+    }
+    let source_fingerprint = source_fingerprint(&records);
+    let candidate_paths = records
+        .iter()
+        .map(|record| record.candidate.path.clone())
+        .collect::<Vec<_>>();
+    let changed_paths = candidate_paths.clone();
+    Ok(NativeInventoryStatus {
+        project_root: root,
+        project_identity,
+        scope_source: scope.source,
+        source_scope_counts,
+        source_fingerprint,
+        candidate_files: records.len(),
+        hashed_files: records.len(),
+        reused_files: 0,
+        removed_files: 0,
+        candidate_paths: Some(candidate_paths),
+        changed_paths,
+        reused_paths: Vec::new(),
+        removed_paths: Vec::new(),
+        source_batch_records: None,
+        source_batch_omitted_files: 0,
+    })
 }
 
 pub fn scan_native_incremental_manifest(
