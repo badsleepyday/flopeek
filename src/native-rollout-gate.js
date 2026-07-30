@@ -1,6 +1,10 @@
 "use strict";
 
 const { adapterContractDigest, getAdapterRegistry } = require("./adapter-registry");
+const {
+  NATIVE_ADAPTER_PARITY_SCHEMA,
+  nativeAdaptersFromParity,
+} = require("./native-adapter-parity");
 const NATIVE_ROLLOUT_GATE_SCHEMA = "flopeek-native-rollout-gate/v1";
 const MINIMUM_BENCHMARK_REPOSITORIES = 5;
 const MAXIMUM_REGRESSION_SPEEDUP = 0.9;
@@ -35,7 +39,13 @@ function sameStringSet(left, right) {
 // this contract deliberately about authority, not an implementation detail
 // such as the particular Rust parser crate. JavaScript remains allowed as the
 // CI/rollback oracle, but it must not be on the native production data path.
-function hasNativeBackendAuthority(value) {
+function hasNativeBackendAuthority(value, adapterParity) {
+  let nativeAdapters;
+  try {
+    nativeAdapters = nativeAdaptersFromParity(adapterParity, REQUIRED_NATIVE_ADAPTERS);
+  } catch {
+    return false;
+  }
   return value?.schemaVersion === NATIVE_BACKEND_PARITY_SCHEMA
     && value.sourceDiscoveryAuthority === "rust"
     && value.parserAuthority === "rust"
@@ -47,7 +57,7 @@ function hasNativeBackendAuthority(value) {
     && value.exactFixtureCount === value.fixtureCount
     && value.adapterContractDigest === adapterContractDigest()
     && sameStringSet(value.requiredAdapters, REQUIRED_NATIVE_ADAPTERS)
-    && sameStringSet(value.nativeAdapters, REQUIRED_NATIVE_ADAPTERS)
+    && sameStringSet(nativeAdapters, REQUIRED_NATIVE_ADAPTERS)
     && Array.isArray(value.fallbackOnlyAdapters)
     && value.fallbackOnlyAdapters.length === 0
     && value.adapterCoveragePolicy === "all-native";
@@ -173,7 +183,7 @@ function rowsAtOrAbove(rows, state, threshold) {
 function evaluateNativeDefaultRollout(evidence = {}) {
   const reasons = [];
   const backend = evidence.backendParity || {};
-  if (!hasNativeBackendAuthority(backend)) reasons.push("native-backend-parity-incomplete");
+  if (!hasNativeBackendAuthority(backend, evidence.adapterParity)) reasons.push("native-backend-parity-incomplete");
   const structural = evidence.structuralParity || {};
   const queries = evidence.queryParity || {};
   const lifecycle = evidence.lifecycle || {};
@@ -263,6 +273,7 @@ module.exports = {
   REQUIRED_ONE_FILE_REPOSITORIES,
   REQUIRED_ONE_FILE_SPEEDUP,
   NATIVE_BACKEND_PARITY_SCHEMA,
+  NATIVE_ADAPTER_PARITY_SCHEMA,
   NATIVE_BENCHMARK_SCHEMA,
   REQUIRED_QUERY_OPERATION_P95_MS,
   REQUIRED_NATIVE_ADAPTERS,

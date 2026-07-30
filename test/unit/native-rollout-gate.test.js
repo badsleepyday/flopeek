@@ -3,6 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { adapterContractDigest } = require("../../src/adapter-registry");
+const { machineAdapterParityEvidence } = require("../helpers/native-adapter-parity-evidence");
 const {
   NATIVE_BACKEND_PARITY_SCHEMA,
   NATIVE_BENCHMARK_SCHEMA,
@@ -67,6 +68,7 @@ function evidence(overrides = {}) {
     resolveContextRef: 19,
   };
   return {
+    adapterParity: machineAdapterParityEvidence(),
     backendParity: {
       schemaVersion: NATIVE_BACKEND_PARITY_SCHEMA,
       sourceDiscoveryAuthority: "rust",
@@ -167,25 +169,36 @@ test("native rollout gate blocks benchmark evidence while JavaScript remains the
 });
 
 test("native rollout gate is bound to exact adapter contract coverage", () => {
-  const backendParity = {
-    ...evidence().backendParity,
-    nativeAdapters: REQUIRED_NATIVE_ADAPTERS.filter((adapter) => adapter !== "go"),
-    fallbackOnlyAdapters: ["go"],
-  };
-  const result = evaluateNativeDefaultRollout(evidence({ backendParity }));
+  const adapterParity = machineAdapterParityEvidence();
+  delete adapterParity.adapters.go;
+  const result = evaluateNativeDefaultRollout(evidence({ adapterParity }));
   assert.equal(result.eligible, false);
   assert.ok(result.reasons.includes("native-backend-parity-incomplete"));
 });
 
+test("native rollout gate cannot self-assert adapters through backend candidate metadata", () => {
+  const value = evidence();
+  delete value.adapterParity;
+  value.backendParity.nativeAdapters = REQUIRED_NATIVE_ADAPTERS;
+  const result = evaluateNativeDefaultRollout(value);
+  assert.equal(result.eligible, false);
+  assert.ok(result.reasons.includes("native-backend-parity-incomplete"));
+});
+
+test("native rollout gate derives adapters from machine parity instead of a candidate array", () => {
+  const value = evidence();
+  value.backendParity.nativeAdapters = ["candidate-self-assertion-is-ignored"];
+  const result = evaluateNativeDefaultRollout(value);
+  assert.equal(result.eligible, true);
+  assert.deepEqual(result.reasons, []);
+});
+
 test("native rollout gate rejects a duplicated adapter that replaces a required adapter", () => {
-  const nativeAdapters = [
-    ...REQUIRED_NATIVE_ADAPTERS.slice(0, -1),
-    REQUIRED_NATIVE_ADAPTERS.at(-2),
-  ];
-  assert.equal(nativeAdapters.length, REQUIRED_NATIVE_ADAPTERS.length);
-  const result = evaluateNativeDefaultRollout(evidence({
-    backendParity: { ...evidence().backendParity, nativeAdapters },
-  }));
+  const adapterParity = machineAdapterParityEvidence();
+  const adapter = adapterParity.adapters.go;
+  adapter.records[1].sourceDigest = adapter.records[0].sourceDigest;
+  adapter.sourceDigests[1] = adapter.sourceDigests[0];
+  const result = evaluateNativeDefaultRollout(evidence({ adapterParity }));
   assert.equal(result.eligible, false);
   assert.ok(result.reasons.includes("native-backend-parity-incomplete"));
 });

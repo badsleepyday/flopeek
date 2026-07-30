@@ -42,7 +42,11 @@ foreach (var file in input.files) {
       var type = declaration is InterfaceDeclarationSyntax ? "class" : "class";
       symbols.Add(new SymbolFact(type, declaration.Identifier.Text, methods, RangeOf(declaration)));
     }
-    facts.Add(new FileFact(file, imports, symbols, symbols.SelectMany(symbol => symbol.methods).Distinct().ToList(), errors.Count == 0 ? "parsed" : "parsed-with-diagnostics", errors.Count, errors.Count == 0 ? null : errors[0].GetMessage()));
+    // Roslyn and Tree-sitter recover malformed syntax differently.  The
+    // compatibility contract records only whether any syntax error exists,
+    // never the parser-specific number of recovery nodes or diagnostics.
+    var syntaxDiagnostic = errors.Count == 0 ? 0 : 1;
+    facts.Add(new FileFact(file, imports, symbols, symbols.SelectMany(symbol => symbol.methods).Distinct().ToList(), syntaxDiagnostic == 0 ? "parsed" : "parsed-with-diagnostics", syntaxDiagnostic, syntaxDiagnostic == 0 ? null : "C# source contains one or more syntax errors."));
   } catch (Exception error) {
     facts.Add(new FileFact(file, [], [], [], "parse-failed", 1, error.Message));
   }

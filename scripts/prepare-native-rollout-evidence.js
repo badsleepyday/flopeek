@@ -39,16 +39,19 @@ function preparePacket({ root, inputs, assets }) {
   if (!fs.existsSync(inputs)) return incompletePacket(root);
   if (!fs.statSync(inputs).isDirectory()) throw new Error("Native rollout inputs must be a directory.");
   const candidate = path.join(inputs, "candidate.json");
+  const adapterParity = path.join(inputs, "adapter-parity.json");
   const benchmark = path.join(inputs, "benchmark.json");
   const profiles = path.join(inputs, "profiles");
   const databaseOpenEvidence = path.join(inputs, "database-open-evidence.json");
-  const missing = [candidate, benchmark, profiles, databaseOpenEvidence].filter((entry) => !fs.existsSync(entry));
+  const missing = [candidate, adapterParity, benchmark, profiles, databaseOpenEvidence]
+    .filter((entry) => !fs.existsSync(entry));
   if (missing.length) {
     throw new Error(`Native rollout inputs are partial; missing: ${missing.map((entry) => path.relative(inputs, entry)).join(", ")}.`);
   }
   return buildPacket({
     root,
     candidate: readJson(candidate),
+    adapterParity: readJson(adapterParity),
     benchmark: readJson(benchmark),
     profiles,
     assets,

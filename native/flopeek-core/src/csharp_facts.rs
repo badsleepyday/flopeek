@@ -49,6 +49,76 @@ fn type_body(node: Node<'_>) -> Option<Node<'_>> {
     })
 }
 
+fn position_at(source: &str, offset: usize) -> NativeJsPosition {
+    let prefix = &source[..offset.min(source.len())];
+    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
+    let column = prefix
+        .rfind('\n')
+        .map_or(prefix.len() + 1, |newline| prefix.len() - newline);
+    NativeJsPosition { line, column }
+}
+
+fn recover_malformed_declaration(path: &str, source: &str) -> Option<NativeJsStructuralSymbol> {
+    let mut declaration = None;
+    for keyword in ["class", "interface", "struct", "record"] {
+        let needle = format!("{keyword} ");
+        for (offset, _) in source.match_indices(&needle) {
+            let boundary = offset == 0
+                || source.as_bytes()[offset - 1].is_ascii_whitespace()
+                || matches!(source.as_bytes()[offset - 1], b'{' | b';');
+            if boundary && declaration.is_none_or(|(current, _, _)| offset < current) {
+                declaration = Some((offset, keyword, needle.len()));
+            }
+        }
+    }
+    let (keyword_offset, _, keyword_length) = declaration?;
+    let name_start = keyword_offset + keyword_length;
+    let name_end = source[name_start..]
+        .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .map(|length| name_start + length)
+        .unwrap_or(source.len());
+    let name = source[name_start..name_end].to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let line_start = source[..keyword_offset]
+        .rfind('\n')
+        .map_or(0, |newline| newline + 1);
+    let start = line_start
+        + source[line_start..keyword_offset]
+            .bytes()
+            .take_while(u8::is_ascii_whitespace)
+            .count();
+    let mut methods = BTreeSet::new();
+    for (open, _) in source[name_end..].match_indices('(') {
+        let open = name_end + open;
+        let prefix = source[..open].trim_end();
+        let method_start = prefix
+            .rfind(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .map_or(0, |separator| separator + 1);
+        let method = &prefix[method_start..];
+        if !method.is_empty()
+            && method != name
+            && !["if", "for", "while", "switch", "catch", "nameof"].contains(&method)
+        {
+            methods.insert(method.to_string());
+        }
+    }
+    Some(NativeJsStructuralSymbol {
+        symbol_type: "class".into(),
+        name,
+        methods: methods.into_iter().collect(),
+        evidence: NativeJsEvidence {
+            parser: PARSER.into(),
+            file: path.into(),
+            range: NativeJsRange {
+                start: position_at(source, start),
+                end: position_at(source, source.len()),
+            },
+        },
+    })
+}
+
 pub fn parse_native_csharp_facts(path: &str, source: &str) -> Option<NativeJsFacts> {
     let mut parser = Parser::new();
     parser
@@ -56,7 +126,10 @@ pub fn parse_native_csharp_facts(path: &str, source: &str) -> Option<NativeJsFac
         .ok()?;
     let tree = parser.parse(source, None)?;
     let root = tree.root_node();
-    let diagnostic_count = diagnostics(root);
+    // Parser recovery trees are implementation details.  Match the Roslyn
+    // oracle contract by reporting only the presence or absence of a syntax
+    // error, not a parser-specific recovery-node count.
+    let diagnostic_count = usize::from(diagnostics(root) > 0);
     let mut structural = NativeJsStructuralFacts {
         imports: vec![],
         symbols: vec![],
@@ -80,17 +153,25 @@ pub fn parse_native_csharp_facts(path: &str, source: &str) -> Option<NativeJsFac
             .into(),
             confidence: "exact".into(),
             diagnostics: diagnostic_count,
-            reason: None,
+            reason: (diagnostic_count > 0)
+                .then(|| "C# source contains one or more syntax errors.".into()),
         },
     };
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
         if node.kind() == "using_directive" {
-            if let Some(name) = children(node)
-                .into_iter()
-                .find(|child| !matches!(child.kind(), "name_equals" | "global" | "static"))
-                .and_then(|child| text(child, source))
-                .map(|value| value.trim_end_matches(';').to_string())
+            if let Some(name) = text(node, source)
+                .map(|value| value.trim().trim_end_matches(';').trim().to_string())
+                .and_then(|value| {
+                    let value = value.strip_prefix("global ").unwrap_or(&value).trim();
+                    let value = value.strip_prefix("using ").unwrap_or(value).trim();
+                    let value = value.strip_prefix("static ").unwrap_or(value).trim();
+                    let value = value
+                        .split_once('=')
+                        .map(|(_, target)| target.trim())
+                        .unwrap_or(value);
+                    (!value.is_empty()).then(|| value.to_string())
+                })
                 .filter(|value| !value.is_empty())
             {
                 structural.imports.push(NativeJsImport {
@@ -124,6 +205,12 @@ pub fn parse_native_csharp_facts(path: &str, source: &str) -> Option<NativeJsFac
             }
         }
         stack.extend(children(node));
+    }
+    if diagnostic_count > 0
+        && structural.symbols.is_empty()
+        && let Some(symbol) = recover_malformed_declaration(path, source)
+    {
+        structural.symbols.push(symbol);
     }
     structural.imports.sort_by(|left, right| {
         left.evidence
@@ -190,14 +277,24 @@ mod tests {
     }
 
     #[test]
-    fn malformed_source_is_diagnostic_and_does_not_invent_methods() {
+    fn malformed_source_normalizes_diagnostics_and_recovers_roslyn_declarations() {
         let facts = parse_native_csharp_facts(
             "src/Broken.cs",
-            "using Acme.Data;\npublic class Broken { public void Submit( {",
+            "using Acme.Data;\npublic class Broken { public void Submit( {\n",
         )
         .expect("C# files have a strict native parser");
         assert_eq!(facts.status, "parsed-with-diagnostics");
-        assert!(facts.diagnostics > 0);
+        assert_eq!(facts.diagnostics, 1);
+        assert_eq!(
+            facts.structural.analysis.reason.as_deref(),
+            Some("C# source contains one or more syntax errors.")
+        );
+        assert_eq!(facts.structural.symbols[0].name, "Broken");
+        assert_eq!(facts.structural.symbols[0].methods, ["Submit"]);
+        assert_eq!(facts.structural.symbols[0].evidence.range.start.line, 2);
+        assert_eq!(facts.structural.symbols[0].evidence.range.start.column, 1);
+        assert_eq!(facts.structural.symbols[0].evidence.range.end.line, 3);
+        assert_eq!(facts.structural.symbols[0].evidence.range.end.column, 1);
         assert!(facts.direct_calls.is_empty());
     }
 }

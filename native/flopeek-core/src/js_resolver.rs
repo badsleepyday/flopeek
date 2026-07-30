@@ -163,6 +163,22 @@ fn resolve_rust_import(
     if remaining.is_empty() {
         return resolve_file(&normalize_relative(&base)?, known_paths);
     }
+    // `use super::shared` can name an item declared directly in the owning
+    // module rather than a child module file.  Resolve that final symbol to
+    // the module source so call binding can prove the item from cached facts.
+    if remaining.len() == 1 {
+        let base = normalize_relative(&base)?;
+        for owner in [
+            format!("{base}.rs"),
+            format!("{base}/mod.rs"),
+            format!("{base}/lib.rs"),
+            format!("{base}/main.rs"),
+        ] {
+            if known_paths.contains(&owner) {
+                return Some(owner);
+            }
+        }
+    }
     None
 }
 
@@ -187,6 +203,182 @@ fn package_name(specifier: &str) -> String {
     } else {
         parts.first().copied().unwrap_or(specifier).to_string()
     }
+}
+
+fn workspace_segment_matches(pattern: &str, value: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    let parts = pattern.split('*').collect::<Vec<_>>();
+    let mut offset = 0;
+    for (index, part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            continue;
+        }
+        let Some(found) = value[offset..].find(part).map(|found| found + offset) else {
+            return false;
+        };
+        if index == 0 && !pattern.starts_with('*') && found != 0 {
+            return false;
+        }
+        offset = found + part.len();
+    }
+    pattern.ends_with('*') || parts.last().is_none_or(|last| value.ends_with(last))
+}
+
+fn workspace_path_matches(pattern: &str, relative_path: &str) -> bool {
+    let pattern = pattern.trim_start_matches("./").trim_end_matches('/');
+    let pattern = pattern
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    let path = relative_path
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    fn matches(pattern: &[&str], path: &[&str]) -> bool {
+        let Some((head, tail)) = pattern.split_first() else {
+            return path.is_empty();
+        };
+        if *head == "**" {
+            return (0..=path.len()).any(|index| matches(tail, &path[index..]));
+        }
+        path.split_first().is_some_and(|(value, remainder)| {
+            workspace_segment_matches(head, value) && matches(tail, remainder)
+        })
+    }
+    matches(&pattern, &path)
+}
+
+fn workspace_patterns(root: &Path) -> Vec<String> {
+    let Some(manifest) = read_json(&root.join("package.json")) else {
+        return Vec::new();
+    };
+    let workspaces = manifest.get("workspaces");
+    let values = workspaces
+        .and_then(Value::as_array)
+        .or_else(|| workspaces?.get("packages")?.as_array());
+    values
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn static_export_targets(value: &Value) -> Vec<String> {
+    match value {
+        Value::String(target) => vec![target.clone()],
+        Value::Array(values) => values.iter().flat_map(static_export_targets).collect(),
+        Value::Object(values) => ["import", "node", "default", "require", "types"]
+            .iter()
+            .find_map(|condition| values.get(*condition))
+            .map(static_export_targets)
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+fn workspace_targets(manifest: &Value, subpath: &str) -> Vec<String> {
+    if let Some(exports) = manifest.get("exports") {
+        match exports {
+            Value::String(_) | Value::Array(_) if subpath.is_empty() => {
+                return static_export_targets(exports);
+            }
+            Value::Object(exports) => {
+                let key = if subpath.is_empty() {
+                    ".".to_string()
+                } else {
+                    format!("./{subpath}")
+                };
+                if let Some(value) = exports.get(&key) {
+                    return static_export_targets(value);
+                }
+                if subpath.is_empty() && exports.keys().all(|key| !key.starts_with('.')) {
+                    return static_export_targets(&Value::Object(exports.clone()));
+                }
+            }
+            _ => {}
+        }
+    }
+    if !subpath.is_empty() {
+        return vec![format!("./{subpath}"), format!("./src/{subpath}")];
+    }
+    ["module", "main", "source", "types"]
+        .iter()
+        .filter_map(|field| manifest.get(*field).and_then(Value::as_str))
+        .map(str::to_owned)
+        .chain(["./src/index".to_string(), "./index".to_string()])
+        .collect()
+}
+
+fn resolve_workspace_import(
+    root: &Path,
+    specifier: &str,
+    known_paths: &BTreeSet<String>,
+) -> Option<String> {
+    let patterns = workspace_patterns(root);
+    if patterns.is_empty() {
+        return None;
+    }
+    let positive = patterns
+        .iter()
+        .filter(|pattern| !pattern.starts_with('!'))
+        .collect::<Vec<_>>();
+    let negative = patterns
+        .iter()
+        .filter_map(|pattern| pattern.strip_prefix('!'))
+        .collect::<Vec<_>>();
+    let requested_name = package_name(specifier);
+    let mut directories = BTreeSet::new();
+    for known in known_paths {
+        let mut directory = Path::new(known).parent().unwrap_or_else(|| Path::new(""));
+        loop {
+            if let Some(relative) = normalize_relative(directory) {
+                directories.insert(relative);
+            }
+            let Some(parent) = directory.parent() else {
+                break;
+            };
+            if parent == directory {
+                break;
+            }
+            directory = parent;
+        }
+    }
+    for directory in directories {
+        let manifest_path = root.join(&directory).join("package.json");
+        let Some(manifest) = read_json(&manifest_path) else {
+            continue;
+        };
+        if !positive
+            .iter()
+            .any(|pattern| workspace_path_matches(pattern, &directory))
+            || negative
+                .iter()
+                .any(|pattern| workspace_path_matches(pattern, &directory))
+            || manifest.get("name").and_then(Value::as_str) != Some(requested_name.as_str())
+        {
+            continue;
+        }
+        let subpath = specifier
+            .strip_prefix(&requested_name)
+            .unwrap_or_default()
+            .trim_start_matches('/');
+        for target in workspace_targets(&manifest, subpath) {
+            if !target.starts_with('.') {
+                continue;
+            }
+            let relative = normalize_relative(&Path::new(&directory).join(target))?;
+            if let Some(resolved) = resolve_file(&relative, known_paths)
+                .or_else(|| resolve_file(without_extension(&relative), known_paths))
+            {
+                return Some(resolved);
+            }
+        }
+    }
+    None
 }
 
 fn title_case(value: &str) -> String {
@@ -640,13 +832,15 @@ pub fn resolve_native_js_imports(
                         resolve_relative(path, specifier, known_paths)
                     }
                 } else {
-                    resolve_configured_alias(root, specifier, known_paths).or_else(|| {
-                        if path.ends_with(".py") {
-                            resolve_python_module(specifier, known_paths)
-                        } else {
-                            None
-                        }
-                    })
+                    resolve_configured_alias(root, specifier, known_paths)
+                        .or_else(|| resolve_workspace_import(root, specifier, known_paths))
+                        .or_else(|| {
+                            if path.ends_with(".py") {
+                                resolve_python_module(specifier, known_paths)
+                            } else {
+                                None
+                            }
+                        })
                 };
                 if let Some(target_path) = resolved {
                     result.resolved_imports.push(NativeResolvedImport {
@@ -692,7 +886,9 @@ mod tests {
     use super::{package_name, resolve_native_js_imports};
     use crate::js_facts::parse_native_js_facts;
     use std::collections::{BTreeMap, BTreeSet};
+    use std::fs;
     use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn resolves_relative_alias_external_and_builtin_imports() {
@@ -758,5 +954,75 @@ mod tests {
         let resolved = resolve_native_js_imports(Path::new("."), &facts, &known);
         assert!(resolved["src/lib.rs"].resolved_imports.is_empty());
         assert!(resolved["src/lib.rs"].external_imports.is_empty());
+    }
+
+    #[test]
+    fn resolves_super_item_to_the_parent_module_source() {
+        let facts = BTreeMap::from([
+            (
+                "src/area/child.rs".to_string(),
+                parse_native_js_facts(
+                    "src/area/child.rs",
+                    "use super::shared;\npub fn run() { shared(); }\n",
+                )
+                .unwrap(),
+            ),
+            (
+                "src/area/mod.rs".to_string(),
+                parse_native_js_facts("src/area/mod.rs", "pub fn shared() {}\n").unwrap(),
+            ),
+        ]);
+        let known = facts.keys().cloned().collect::<BTreeSet<_>>();
+        let resolved = resolve_native_js_imports(Path::new("."), &facts, &known);
+        assert_eq!(
+            resolved["src/area/child.rs"].resolved_imports[0].target_path,
+            "src/area/mod.rs"
+        );
+    }
+
+    #[test]
+    fn resolves_declared_workspace_package_exports_without_javascript() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-workspace-resolution-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("packages/core")).unwrap();
+        fs::write(
+            root.join("package.json"),
+            r#"{"workspaces":["packages/*"]}"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("packages/core/package.json"),
+            r#"{"name":"@parity/core","exports":{".":"./src/index.ts"}}"#,
+        )
+        .unwrap();
+        let facts = BTreeMap::from([
+            (
+                "apps/api/src/main.ts".to_string(),
+                parse_native_js_facts(
+                    "apps/api/src/main.ts",
+                    "import { ping } from '@parity/core';\nexport function main() { ping(); }\n",
+                )
+                .unwrap(),
+            ),
+            (
+                "packages/core/src/index.ts".to_string(),
+                parse_native_js_facts("packages/core/src/index.ts", "export function ping() {}\n")
+                    .unwrap(),
+            ),
+        ]);
+        let known = facts.keys().cloned().collect::<BTreeSet<_>>();
+        let resolved = resolve_native_js_imports(&root, &facts, &known);
+        assert_eq!(
+            resolved["apps/api/src/main.ts"].resolved_imports[0].target_path,
+            "packages/core/src/index.ts"
+        );
+        assert!(resolved["apps/api/src/main.ts"].external_imports.is_empty());
+        fs::remove_dir_all(root).unwrap();
     }
 }

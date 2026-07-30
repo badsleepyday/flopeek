@@ -151,7 +151,16 @@ fn classify_file(path: &str) -> (String, String, String) {
     } else if is_test_path(path) {
         file_type = "test";
         responsibility = "Verifies application component behavior.";
-    } else if let Some(route) = svelte_route(path).or_else(|| next_route(path)) {
+    } else if let Some(route) = svelte_route(path) {
+        if stem.split('.').next() == Some("+layout") {
+            file_type = "module";
+            label = format!("Layout {route}");
+        } else {
+            file_type = "route";
+            label = format!("Route {route}");
+            responsibility = "Application entry point detected from the file structure or AST.";
+        }
+    } else if let Some(route) = next_route(path) {
         file_type = "route";
         label = format!("Route {route}");
         responsibility = "Application entry point detected from the file structure or AST.";
@@ -838,13 +847,26 @@ pub fn build_native_js_entry_facts_for_manifests(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_native_js_entry_facts, build_native_js_structural_records,
+        build_native_js_entry_facts, build_native_js_structural_records, classify_file,
         normalize_structural_record_orders,
     };
     use crate::js_facts::parse_native_js_facts;
     use crate::js_resolver::resolve_native_js_imports;
     use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
+
+    #[test]
+    fn classifies_sveltekit_layout_as_a_module_not_a_route_entry() {
+        assert_eq!(
+            classify_file("src/routes/+layout.svelte"),
+            (
+                "module".to_string(),
+                "Layout /".to_string(),
+                "Code module that participates in the application graph.".to_string(),
+            )
+        );
+        assert_eq!(classify_file("src/routes/orders/+page.svelte").0, "route");
+    }
 
     #[test]
     fn creates_compatibility_shaped_records_with_sha256_public_hashes() {

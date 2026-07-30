@@ -7,6 +7,7 @@ const { NATIVE_BENCHMARK_SCHEMA, REQUIRED_NATIVE_ADAPTERS } = require("../../src
 const { CORE_MODE_SCHEMA, CoreModeError, requestedCoreMode, selectCoreMode } = require("../../src/core-mode");
 const { createConfiguredCoreClient, createSurfaceCoreClient, createSurfaceCoreRuntime, observeCoreRuntime } = require("../../src/core-runtime");
 const { createJsCoreClient } = require("../../src/js-core-client");
+const { machineAdapterParityEvidence } = require("../helpers/native-adapter-parity-evidence");
 
 function completeEvidence() {
   const databaseOpenEvidence = {
@@ -43,6 +44,7 @@ function completeEvidence() {
     ])),
   }));
   return {
+    adapterParity: machineAdapterParityEvidence(),
     backendParity: {
       schemaVersion: "flopeek-native-backend-parity/v1",
       sourceDiscoveryAuthority: "rust",

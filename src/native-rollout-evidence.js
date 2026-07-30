@@ -4,6 +4,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { adapterContractDigest } = require("./adapter-registry");
+const { validateNativeAdapterParity } = require("./native-adapter-parity");
 const {
   readPlatformNativePackageMetadata,
   resolvePlatformNativeBinary,
@@ -141,6 +142,17 @@ function loadBundledNativeRolloutEvidence(root = path.resolve(__dirname, ".."), 
     || benchmarkBinding.target !== benchmarkArtifact.target
     || benchmarkBinding.compiler.version !== benchmarkArtifact.compilerVersion) {
     throw new Error("Complete native rollout evidence requires exact revision, source, compiler, target, tarball, and binary bindings for every platform.");
+  }
+  try {
+    validateNativeAdapterParity(packet.evidence.adapterParity);
+  } catch (error) {
+    throw new Error(`Complete native rollout evidence has invalid adapter parity: ${error.message}`);
+  }
+  const parityBinary = binaries["@flopeek/native-linux-x64-gnu"];
+  if (!parityBinary
+    || packet.evidence.adapterParity.binary.sha256 !== parityBinary.binarySha256
+    || packet.evidence.adapterParity.binary.sourceRevision !== parityBinary.repositoryRevision) {
+    throw new Error("Complete native rollout evidence adapter parity does not match the exact Linux x64 release binary and source revision.");
   }
   const databaseOpen = packet.evidence.performance?.databaseOpenEvidence;
   if (!validSha256(databaseOpen?.sha256)) {
