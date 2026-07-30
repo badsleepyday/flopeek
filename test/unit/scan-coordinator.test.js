@@ -281,7 +281,11 @@ test("unbounded coordinator refreshes through its injected CoreClient", async (t
   const changedPath = changeService(root);
   await coordinator.refresh([changedPath], "filesystem");
   assert.equal(refreshCalls.length, 2);
-  assert.equal(refreshCalls[0].targetRoot, root);
+  assert.equal(
+    fs.realpathSync(refreshCalls[0].targetRoot),
+    fs.realpathSync(root),
+    "coordinator refresh must retain filesystem identity across macOS /var and /private/var aliases",
+  );
   assert.equal(refreshCalls[0].options.persistIdentity, false);
   assert.equal(refreshCalls[0].options.onProfile, onCoreProfile);
   assert.equal(refreshCalls[0].options.sessionProjectId, refreshCalls[1].options.sessionProjectId);
