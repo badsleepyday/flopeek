@@ -14,9 +14,14 @@ test("public Core CI proves package and clean-room behavior on the declared Node
   assert.match(workflow, /os:\s*\[ubuntu-latest, windows-latest, macos-latest\]/);
   assert.match(workflow, /node:\s*\[20, 22\]/);
   assert.match(workflow, /runs-on:\s*\$\{\{ matrix\.os \}\}/);
+  assert.match(workflow, /uses: actions\/checkout@v7/);
+  assert.match(workflow, /uses: actions\/setup-node@v7/);
   assert.match(workflow, /uses: dtolnay\/rust-toolchain@stable/);
-  assert.match(workflow, /uses: actions\/setup-dotnet@v4/);
+  assert.match(workflow, /uses: actions\/setup-dotnet@v6/);
   assert.match(workflow, /dotnet-version:\s*'10\.0\.x'/);
+  assert.match(workflow, /uses: actions\/setup-go@v7/);
+  assert.match(workflow, /go-version:\s*'1\.26\.4'/);
+  assert.match(workflow, /setup-go@v7[\s\S]*?cache:\s*false/);
   assert.match(publicSourceRunner, /lanes\["public-source"\]\.unshift\("test\/unit\/native-inventory-parity\.test\.js"\)/);
   for (const command of ["npm run test:native-core", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --version", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-facts .", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-graph .", "node scripts/verify-branch-name.js", "npm run verify:core-baseline", "npm run test:public-source", "npm run test:package", "npm run audit:package", "npm run verify:clean-room"]) {
     assert.match(workflow, new RegExp(`- run: ${command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
