@@ -216,7 +216,11 @@ test("persistent native queries use verified fact-cache references instead of fu
   assert.equal(Object.hasOwn(request.params, "batch"), false);
   assert.equal(request.params.projectId, graph.project.projectId);
   assert.match(request.params.factsDigest, /^sha256:[0-9a-f]{64}$/);
-  assert.equal(request.params.projectRoot, root);
+  assert.equal(
+    fs.realpathSync(request.params.projectRoot),
+    fs.realpathSync(root),
+    "persistent query roots must identify the same filesystem directory even when macOS expands /var to /private/var",
+  );
 });
 
 test("persistent native query retries its exact historical batch after a cache-reference miss", async (context) => {
