@@ -78,6 +78,12 @@ fn resolve_file(base: &str, known_paths: &BTreeSet<String>) -> Option<String> {
         .find(|candidate| known_paths.contains(candidate))
 }
 
+fn resolve_rust_module_file(base: &str, known_paths: &BTreeSet<String>) -> Option<String> {
+    [format!("{base}.rs"), format!("{base}/mod.rs")]
+        .into_iter()
+        .find(|candidate| known_paths.contains(candidate))
+}
+
 fn resolve_relative(
     from_path: &str,
     specifier: &str,
@@ -190,7 +196,7 @@ fn resolve_rust_import(
             candidate.push(segment);
         }
         let candidate = normalize_relative(&candidate)?;
-        if let Some(resolved) = resolve_file(&candidate, known_paths) {
+        if let Some(resolved) = resolve_rust_module_file(&candidate, known_paths) {
             return Some(resolved);
         }
     }
@@ -1047,7 +1053,7 @@ mod tests {
     }
 
     #[test]
-    fn rust_resolution_matches_javascript_module_files_without_inventing_item_owners() {
+    fn rust_resolution_matches_javascript_module_files_including_item_owners() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -1088,7 +1094,63 @@ mod tests {
                 .iter()
                 .map(|item| (item.specifier.as_str(), item.target_path.as_str()))
                 .collect::<Vec<_>>(),
-            vec![("super::sibling::ping", "src/area/sibling.rs")]
+            vec![
+                ("super::shared", "src/area/mod.rs"),
+                ("super::sibling::ping", "src/area/sibling.rs"),
+            ]
+        );
+        assert!(resolved["src/area/child.rs"].external_imports.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rust_resolution_matches_javascript_self_crate_and_unresolved_paths() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-rust-self-crate-resolution-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("src/area")).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"resolver-test\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        let facts = BTreeMap::from([
+            (
+                "src/area/child.rs".to_string(),
+                parse_native_js_facts(
+                    "src/area/child.rs",
+                    concat!(
+                        "use self::local;\n",
+                        "use crate::helper::ping;\n",
+                        "use crate::missing::ghost;\n",
+                        "pub fn local() {}\n",
+                        "pub fn run() { local(); ping(); ghost(); }\n",
+                    ),
+                )
+                .unwrap(),
+            ),
+            (
+                "src/helper.rs".to_string(),
+                parse_native_js_facts("src/helper.rs", "pub fn ping() {}\n").unwrap(),
+            ),
+        ]);
+        let known = facts.keys().cloned().collect::<BTreeSet<_>>();
+        let resolved = resolve_native_js_imports(&root, &facts, &known);
+        assert_eq!(
+            resolved["src/area/child.rs"]
+                .resolved_imports
+                .iter()
+                .map(|item| (item.specifier.as_str(), item.target_path.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("crate::helper::ping", "src/helper.rs"),
+                ("self::local", "src/area/child.rs"),
+            ]
         );
         assert!(resolved["src/area/child.rs"].external_imports.is_empty());
         fs::remove_dir_all(root).unwrap();
