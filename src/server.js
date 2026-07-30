@@ -179,6 +179,7 @@ async function startServer(options) {
   let coordinator = null;
   let graph = null;
   let previousGraph = null;
+  let materializedGraph = null;
   let closeWatcher = () => {};
   let refreshTimer = null;
   let refreshInProgress = false;
@@ -203,6 +204,7 @@ async function startServer(options) {
     maxBytes: options.maxBytes,
     analysisDelayMs: options.analysisDelayMs,
     packagePath: options.packagePath,
+    nativeGraphHandle: true,
     onProgress: coordinatorOptions.broadcastProgress === false ? undefined : ({ phase, outcome: currentOutcome }) => {
       broadcast("scan-status", { phase, ...currentOutcome });
     },
@@ -211,15 +213,17 @@ async function startServer(options) {
   const elapsedMilliseconds = (startedAt) => Number(process.hrtime.bigint() - startedAt) / 1_000_000;
   const broadcastGraphUpdate = async (reason, refreshStartedAt = null) => {
     const contextStartedAt = process.hrtime.bigint();
-    const delta = previousGraph
-      ? graph.analysis.latestDelta || getGraphDelta(previousGraph, graph, { limit: 20 })
-      : getGraphDelta(null, graph, { limit: 20 });
-    const changedContexts = delta.schemaVersion
+    const delta = await core.getGraphDelta(graph, {
+      previousGraph,
+      fromVersion: previousGraph?.state?.graphVersion,
+      toVersion: graph.state?.graphVersion,
+    });
+    const changedContexts = delta?.schemaVersion
       ? await core.getChangedContexts(graph, { fromVersion: delta.fromGraphVersion, toVersion: delta.toGraphVersion })
       : null;
     const changedContextMs = elapsedMilliseconds(contextStartedAt);
     const previousNodeIds = new Set(previousGraph?.nodes?.map((node) => node.id));
-    const addedFiles = previousGraph
+    const addedFiles = previousGraph && Array.isArray(graph.nodes)
       ? graph.nodes
         .filter((node) => node.kind === "file" && !previousNodeIds.has(node.id))
         .sort((left, right) => left.path.localeCompare(right.path))
@@ -235,8 +239,8 @@ async function startServer(options) {
       addedFiles: visibleAddedFiles,
       addedFileCount: addedFiles.length,
       addedFilesTruncated: addedFiles.length > visibleAddedFiles.length,
-      delta: delta.summary || (delta.available ? delta.summary : null),
-      deltaIdentity: delta.schemaVersion ? { fromGraphVersion: delta.fromGraphVersion, toGraphVersion: delta.toGraphVersion, sourceChanged: delta.sourceChanged, topologyChanged: delta.topologyChanged } : null,
+      delta: delta?.summary || (delta?.available ? delta.summary : null),
+      deltaIdentity: delta?.schemaVersion ? { fromGraphVersion: delta.fromGraphVersion, toGraphVersion: delta.toGraphVersion, sourceChanged: delta.sourceChanged, topologyChanged: delta.topologyChanged } : null,
       changedContexts,
       timing: refreshStartedAt ? { refreshToAffectedContextMs: elapsedMilliseconds(refreshStartedAt), changedContextProjectionMs: changedContextMs } : null,
     });
@@ -246,6 +250,7 @@ async function startServer(options) {
     const result = await coordinator.refresh(changedPaths, reason || "scan");
     previousGraph = result.previousGraph;
     graph = result.graph;
+    materializedGraph = null;
     if (!graph) {
       const failure = result.outcome.failure?.message || result.outcome.reason || "No complete graph is available.";
       throw new Error(`Flopeek scan ${result.outcome.status}: ${failure}`);
@@ -272,6 +277,17 @@ async function startServer(options) {
   const currentGraph = () => {
     if (!graph) throw new Error("No complete Flopeek graph is available.");
     return graph;
+  };
+  const explicitMaterializedGraph = async () => {
+    const current = currentGraph();
+    if (Array.isArray(current.nodes)) return current;
+    if (!materializedGraph) {
+      materializedGraph = await core.getLastCompleteGraph(root);
+      if (!materializedGraph || !Array.isArray(materializedGraph.nodes)) {
+        throw new Error("The native graph could not be materialized for this explicit compatibility surface.");
+      }
+    }
+    return materializedGraph;
   };
   const scheduleRefresh = (changedPath = null) => {
     if (changedPath) pendingChangedPaths.add(changedPath);
@@ -338,7 +354,7 @@ async function startServer(options) {
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/scan-status") return send(response, 200, coordinator.currentOutcome());
-      if (request.method === "GET" && url.pathname === "/api/graph") return send(response, 200, currentGraph());
+      if (request.method === "GET" && url.pathname === "/api/graph") return send(response, 200, await explicitMaterializedGraph());
       if (request.method === "GET" && url.pathname === "/api/capabilities") {
         const current = currentGraph();
         return send(response, 200, { ...current.analysis, cacheState: summarizeCacheResult(readGraphCacheResult(root, { expectedProjectId: current.project.projectId })) });
@@ -539,7 +555,7 @@ async function startServer(options) {
       if (request.method === "GET" && url.pathname === "/api/brief-manifests") return send(response, 200, listDurableBriefManifests(currentGraph(), { kind: url.searchParams.get("kind"), contextId: url.searchParams.get("contextId") }));
       if (request.method === "GET" && url.pathname === "/api/search") return send(response, 200, await core.findNodes(currentGraph(), url.searchParams));
       if (request.method === "GET" && url.pathname === "/api/project") return send(response, 200, currentGraph().project);
-      if (request.method === "GET" && url.pathname === "/api/flows") return send(response, 200, currentGraph().flows);
+      if (request.method === "GET" && url.pathname === "/api/flows") return send(response, 200, (await explicitMaterializedGraph()).flows);
       if (request.method === "GET" && url.pathname === "/api/entry-flows") return send(response, 200, await core.getEntryFlows(currentGraph(), url.searchParams.get("query") || "", url.searchParams.get("scope") || "application"));
       if (request.method === "GET" && url.pathname === "/api/flow-lens") {
         const requestedMaxSteps = parseFlowLensMaxStepsQuery(url.searchParams.get("maxSteps"));
@@ -591,7 +607,7 @@ async function startServer(options) {
         return send(response, 200, getGitContextContinuity(currentGraph(), contextRef, { from: url.searchParams.get("from") || "HEAD~1", to: url.searchParams.get("to") || "HEAD" }));
       }
       if (request.method === "GET" && url.pathname === "/api/impact") return send(response, 200, await core.getChangeImpact(currentGraph(), url.searchParams.getAll("path"), { maxDepth: url.searchParams.get("maxDepth"), previousGraph }));
-      if (request.method === "GET" && url.pathname === "/api/export/mermaid") return send(response, 200, { mermaid: graphToMermaid(currentGraph()) });
+      if (request.method === "GET" && url.pathname === "/api/export/mermaid") return send(response, 200, { mermaid: graphToMermaid(await explicitMaterializedGraph()) });
       if (request.method === "GET" && url.pathname === "/api/context-card") {
         const card = await core.getContextCard(currentGraph(), url.searchParams.get("id"), url.searchParams.get("format") || "json");
         return card ? send(response, 200, card) : send(response, 404, { error: "Node not found." });

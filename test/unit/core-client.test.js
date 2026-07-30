@@ -79,7 +79,7 @@ function observedNativeRequests(requests) {
   };
 }
 
-test("JavaScript core client declares the complete v4 core boundary", () => {
+test("JavaScript core client declares the complete v5 core boundary", () => {
   const client = createJsCoreClient();
   assert.equal(client.schemaVersion, CORE_CLIENT_SCHEMA);
   assert.equal(client.implementation, "javascript");

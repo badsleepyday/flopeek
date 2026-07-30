@@ -22,7 +22,10 @@ test("graph, agent context, and capability API expose the same adapter registry 
     assert.equal(response.status, 200);
     const api = await response.json();
     assert.deepEqual(api.adapterCapabilities, graph.analysis.adapterCapabilities);
-    assert.equal(api.adapterCapabilities.schema, "flopeek-adapter-capabilities/v1");
+    assert.equal(api.adapterCapabilities.schema, "flopeek-adapter-capabilities/v2");
+    const csharp = api.adapterCapabilities.adapters.find((adapter) => adapter.id === "csharp");
+    assert.equal(csharp.parser, "csharp-roslyn");
+    assert.equal(csharp.requiredToolchain, ".NET SDK");
   } finally {
     if (app) await new Promise((resolve) => app.server.close(resolve));
     fs.rmSync(root, { recursive: true, force: true });

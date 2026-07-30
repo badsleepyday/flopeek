@@ -16,11 +16,11 @@ const { doctorAgentIntegration, installAgentIntegration, uninstallAgentIntegrati
 const { agentComparisonSummary, evaluateAgentComparison, loadAgentComparisonRuns } = require("./agent-comparison");
 const { evaluateOrientation, loadOrientationCases, orientationSummary } = require("./orientation-benchmark");
 const { applyShowcaseChange, printShowcase, resetShowcase, showcasePublicResult, showcaseStatus, startShowcase } = require("./showcase");
-const { getGitChangedPaths, graphToMermaid, readGraphCache, scanRepository, writeGraphCache } = require("./scanner");
+const { getGitChangedPaths, graphToMermaid, scanRepository, writeGraphCache } = require("./scanner");
 const { readGraphCacheResult, summarizeCacheResult } = require("./graph-cache");
 const { readGitMetadata } = require("./git-metadata");
 const { cacheHygiene, pruneArtifactCache } = require("./artifact-cache");
-const { pruneGraphDeltas, readGraphDelta, readLatestGraphDelta } = require("./graph-state");
+const { pruneGraphDeltas } = require("./graph-state");
 const { discoverRepository } = require("./repository-discovery");
 const { activateOnWorkspaceHub, startWorkspaceServer } = require("./workspace-server");
 const { createSurfaceCoreRuntime, observeCoreRuntime } = require("./core-runtime");
@@ -117,16 +117,78 @@ function cachedPersistentGraph(root) {
 }
 
 async function currentPersistentGraph(root) {
-  const cached = cachedPersistentGraph(root);
-  if (cached) return cached;
-  const graph = await core.scan(root, { persistIdentity: true });
-  graph.analysis.cacheState = summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-persistent-read" }));
-  return graph;
+  // Metadata commands operate against the exact persisted JavaScript graph
+  // version. Native never reaches this branch because its selected client is
+  // acquired first and graph.json is ignored below.
+  if (core?.implementation === "javascript") {
+    const cache = readGraphCacheResult(root);
+    if (cache.status === "valid") {
+      cache.graph.analysis.cacheState = summarizeCacheResult(cache);
+      return cache.graph;
+    }
+  }
+  return (await acquireCurrentGraph(root, { cacheEnabled: true, reason: "cli-persistent-read" })).graph;
 }
 
 async function bootstrapGraph(root, cacheEnabled) {
-  if (!cacheEnabled) return core.scan(root, { persistIdentity: false });
-  return currentPersistentGraph(root);
+  return (await acquireCurrentGraph(root, { cacheEnabled, reason: "cli-bootstrap" })).graph;
+}
+
+function nativeAuthorityActive() {
+  return core?.implementation === "native-experimental"
+    && core?.sourceAuthority === "rust"
+    && core?.fallback?.active !== true;
+}
+
+function disabledGraphCacheState(root, reason = "cache-disabled") {
+  return {
+    status: "disabled",
+    reason,
+    path: path.join(root, ".flopeek", "graph.json"),
+    diagnostics: [],
+    contract: null,
+    migrated: false,
+  };
+}
+
+function nativeGraphCacheState(root, graph) {
+  return {
+    status: "native-sqlite",
+    reason: "native-core-authoritative",
+    path: path.join(root, ".flopeek", "native-core.sqlite3"),
+    diagnostics: [],
+    contract: "flopeek-native-graph-state/v1",
+    migrated: false,
+    graphVersion: graph.state?.graphVersion ?? null,
+    limitation: "Rust/SQLite is authoritative. graph.json was neither read nor written.",
+  };
+}
+
+async function acquireCurrentGraph(root, options = {}) {
+  const cacheEnabled = options.cacheEnabled !== false;
+  const initiallyJavascript = core?.implementation === "javascript";
+  const previousGraph = cacheEnabled && initiallyJavascript ? cachedPersistentGraph(root) : null;
+  if (previousGraph && options.forceScan !== true && !Array.isArray(options.changedPaths)) {
+    return { graph: previousGraph, previousGraph, authority: "javascript-graph-json" };
+  }
+  const graph = await core.scan(root, {
+    persistIdentity: cacheEnabled,
+    ...(Array.isArray(options.changedPaths) ? { changedPaths: options.changedPaths } : {}),
+  });
+  graph.analysis.coreRuntime = observeCoreRuntime(coreRuntime.selection, core);
+  if (!cacheEnabled) {
+    graph.analysis.cacheState = disabledGraphCacheState(graph.project.root);
+    return { graph, previousGraph: null, authority: "session-memory" };
+  }
+  if (nativeAuthorityActive()) {
+    graph.analysis.cacheState = nativeGraphCacheState(graph.project.root, graph);
+    return { graph, previousGraph: null, authority: "native-sqlite" };
+  }
+  graph.analysis.cacheState = summarizeCacheResult(writeGraphCache(graph.project.root, graph, {
+    reason: options.reason || "cli-authority-acquire",
+    changedPaths: options.changedPaths,
+  }));
+  return { graph, previousGraph, authority: "javascript-graph-json" };
 }
 
 function openBrowser(url) {
@@ -491,11 +553,11 @@ async function main() {
     }
     // `--no-cache` is the safe inspection mode: it must not leave Flopeek
     // metadata behind merely to obtain a generated project identity.
-    const graph = await core.scan(options.root, { persistIdentity: options.cache });
-    graph.analysis.coreRuntime = observeCoreRuntime(coreRuntime.selection, core);
-    graph.analysis.cacheState = options.cache
-      ? summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-scan" }))
-      : { status: "disabled", path: path.join(graph.project.root, ".flopeek", "graph.json"), diagnostics: [], contract: null, migrated: false };
+    const { graph } = await acquireCurrentGraph(options.root, {
+      cacheEnabled: options.cache,
+      reason: "cli-scan",
+      forceScan: true,
+    });
     if (options.format === "json") console.log(JSON.stringify(graph, null, 2));
     else if (options.format === "mermaid") console.log(graphToMermaid(graph));
     else if (options.format === "summary") printSummary(graph, options.cache);
@@ -503,7 +565,10 @@ async function main() {
     return;
   }
   if (options.command === "view") {
-    const graph = await core.scan(options.root, { persistIdentity: options.cache });
+    const { graph } = await acquireCurrentGraph(options.root, {
+      cacheEnabled: options.cache,
+      reason: "cli-view",
+    });
     const result = await core.getProjectOverview(graph, { mode: options.mode, scope: options.scope, level: options.level, focus: options.focus, maxNodes: options.maxNodes, maxEdges: options.maxEdges });
     if (options.format === "json") console.log(JSON.stringify(result, null, 2));
     else if (options.format === "summary") {
@@ -513,15 +578,19 @@ async function main() {
     return;
   }
   if (options.command === "impact") {
-    const graph = await core.scan(options.root, { persistIdentity: options.cache });
-    const previousGraph = readGraphCache(options.root, {
-      expectedProjectId: graph.project.identity?.canonicalProjectId || graph.project.projectId,
+    const changedPaths = options.changed.length ? options.changed : getGitChangedPaths(options.root, options.base);
+    const acquired = await acquireCurrentGraph(options.root, {
+      cacheEnabled: options.cache,
+      reason: "cli-impact",
+      changedPaths,
+      forceScan: true,
     });
-    const changedPaths = options.changed.length ? options.changed : getGitChangedPaths(graph.project.root, options.base);
-    graph.analysis.cacheState = options.cache
-      ? summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-impact", changedPaths }))
-      : { status: "disabled", path: path.join(graph.project.root, ".flopeek", "graph.json"), diagnostics: [], contract: null, migrated: false };
-    const impact = await core.getChangeImpact(graph, changedPaths, { previousGraph });
+    const graph = acquired.graph;
+    const previousGraphVersion = nativeAuthorityActive() ? graph.state.graphVersion - 1 : undefined;
+    const impact = await core.getChangeImpact(graph, changedPaths, {
+      previousGraph: acquired.previousGraph,
+      previousGraphVersion,
+    });
     if (options.format === "json") console.log(JSON.stringify(impact, null, 2));
     else if (options.format === "summary") printImpact(impact);
     else throw new Error("Impact output supports summary or json formats.");
@@ -542,9 +611,14 @@ async function main() {
     return;
   }
   if (options.command === "delta") {
-    const delta = options.fromVersion !== null && options.toVersion !== null
-      ? readGraphDelta(options.root, options.fromVersion, options.toVersion)
-      : readLatestGraphDelta(options.root);
+    const { graph } = await acquireCurrentGraph(options.root, {
+      cacheEnabled: options.cache,
+      reason: "cli-delta",
+    });
+    const delta = await core.getGraphDelta(graph, {
+      ...(options.fromVersion !== null ? { fromVersion: options.fromVersion } : {}),
+      ...(options.toVersion !== null ? { toVersion: options.toVersion } : {}),
+    });
     if (!delta) throw new Error("No matching persisted graph delta was found.");
     if (options.format === "json") console.log(JSON.stringify(delta, null, 2));
     else if (options.format === "summary") printDelta(delta);
@@ -560,10 +634,10 @@ async function main() {
   }
   if (options.command === "git-evidence") {
     if (!options.contextRef) throw new Error("Git evidence requires --context-ref <fp://local/...>.");
-    const graph = await core.scan(options.root, { persistIdentity: true });
-    graph.analysis.cacheState = options.cache
-      ? summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-active-branch-git-evidence" }))
-      : { status: "disabled", path: path.join(graph.project.root, ".flopeek", "graph.json"), diagnostics: [], contract: null, migrated: false };
+    const { graph } = await acquireCurrentGraph(options.root, {
+      cacheEnabled: options.cache,
+      reason: "cli-active-branch-git-evidence",
+    });
     const result = getActiveBranchGitEvidence(graph, options.contextRef, { limit: options.limit });
     if (options.format === "json") console.log(JSON.stringify(result, null, 2));
     else if (options.format === "summary") printActiveBranchGitEvidence(result);
@@ -572,10 +646,10 @@ async function main() {
   }
   if (options.command === "git-continuity") {
     if (!options.contextRef) throw new Error("Git continuity requires --context-ref <fp://local/...>.");
-    const graph = await core.scan(options.root, { persistIdentity: true });
-    graph.analysis.cacheState = options.cache
-      ? summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-git-context-continuity" }))
-      : { status: "disabled", path: path.join(graph.project.root, ".flopeek", "graph.json"), diagnostics: [], contract: null, migrated: false };
+    const { graph } = await acquireCurrentGraph(options.root, {
+      cacheEnabled: options.cache,
+      reason: "cli-git-context-continuity",
+    });
     const result = getGitContextContinuity(graph, options.contextRef, { from: options.from, to: options.to });
     if (options.format === "json") console.log(JSON.stringify(result, null, 2));
     else if (options.format === "summary") printGitContextContinuity(result);
@@ -584,7 +658,7 @@ async function main() {
   }
   if (options.command === "related-implementations") {
     if (!options.contextRef) throw new Error("Related implementations requires --context-ref <fp://local/...>.");
-    const result = getRelatedImplementations(currentPersistentGraph(options.root), options.contextRef);
+    const result = getRelatedImplementations(await currentPersistentGraph(options.root), options.contextRef);
     if (options.format === "json") console.log(JSON.stringify(result, null, 2));
     else if (options.format === "summary") printRelatedImplementations(result);
     else throw new Error("Related implementations output supports summary or json formats.");
@@ -613,7 +687,7 @@ async function main() {
     return;
   }
   if (options.command === "work") {
-    const graph = options.workAction === "workflows" ? null : currentPersistentGraph(options.root);
+    const graph = options.workAction === "workflows" ? null : await currentPersistentGraph(options.root);
     const result = options.workAction === "workflows"
       ? listStoredWorkflows(path.resolve(options.root))
       : options.workAction === "timeline"
@@ -636,8 +710,7 @@ async function main() {
   }
   if (options.command === "continue") {
     if (!options.cache) throw new Error("Continuation checkpoint commands require persistent graph identity; omit --no-cache.");
-    const graph = await core.scan(options.root, { persistIdentity: true });
-    graph.analysis.cacheState = summarizeCacheResult(writeGraphCache(graph.project.root, graph, { reason: "cli-continuation" }));
+    const graph = await currentPersistentGraph(options.root);
     const result = options.continueAction === "plan"
       ? options.planAction === "create"
         ? createPlannedOverlay(graph, readJsonInput(options.inputFile, "Planned-overlay creation"))

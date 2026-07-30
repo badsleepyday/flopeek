@@ -2,6 +2,8 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
+const { adapterContractDigest } = require("../../src/adapter-registry");
+const { REQUIRED_NATIVE_ADAPTERS } = require("../../src/native-rollout-gate");
 const { CORE_MODE_SCHEMA, CoreModeError, requestedCoreMode, selectCoreMode } = require("../../src/core-mode");
 const { createConfiguredCoreClient, createSurfaceCoreClient, createSurfaceCoreRuntime, observeCoreRuntime } = require("../../src/core-runtime");
 const { createJsCoreClient } = require("../../src/js-core-client");
@@ -17,7 +19,11 @@ function completeEvidence() {
       javascriptRole: "oracle-and-rollback-only",
       fixtureCount: 1,
       exactFixtureCount: 1,
-      adapters: ["typescript"],
+      adapterContractDigest: adapterContractDigest(),
+      requiredAdapters: REQUIRED_NATIVE_ADAPTERS,
+      nativeAdapters: REQUIRED_NATIVE_ADAPTERS,
+      fallbackOnlyAdapters: [],
+      adapterCoveragePolicy: "all-native",
     },
     structuralParity: { publicIds: true, fixtureCount: 11, exactFixtureCount: 11 },
     queryParity: { flowLens: true, impact: true, relatedTests: true, contextRef: true, changedContexts: true },

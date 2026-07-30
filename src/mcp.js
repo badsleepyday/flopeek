@@ -7,6 +7,28 @@ const { compareGitSnapshots, createGitSnapshot } = require("./history");
 const { DEFAULT_FLOW_LENS_MAX_STEPS, MAX_FLOW_LENS_STEPS, MIN_FLOW_LENS_STEPS } = require("./flow-lens-options");
 const { createSurfaceCoreRuntime } = require("./core-runtime");
 
+function graphDeltaCompatibilityProjection(delta, previousGraph, graph) {
+  if (!delta || delta.available === true) return delta;
+  if (delta.schemaVersion !== "flopeek-delta/v1") return delta;
+  return {
+    available: true,
+    compared: {
+      projectId: delta.projectId,
+      previousGraphVersion: delta.fromGraphVersion,
+      graphVersion: delta.toGraphVersion,
+      previousGeneratedAt: previousGraph?.generatedAt || null,
+      generatedAt: graph?.generatedAt || delta.generatedAt || null,
+    },
+    summary: delta.summary,
+    addedNodes: delta.nodes?.added || [],
+    removedNodes: delta.nodes?.removed || [],
+    addedEdges: delta.edges?.added || [],
+    removedEdges: delta.edges?.removed || [],
+    truncated: delta.truncated === true,
+    limitation: "This projects the authoritative adjacent static delta as topology changes. It is not a source diff, Git diff, or runtime behavior diff.",
+  };
+}
+
 function jsonResult(value) {
   return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
 }
@@ -40,6 +62,7 @@ async function createMcpServer(options) {
     maxBytes: options.maxBytes,
     packagePath: options.packagePath,
     analysisDelayMs: options.analysisDelayMs,
+    nativeGraphHandle: true,
   });
   let graph;
   let previousGraph = null;
@@ -49,7 +72,12 @@ async function createMcpServer(options) {
     previousGraph = result.previousGraph;
     graph = result.graph;
     if (!graph) throw new Error(`Flopeek scan ${result.outcome.status}: ${result.outcome.failure?.message || result.outcome.reason || "no complete graph is available"}.`);
-    return { graph, delta: getGraphDelta(previousGraph, graph), scanOutcome: result.outcome };
+    const delta = await core.getGraphDelta(graph, {
+      previousGraph,
+      fromVersion: previousGraph?.state?.graphVersion,
+      toVersion: graph.state?.graphVersion,
+    });
+    return { graph, delta, scanOutcome: result.outcome };
   };
   const currentGraph = () => {
     if (graph) return graph;
@@ -199,7 +227,11 @@ async function createMcpServer(options) {
       paths: z.array(z.string().min(1).max(2048)).min(1).max(100),
       maxDepth: z.number().int().min(0).max(12).optional(),
     },
-  }, ({ paths, maxDepth = 6 }) => core.getChangeImpact(currentGraph(), paths, { maxDepth, previousGraph }));
+  }, ({ paths, maxDepth = 6 }) => core.getChangeImpact(currentGraph(), paths, {
+    maxDepth,
+    previousGraph,
+    previousGraphVersion: previousGraph?.state?.graphVersion,
+  }));
 
   register("get_related_tests", {
     title: "Get directly related tests",
@@ -254,11 +286,8 @@ async function createMcpServer(options) {
       fromVersion: z.number().int().min(0).optional(),
       toVersion: z.number().int().min(1).optional(),
     },
-  }, ({ fromVersion, toVersion }) => {
-    const current = currentGraph();
-    const delta = fromVersion !== undefined && toVersion !== undefined
-      ? availableGraphDelta(current, fromVersion, toVersion)
-      : latestAvailableGraphDelta(current);
+  }, async ({ fromVersion, toVersion }) => {
+    const delta = await core.getGraphDelta(currentGraph(), { fromVersion, toVersion });
     if (!delta) throw new Error("No matching graph delta was found.");
     return delta;
   });
@@ -729,7 +758,7 @@ async function createMcpServer(options) {
       cache: options.cache === false ? "disabled" : path.join(root, ".flopeek", "graph.json"),
       cacheState: refreshed.analysis.cacheState,
       derivedCacheInvalidation: refreshed.analysis.derivedCacheInvalidation,
-      delta,
+      delta: graphDeltaCompatibilityProjection(delta, previousGraph, refreshed),
       adjacentDelta: refreshed.analysis.latestDelta || null,
       persistedDelta: options.cache === false ? null : refreshed.analysis.latestDelta || null,
       changedContexts: await core.getChangedContexts(refreshed, { fromVersion: refreshed.analysis.latestDelta?.fromGraphVersion, toVersion: refreshed.analysis.latestDelta?.toGraphVersion }),

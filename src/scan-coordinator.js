@@ -102,7 +102,9 @@ function createScanCoordinator(inputRoot, options = {}) {
     mode: options.coreMode,
     rolloutEvidence: options.nativeRolloutEvidence,
   });
-  const sessionProjectId = cacheEnabled ? null : `session:${randomUUID()}`;
+  // A coordinator owns one bounded/no-cache lineage for its entire lifetime.
+  // Rust receives this exact identity on every refresh.
+  const sessionProjectId = `session:${randomUUID()}`;
   const core = assertCoreClient(options.coreClient || createJsCoreClient());
   const effectiveCoreRuntime = () => observeCoreRuntime(coreMode, core);
   const nativeStorageAuthority = () => core.implementation === "native-experimental";
@@ -184,7 +186,8 @@ function createScanCoordinator(inputRoot, options = {}) {
       discovery: details.discovery || null,
       activeGraph: graphIdentity(active.graph, active.source, details.freshness || (status === "complete" ? "current" : "stale-unverified"), root),
       cachePromotion: {
-        allowed: status === "complete" && cacheEnabled,
+        allowed: details.cachePromotionAllowed
+          ?? (status === "complete" && cacheEnabled && !(bounded && nativeStorageAuthority())),
         performed: details.cachePromoted === true,
       },
       coreRuntime: details.coreRuntime || effectiveCoreRuntime(),
@@ -236,7 +239,6 @@ function createScanCoordinator(inputRoot, options = {}) {
       if (bounded) {
         const nativeBounded = core.implementation === "native-experimental" && core.sourceAuthority === "rust";
         if (nativeBounded) {
-          const nativeSessionProjectId = sessionProjectId || `session:${randomUUID()}`;
           graph = await core.refresh(root, {
             nativeBounded: true,
             packagePath: packageScoped ? options.packagePath.trim() : null,
@@ -244,7 +246,7 @@ function createScanCoordinator(inputRoot, options = {}) {
             maxFiles: options.maxFiles,
             maxBytes: options.maxBytes,
             persistIdentity: false,
-            sessionProjectId: nativeSessionProjectId,
+            sessionProjectId,
             signal: controller.signal,
             onProfile: options.onCoreProfile,
           });
@@ -257,7 +259,6 @@ function createScanCoordinator(inputRoot, options = {}) {
           graph.analysis.packageSelection = packageScoped
             ? { status: "selected", packagePath: options.packagePath.trim(), source: "native-bounded-discovery" }
             : { status: "repository", source: "native-bounded-discovery" };
-          advanceSessionGraph(graph, previousGraph, { reason, changedPaths });
           graph.analysis.cacheState = disabledCacheState(root, packageScoped ? "native-package-scoped-session" : "native-bounded-session");
           graph.analysis.derivedCacheInvalidation = { status: "disabled", events: [], diagnostics: [] };
           const active = { graph, source: "fresh-complete" };
@@ -274,6 +275,7 @@ function createScanCoordinator(inputRoot, options = {}) {
             outcome: finalize(operationId, startedAt, "complete", null, active, {
               discovery: nativeDiscovery,
               cachePromoted: false,
+              cachePromotionAllowed: false,
               refresh: graph.analysis.refresh,
               coreRuntime: { ...effectiveCoreRuntime(), boundedNative: { status: "completed", sourceAuthority: "rust" } },
             }),
@@ -354,6 +356,7 @@ function createScanCoordinator(inputRoot, options = {}) {
           persistIdentity: cacheEnabled,
           signal: controller.signal,
           onProfile: options.onCoreProfile,
+          nativeGraphHandle: options.nativeGraphHandle === true,
           ...(cacheEnabled ? {} : { sessionProjectId }),
         });
       }

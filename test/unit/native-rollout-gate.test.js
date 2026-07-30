@@ -2,7 +2,8 @@
 
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { NATIVE_BACKEND_PARITY_SCHEMA, NATIVE_ROLLOUT_GATE_SCHEMA, evaluateNativeDefaultRollout } = require("../../src/native-rollout-gate");
+const { adapterContractDigest } = require("../../src/adapter-registry");
+const { NATIVE_BACKEND_PARITY_SCHEMA, NATIVE_ROLLOUT_GATE_SCHEMA, REQUIRED_NATIVE_ADAPTERS, evaluateNativeDefaultRollout } = require("../../src/native-rollout-gate");
 
 function benchmarkRow(repository, { cold = 1.1, unchanged = 1.2, oneFileChange = 2.1 } = {}) {
   return { repository, states: {
@@ -23,7 +24,11 @@ function evidence(overrides = {}) {
       javascriptRole: "oracle-and-rollback-only",
       fixtureCount: 1,
       exactFixtureCount: 1,
-      adapters: ["typescript"],
+      adapterContractDigest: adapterContractDigest(),
+      requiredAdapters: REQUIRED_NATIVE_ADAPTERS,
+      nativeAdapters: REQUIRED_NATIVE_ADAPTERS,
+      fallbackOnlyAdapters: [],
+      adapterCoveragePolicy: "all-native",
     },
     structuralParity: { publicIds: true, fixtureCount: 11, exactFixtureCount: 11 },
     queryParity: { flowLens: true, impact: true, relatedTests: true, contextRef: true, changedContexts: true },
@@ -67,11 +72,26 @@ test("native rollout gate blocks benchmark evidence while JavaScript remains the
     javascriptRole: "production-parser-host",
     fixtureCount: 1,
     exactFixtureCount: 1,
-    adapters: ["typescript"],
+    adapterContractDigest: adapterContractDigest(),
+    requiredAdapters: REQUIRED_NATIVE_ADAPTERS,
+    nativeAdapters: REQUIRED_NATIVE_ADAPTERS,
+    fallbackOnlyAdapters: [],
+    adapterCoveragePolicy: "all-native",
   } }));
   assert.equal(result.eligible, false);
   assert.ok(result.reasons.includes("native-backend-parity-incomplete"));
   assert.equal(result.benchmark.status, "blocked-until-native-backend-parity");
+});
+
+test("native rollout gate is bound to exact adapter contract coverage", () => {
+  const backendParity = {
+    ...evidence().backendParity,
+    nativeAdapters: REQUIRED_NATIVE_ADAPTERS.filter((adapter) => adapter !== "go"),
+    fallbackOnlyAdapters: ["go"],
+  };
+  const result = evaluateNativeDefaultRollout(evidence({ backendParity }));
+  assert.equal(result.eligible, false);
+  assert.ok(result.reasons.includes("native-backend-parity-incomplete"));
 });
 
 test("native rollout gate rejects incomplete corpus and unproven performance evidence", () => {

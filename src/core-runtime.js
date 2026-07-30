@@ -66,6 +66,7 @@ function createNativeFallbackCoreClient(native, javascript) {
     getFlowProjection: query("getFlowProjection"),
     getFlowContextCard: query("getFlowContextCard"),
     getChangeImpact: query("getChangeImpact"),
+    getGraphDelta: query("getGraphDelta"),
     getChangedContexts: query("getChangedContexts"),
     getRelatedTests: query("getRelatedTests"),
     getContextCard: query("getContextCard"),

@@ -59,40 +59,96 @@ jobs:
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
           npm pack ./native-dist --pack-destination release-assets
           Get-FileHash release-assets/*.tgz -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $($_.Path | Split-Path -Leaf)" } | Set-Content release-assets/checksums-${{ matrix.os }}-${{ matrix.cpu }}.txt
+          $tarball = (Get-ChildItem release-assets/*.tgz | Select-Object -First 1).FullName
+          node scripts/verify-clean-room-native-platform.js --platform-tarball $tarball
       - uses: actions/upload-artifact@v4
         with:
           name: native-${{ matrix.os }}-${{ matrix.cpu }}
           path: release-assets/
           if-no-files-found: error
 
-  publish-native-packages:
-    name: Publish native platform packages
+  verify-release-set:
+    name: Verify complete release set before publication
     needs: native-binaries
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
           merge-multiple: true
+      - run: npm run check:support
+      - run: npm run check:docs
+      - run: npm run test:public-source
+      - run: npm run test:package
+      - run: npm run audit:package
+      - run: npm run verify:clean-room
+      - run: node scripts/verify-native-release-set.js --assets release-assets
+      - name: Pack the exact main package after all verification
+        run: |
+          mkdir main-dist
+          npm pack --pack-destination main-dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-package
+          path: main-dist/flopeek-*.tgz
+          if-no-files-found: error
+
+  publish-npm-release:
+    name: Publish exact npm release and move dist-tags last
+    needs: [native-binaries, verify-release-set]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      - name: Publish checked platform tarballs
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Publish immutable versions under a staging tag
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "NPM_TOKEN is required: do not create a release whose npm package cannot resolve its native optional dependencies."
+            echo "NPM_TOKEN is required."
             exit 1
           fi
-          for package in release-assets/*.tgz; do
-            npm publish "$package" --access public --tag beta --provenance
+          staging_tag="native-candidate-${GITHUB_RUN_ID}"
+          for package in release-assets/flopeek-native-*.tgz; do
+            npm publish "$package" --access public --tag "$staging_tag" --provenance
           done
+          npm publish "$(find release-assets -maxdepth 1 -name 'flopeek-[0-9]*.tgz' -print -quit)" --access public --tag "$staging_tag" --provenance
+      - name: Anonymous registry clean-room install of the exact main package
+        env:
+          NODE_AUTH_TOKEN: ""
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          clean_room="$(mktemp -d)"
+          cd "$clean_room"
+          npm init -y >/dev/null
+          npm install --ignore-scripts=false --registry=https://registry.npmjs.org "flopeek@${version}"
+          node -e "const p=require('flopeek/package.json'); if(p.version!==process.argv[1]) process.exit(1)" "$version"
+      - name: Move public dist-tags only after clean-room verification
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          for package in $(node -e "console.log(Object.keys(require('./package.json').optionalDependencies).join(' '))"); do
+            npm dist-tag add "${package}@${version}" beta
+          done
+          npm dist-tag add "flopeek@${version}" beta
 
   release:
     name: Verify and publish GitHub Release
-    needs: [native-binaries, publish-native-packages]
+    needs: [native-binaries, publish-npm-release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -108,13 +164,6 @@ jobs:
           path: release-assets
           merge-multiple: true
       - run: npm run verify:github-release -- --tag "$GITHUB_REF_NAME"
-      - run: npm run check:support
-      - run: npm run check:docs
-      - run: npm run test:public-source
-      - run: npm run test:package
-      - run: npm run audit:package
-      - run: npm run verify:clean-room
-      - run: npm run verify:clean-room-native-platform -- --platform-tarball "$(find release-assets -name 'flopeek-native-linux-x64-gnu-*.tgz' -print -quit)"
       - name: Create prerelease
         if: contains(github.ref_name, '-')
         env:

@@ -511,9 +511,26 @@ pub fn refresh_native_js_facts_session(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
+    // Excluded files are intentionally absent from candidate_paths. Preserve
+    // their full-discovery count across ordinary source events; only a scope
+    // reconciliation is allowed to replace it.
+    let excluded_count = previous
+        .source_scope_counts
+        .get("excluded")
+        .copied()
+        .unwrap_or(0);
     next.source_scope_counts = ["application", "test", "fixture", "generated", "excluded"]
         .into_iter()
-        .map(|name| (name.to_string(), 0usize))
+        .map(|name| {
+            (
+                name.to_string(),
+                if name == "excluded" {
+                    excluded_count
+                } else {
+                    0usize
+                },
+            )
+        })
         .collect();
     for (_, source_scope) in known_records {
         *next.source_scope_counts.entry(source_scope).or_default() += 1;
@@ -2460,6 +2477,37 @@ mod tests {
             refresh_native_js_facts_session(&initial, &["src/main.ts".to_string()]).unwrap();
         assert_eq!(refreshed.parsed_files, 1);
         assert_eq!(refreshed.entry_facts, initial.entry_facts);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn incremental_source_edit_preserves_excluded_inventory_count() {
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-js-excluded-count-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("generated")).unwrap();
+        fs::create_dir_all(root.join(".flopeek")).unwrap();
+        fs::write(
+            root.join(".flopeek/config.json"),
+            r#"{"schemaVersion":1,"exclude":["generated/**"]}"#,
+        )
+        .unwrap();
+        fs::write(root.join("src/main.ts"), "export const stable = true;\n").unwrap();
+        fs::write(
+            root.join("generated/client.ts"),
+            "export const generated = true;\n",
+        )
+        .unwrap();
+        let initial =
+            scan_native_js_facts_ephemeral(&root, Some("session:excluded-count")).unwrap();
+        assert_eq!(initial.source_scope_counts.get("excluded"), Some(&1));
+        fs::write(root.join("src/main.ts"), "export const changed = true;\n").unwrap();
+        let refreshed =
+            refresh_native_js_facts_session(&initial, &["src/main.ts".to_string()]).unwrap();
+        assert_eq!(refreshed.source_scope_counts.get("excluded"), Some(&1));
         fs::remove_dir_all(root).unwrap();
     }
 

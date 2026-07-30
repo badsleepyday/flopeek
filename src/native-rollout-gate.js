@@ -1,11 +1,22 @@
 "use strict";
 
+const { adapterContractDigest, getAdapterRegistry } = require("./adapter-registry");
 const NATIVE_ROLLOUT_GATE_SCHEMA = "flopeek-native-rollout-gate/v1";
 const MINIMUM_BENCHMARK_REPOSITORIES = 5;
 const MAXIMUM_REGRESSION_SPEEDUP = 0.9;
 const REQUIRED_ONE_FILE_SPEEDUP = 2;
 const REQUIRED_ONE_FILE_REPOSITORIES = 4;
 const NATIVE_BACKEND_PARITY_SCHEMA = "flopeek-native-backend-parity/v1";
+const REQUIRED_NATIVE_ADAPTERS = Object.freeze(getAdapterRegistry().adapters
+  .filter((adapter) => adapter.capabilities.structure !== "inventory-only")
+  .map((adapter) => adapter.id)
+  .sort());
+
+function sameStringSet(left, right) {
+  return Array.isArray(left)
+    && left.length === right.length
+    && [...new Set(left)].sort().every((value, index) => value === right[index]);
+}
 
 // A native graph store is not a native backend when JavaScript still parses
 // source, resolves imports, or materializes the parser-to-graph input. Keep
@@ -22,9 +33,12 @@ function hasNativeBackendAuthority(value) {
     && Number.isSafeInteger(value.fixtureCount)
     && value.fixtureCount > 0
     && value.exactFixtureCount === value.fixtureCount
-    && Array.isArray(value.adapters)
-    && value.adapters.length > 0
-    && value.adapters.every((adapter) => typeof adapter === "string" && adapter);
+    && value.adapterContractDigest === adapterContractDigest()
+    && sameStringSet(value.requiredAdapters, REQUIRED_NATIVE_ADAPTERS)
+    && sameStringSet(value.nativeAdapters, REQUIRED_NATIVE_ADAPTERS)
+    && Array.isArray(value.fallbackOnlyAdapters)
+    && value.fallbackOnlyAdapters.length === 0
+    && value.adapterCoveragePolicy === "all-native";
 }
 
 function finiteNonNegative(value) {
@@ -129,5 +143,6 @@ module.exports = {
   REQUIRED_ONE_FILE_REPOSITORIES,
   REQUIRED_ONE_FILE_SPEEDUP,
   NATIVE_BACKEND_PARITY_SCHEMA,
+  REQUIRED_NATIVE_ADAPTERS,
   evaluateNativeDefaultRollout,
 };

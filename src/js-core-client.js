@@ -12,6 +12,9 @@ const {
   getEntryFlows,
   getFlowContextCard,
   getFlowProjection,
+  getGraphDelta: calculateGraphDelta,
+  availableGraphDelta,
+  latestAvailableGraphDelta,
   getNodeDetails,
   getRelatedTests,
   getRequestFlows,
@@ -52,6 +55,15 @@ function createJsCoreClient() {
     getFlowProjection: (graph, flowId, scope = "application", options = {}) => getFlowProjection(graph, flowId, scope, options),
     getFlowContextCard: (graph, flowId, format = "json", scope = "application", options = {}) => getFlowContextCard(graph, flowId, format, scope, options),
     getChangeImpact: (graph, changedPaths, options = {}) => getChangeImpact(graph, changedPaths, options),
+    getGraphDelta: (graph, options = {}) => {
+      const fromVersion = Number.isSafeInteger(options.fromVersion) ? options.fromVersion : undefined;
+      const toVersion = Number.isSafeInteger(options.toVersion) ? options.toVersion : undefined;
+      const retained = fromVersion !== undefined && toVersion !== undefined
+        ? availableGraphDelta(graph, fromVersion, toVersion)
+        : latestAvailableGraphDelta(graph);
+      if (retained) return retained;
+      return options.previousGraph ? calculateGraphDelta(options.previousGraph, graph, options) : null;
+    },
     getChangedContexts: (graph, options = {}) => getChangedContexts(graph, options),
     getRelatedTests: (graph, id) => getRelatedTests(graph, id),
     getContextCard: (graph, id, format = "json") => getContextCard(graph, id, format),

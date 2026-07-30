@@ -28,12 +28,15 @@ test("tagged Core releases verify source and package evidence before creating a 
   assert.match(workflow, /tags:\s*\n\s*- "v\*"/);
   assert.match(workflow, /fetch-depth:\s*0/);
   assert.match(workflow, /npm run verify:github-release -- --tag "\$GITHUB_REF_NAME"/);
-  for (const command of ["npm run test:public-source", "npm run test:package", "npm run audit:package", "npm run verify:clean-room", "npm run verify:clean-room-native-platform"]) {
+  for (const command of ["npm run test:public-source", "npm run test:package", "npm run audit:package", "npm run verify:clean-room"]) {
     assert.match(workflow, new RegExp(`- run: ${command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   }
-  assert.match(workflow, /name: Publish native platform packages/);
-  assert.match(workflow, /npm publish "\$package" --access public --tag beta --provenance/);
-  assert.match(workflow, /needs: \[native-binaries, publish-native-packages\]/);
-  assert.match(workflow, /NPM_TOKEN is required: do not create a release/);
+  assert.match(workflow, /node scripts\/verify-clean-room-native-platform\.js --platform-tarball/);
+  assert.match(workflow, /name: Verify complete release set before publication/);
+  assert.match(workflow, /node scripts\/verify-native-release-set\.js --assets release-assets/);
+  assert.match(workflow, /npm publish "\$package" --access public --tag "\$staging_tag" --provenance/);
+  assert.match(workflow, /name: Anonymous registry clean-room install of the exact main package/);
+  assert.match(workflow, /name: Move public dist-tags only after clean-room verification/);
+  assert.match(workflow, /needs: \[native-binaries, publish-npm-release\]/);
   assert.match(workflow, /gh release create/);
 });

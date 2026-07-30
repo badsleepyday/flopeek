@@ -12,11 +12,11 @@ It describes current implementation, not roadmap intent. Planned behavior belong
 
 ## Generated adapter capability registry
 
-Registry schema: `flopeek-adapter-capabilities/v1`. This table is generated from `src/adapter-registry.js`; repository parse coverage remains separate in graph analysis.
+Registry schema: `flopeek-adapter-capabilities/v2`. This table is generated from `src/adapter-registry.js`; repository parse coverage remains separate in graph analysis.
 
 | Adapter | Languages/extensions/filenames | Parser | Availability | Structure | Imports | Direct calls | Required toolchain |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| csharp | csharp / .cs | csharp-static-ast | bundled | exact-static | exact-static | unsupported | None |
+| csharp | csharp / .cs | csharp-roslyn | toolchain-conditional | exact-static | exact-static | unsupported | .NET SDK |
 | go | go / .go | go-parser | toolchain-conditional | exact-static | exact-static | supported-subset | Go toolchain |
 | inventory | assembly, astro, c, cpp, headers, kotlin, makefile, ruby, scala, shell, swift, vue / .asm .astro .bash .c .cc .cpp .cxx .h .kt .kts .rb .scala .sh .swift .vue .zsh Makefile | inventory | inventory-only | inventory-only | unsupported | unsupported | None |
 | java | java / .java | tree-sitter-java | bundled | exact-static | exact-static | supported-subset | None |

@@ -1227,11 +1227,34 @@ fn native_js_git_metadata(root: &Path) -> Value {
 /// same bytes that the JavaScript scanner loads, so a release cannot advertise
 /// divergent adapter capabilities across the two execution paths.
 fn native_adapter_registry() -> Value {
-    serde_json::from_str(include_str!(concat!(
+    let mut registry: Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../contracts/adapter-capabilities.json"
     )))
-    .expect("shared adapter capability contract is valid JSON")
+    .expect("shared adapter capability contract is valid JSON");
+    if let Some(adapters) = registry.get_mut("adapters").and_then(Value::as_array_mut) {
+        for adapter in adapters {
+            let Some(object) = adapter.as_object_mut() else {
+                continue;
+            };
+            if let Some(capability) = object.get("productCapability").cloned() {
+                object.insert("capabilities".to_string(), capability);
+            }
+            let javascript = object
+                .get("implementations")
+                .and_then(|value| value.get("javascript"))
+                .and_then(Value::as_object)
+                .cloned();
+            if let Some(javascript) = javascript {
+                for field in ["parser", "availability", "requiredToolchain"] {
+                    if let Some(value) = javascript.get(field) {
+                        object.insert(field.to_string(), value.clone());
+                    }
+                }
+            }
+        }
+    }
+    registry
 }
 
 fn native_js_batch_envelope(
@@ -1417,7 +1440,7 @@ fn native_js_batch_envelope_for_package_with_records(
         "schemaVersion":5,"generatedAt":generated_at,
         "project":{"root":status.project_root,"name":project_name,"projectId":status.project_identity.project_id,"identity":project_identity,"git":git},
         "state":{"graphVersion":0,"materialFingerprint":Value::Null,"sourceFingerprint":source_fingerprint,"sourceRevision":git["revision"],"updatedAt":generated_at,"status":"unpersisted"},
-        "analysis":{"mode":"deterministic","refresh":refresh,"codeInterpretation":"AST-only for registered language adapters","unparsedPolicy":"inventory-only; no dependency or flow is inferred","coverage":coverage,"nativeBoundedPackagePath":package_path,"repositoryScope":{"schemaVersion":1,"source":scope.source,"configPath":if scope.source == "config" { Value::String(".flopeek/config.json".to_string()) } else { Value::Null },"sourceRoots":scope.source_roots,"testRoots":scope.test_roots,"fixtureRoots":scope.fixture_roots,"exclude":scope.exclude,"projectId":scope.project_id,"flowEntries":{"tests":scope.flow_entries_tests,"fixtures":scope.flow_entries_fixtures},"precedence":["excluded","fixture","test","generated","application"],"counts":{"application":status.source_scope_counts.get("application").copied().unwrap_or(0),"test":status.source_scope_counts.get("test").copied().unwrap_or(0),"fixture":status.source_scope_counts.get("fixture").copied().unwrap_or(0),"generated":status.source_scope_counts.get("generated").copied().unwrap_or(0),"excluded":0}},"resolution":{"internal":["relative imports","$lib","@/","tsconfig/jsconfig baseUrl and paths","literal aliases from exported Vite/Webpack configs","safe static Vite/Webpack alias expressions (__dirname, root process.cwd(), path.resolve/join/dirname, new URL/import.meta.url, fileURLToPath(import.meta.url), and constants)","package.json imports aliases","static import/node/default/require/types package condition trees","declared npm and pnpm workspace package entries","static Yarn PnP JSON workspace package entries","Python relative and src-package imports","static Go module packages","static Rust crate/self/super modules in conventional Cargo src roots"],"limitations":["Arbitrary computed Vite/Webpack aliases, custom package conditions, unsupported pnpm YAML constructs, PHP Composer autoloading, Java framework wiring and non-local-static method dispatch, Rust custom Cargo targets and #[path] modules, Go build tags and duplicate package function names, and runtime module loading are not resolved."]},"calls":{"supported":["direct identifier calls to top-level local functions","direct identifier calls to named ES/CommonJS imports resolved inside the repository","direct identifier calls to top-level local Python functions and named ES/CommonJS imports resolved inside the repository","direct local Go function calls and aliased Go package selectors resolved inside the repository","direct local PHP function calls","direct local Rust functions and named crate/self/super imports","direct unqualified unique local static Java method calls"],"limitations":"Java instance/qualified/overloaded method dispatch, Rust macros, qualified module calls, trait dispatch, custom Cargo targets, and #[path] modules, default and namespace imports, PHP Composer/autoloaded functions, Python attribute calls, Go function values, ambiguous package functions, and unaliased package-name mismatches, dependency injection, callbacks, reflection, dynamic loading, and non-literal CommonJS requires are not resolved as call edges."},"entryPoints":status.entry_facts["entryPoints"],"adapterCapabilities":adapter_registry,"capabilities":adapter_registry["adapters"]},
+        "analysis":{"mode":"deterministic","refresh":refresh,"codeInterpretation":"AST-only for registered language adapters","unparsedPolicy":"inventory-only; no dependency or flow is inferred","coverage":coverage,"nativeBoundedPackagePath":package_path,"repositoryScope":{"schemaVersion":1,"source":scope.source,"configPath":if scope.source == "config" { Value::String(".flopeek/config.json".to_string()) } else { Value::Null },"sourceRoots":scope.source_roots,"testRoots":scope.test_roots,"fixtureRoots":scope.fixture_roots,"exclude":scope.exclude,"projectId":scope.project_id,"flowEntries":{"tests":scope.flow_entries_tests,"fixtures":scope.flow_entries_fixtures},"precedence":["excluded","fixture","test","generated","application"],"counts":{"application":status.source_scope_counts.get("application").copied().unwrap_or(0),"test":status.source_scope_counts.get("test").copied().unwrap_or(0),"fixture":status.source_scope_counts.get("fixture").copied().unwrap_or(0),"generated":status.source_scope_counts.get("generated").copied().unwrap_or(0),"excluded":status.source_scope_counts.get("excluded").copied().unwrap_or(0)}},"resolution":{"internal":["relative imports","$lib","@/","tsconfig/jsconfig baseUrl and paths","literal aliases from exported Vite/Webpack configs","safe static Vite/Webpack alias expressions (__dirname, root process.cwd(), path.resolve/join/dirname, new URL/import.meta.url, fileURLToPath(import.meta.url), and constants)","package.json imports aliases","static import/node/default/require/types package condition trees","declared npm and pnpm workspace package entries","static Yarn PnP JSON workspace package entries","Python relative and src-package imports","static Go module packages","static Rust crate/self/super modules in conventional Cargo src roots"],"limitations":["Arbitrary computed Vite/Webpack aliases, custom package conditions, unsupported pnpm YAML constructs, PHP Composer autoloading, Java framework wiring and non-local-static method dispatch, Rust custom Cargo targets and #[path] modules, Go build tags and duplicate package function names, and runtime module loading are not resolved."]},"calls":{"supported":["direct identifier calls to top-level local functions","direct identifier calls to named ES/CommonJS imports resolved inside the repository","direct identifier calls to top-level local Python functions and named ES/CommonJS imports resolved inside the repository","direct local Go function calls and aliased Go package selectors resolved inside the repository","direct local PHP function calls","direct local Rust functions and named crate/self/super imports","direct unqualified unique local static Java method calls"],"limitations":"Java instance/qualified/overloaded method dispatch, Rust macros, qualified module calls, trait dispatch, custom Cargo targets, and #[path] modules, default and namespace imports, PHP Composer/autoloaded functions, Python attribute calls, Go function values, ambiguous package functions, and unaliased package-name mismatches, dependency injection, callbacks, reflection, dynamic loading, and non-literal CommonJS requires are not resolved as call edges."},"entryPoints":status.entry_facts["entryPoints"],"adapterCapabilities":adapter_registry,"capabilities":adapter_registry["adapters"]},
         "stats":{"scannedFiles":summary["scannedFiles"],"parsedFiles":summary["parsedFiles"],"inventoryOnlyFiles":summary["inventoryOnlyFiles"],"parseFailedFiles":summary["parseFailedFiles"]}
     });
     if let Some(package_path) = package_path {

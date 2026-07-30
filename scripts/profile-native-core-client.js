@@ -18,7 +18,7 @@ const { releaseNativeOptions, stateRequest } = require("./benchmark-native-core-
 
 const QUERY_SAMPLES = Number.isSafeInteger(Number(process.env.FLOPEEK_PROFILE_QUERY_SAMPLES))
   ? Math.max(3, Math.min(101, Number(process.env.FLOPEEK_PROFILE_QUERY_SAMPLES)))
-  : 7;
+  : 101;
 
 function elapsed(operation) {
   const started = process.hrtime.bigint();
@@ -68,7 +68,33 @@ function combinedMemorySnapshot(nativeProtocol) {
     node,
     native,
     combinedRssBytes: native.status === "available" ? node.rssBytes + native.rssBytes : null,
-    combinedPeakRssBytes: native.status === "available" && Number.isFinite(native.peakRssBytes) ? node.peakRssBytes + native.peakRssBytes : null,
+    // Independent lifetime high-water marks are not concurrent evidence.
+    combinedPeakRssBytes: null,
+  };
+}
+
+function startConcurrentMemoryMonitor(nativeProtocol, intervalMs = 10) {
+  let maximum = null;
+  const samples = [];
+  const sample = () => {
+    const snapshot = combinedMemorySnapshot(nativeProtocol);
+    if (Number.isFinite(snapshot.combinedRssBytes)) {
+      samples.push(snapshot.combinedRssBytes);
+      maximum = Math.max(maximum || 0, snapshot.combinedRssBytes);
+    }
+  };
+  sample();
+  const timer = setInterval(sample, intervalMs);
+  timer.unref?.();
+  return () => {
+    clearInterval(timer);
+    sample();
+    return {
+      samplingIntervalMs: intervalMs,
+      samples: samples.length,
+      maximumConcurrentCombinedRssBytes: maximum,
+      rawCombinedRssBytes: samples,
+    };
   };
 }
 
@@ -84,6 +110,7 @@ function latencySummary(samples, transport = []) {
   const numeric = (key) => availableTransport.map((entry) => entry[key]).filter(Number.isFinite);
   return {
     samples: samples.length,
+    rawSamplesMs: samples.map((value) => Number(value.toFixed(3))),
     minMs: percentile(samples, 0),
     p50Ms: percentile(samples, 50),
     p95Ms: percentile(samples, 95),
@@ -140,16 +167,19 @@ async function profileQueries(core, graph, nativeProtocol = null) {
 
 async function profileState(coordinator, core, request, phases, nativeProtocol = null) {
   const phaseStart = phases.length;
+  const stopMemoryMonitor = startConcurrentMemoryMonitor(nativeProtocol);
   const memoryBefore = combinedMemorySnapshot(nativeProtocol);
   const scan = await elapsed(() => coordinator.refresh(request.changedPaths, request.reason));
   const memoryAfter = combinedMemorySnapshot(nativeProtocol);
   assert.equal(scan.result.outcome.status, "complete", scan.result.outcome.failure?.message || "Profile coordinator scan failed.");
   const queries = await profileQueries(core, scan.result.graph, nativeProtocol);
+  const concurrentMemory = stopMemoryMonitor();
   return {
     milliseconds: Number(scan.milliseconds.toFixed(3)),
     phases: phases.slice(phaseStart),
     memoryBefore,
     memoryAfter,
+    concurrentMemory,
     database: nativeStoreSnapshot(coordinator.root),
     queries,
     graph: scan.result.graph,
@@ -159,67 +189,35 @@ async function profileState(coordinator, core, request, phases, nativeProtocol =
 async function main() {
   const source = path.resolve(process.argv[2] || "");
   if (!source || !fs.statSync(source).isDirectory()) throw new Error("Supply an existing repository path.");
-  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-native-core-profile-"));
-  const jsRoot = path.join(sandbox, "javascript");
-  const nativeRoot = path.join(sandbox, "native");
-  copyRepository(source, jsRoot);
-  copyRepository(source, nativeRoot);
-  const javascript = createJsCoreClient();
-  const nativeProtocol = new NativeProtocolClient(releaseNativeOptions());
-  const native = createNativeCoreClient({ native: nativeProtocol, sourceAuthority: "rust" });
-  const javascriptPhases = [];
-  const nativePhases = [];
-  const javascriptCoordinator = createScanCoordinator(jsRoot, { cache: true, coreClient: javascript, onCoreProfile: (entry) => javascriptPhases.push(entry) });
-  const nativeCoordinator = createScanCoordinator(nativeRoot, { cache: true, coreClient: native, onCoreProfile: (entry) => nativePhases.push(entry) });
-  try {
-    const states = {};
-    for (const [state, mutate] of [
-      ["cold", null],
-      ["unchanged", null],
-      ["oneFileChange", (root) => {
-        const file = sourceFiles(root)[0];
-        fs.appendFileSync(file, "\n");
-        return path.relative(root, file).replaceAll("\\", "/");
-      }],
-    ]) {
-      const jsChangedPath = mutate?.(jsRoot) || null;
-      const nativeChangedPath = mutate?.(nativeRoot) || null;
-      assert.equal(nativeChangedPath, jsChangedPath, "Disposable profile copies must mutate the same relative path.");
-      const request = stateRequest(state, jsChangedPath);
-      const js = await profileState(javascriptCoordinator, javascript, request, javascriptPhases);
-      const nativeResult = await profileState(nativeCoordinator, native, request, nativePhases, nativeProtocol);
-      assert.equal(
-        createCoreCompatibilityDigest(nativeResult.graph),
-        createCoreCompatibilityDigest(js.graph),
-        `Native CoreClient diverged from JavaScript during ${state}.`,
-      );
-      assert.deepEqual(nativeResult.graph.stats, js.graph.stats, `Native CoreClient statistics diverged during ${state}.`);
-      states[state] = {
-        javascriptMs: js.milliseconds,
-        nativeMs: nativeResult.milliseconds,
-        javascriptPhases: js.phases,
-        nativePhases: nativeResult.phases,
-        javascriptMemoryBefore: js.memoryBefore,
-        javascriptMemoryAfter: js.memoryAfter,
-        nativeMemoryBefore: nativeResult.memoryBefore,
-        nativeMemoryAfter: nativeResult.memoryAfter,
-        javascriptDatabase: js.database,
-        nativeDatabase: nativeResult.database,
-        javascriptQueryLatency: js.queries,
-        nativeQueryLatency: nativeResult.queries,
-      };
+  const worker = path.join(__dirname, "profile-native-core-worker.js");
+  const states = {};
+  for (const state of ["cold", "unchanged", "oneFileChange"]) {
+    const results = {};
+    for (const implementation of ["javascript", "native"]) {
+      results[implementation] = JSON.parse(execFileSync(process.execPath, [
+        worker,
+        source,
+        implementation,
+        state,
+      ], {
+        cwd: path.resolve(__dirname, ".."),
+        encoding: "utf8",
+        maxBuffer: 64 * 1024 * 1024,
+        env: process.env,
+      }));
     }
-    process.stdout.write(`${JSON.stringify({
-      schemaVersion: "flopeek-native-core-profile/v1",
-      repository: path.basename(source),
-      states,
-      parity: "Every profiled state has exact flopeek-core-compatibility/v1 digest and graph-statistics parity.",
-      limitation: "One isolated strict-Rust-source profile run identifies local phase cost and reports sampled process RSS/peak working set. It is not a performance median or cutover proof.",
-    }, null, 2)}\n`);
-  } finally {
-    await native.close();
-    fs.rmSync(sandbox, { recursive: true, force: true });
+    assert.equal(results.native.compatibilityDigest, results.javascript.compatibilityDigest, `Native CoreClient diverged from JavaScript during ${state}.`);
+    assert.deepEqual(results.native.stats, results.javascript.stats, `Native CoreClient statistics diverged during ${state}.`);
+    states[state] = results;
   }
+  process.stdout.write(`${JSON.stringify({
+    schemaVersion: "flopeek-native-core-profile/v2",
+    repository: path.basename(source),
+    isolatedProcesses: true,
+    states,
+    parity: "Every implementation/state runs in a separate child process and has exact flopeek-core-compatibility/v1 digest and graph-statistics parity.",
+    limitation: "This report preserves raw local samples and concurrent RSS observations. A rollout decision still requires the declared five-repository corpus and reproducible revisions.",
+  }, null, 2)}\n`);
 }
 
 if (require.main === module) main().catch((error) => {
@@ -227,4 +225,4 @@ if (require.main === module) main().catch((error) => {
   process.exitCode = 1;
 });
 
-module.exports = { combinedMemorySnapshot, latencySummary, profileQueries, profileState };
+module.exports = { combinedMemorySnapshot, latencySummary, profileQueries, profileState, startConcurrentMemoryMonitor };

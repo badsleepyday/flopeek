@@ -1,8 +1,9 @@
 "use strict";
 
-// v4 adds Flow Context Cards to the shared query boundary, so product surfaces
-// do not bypass the selected core when rendering a bounded flow handoff.
-const CORE_CLIENT_SCHEMA = "flopeek-core-client/v4";
+// v5 adds graph-delta retrieval to the shared authority boundary. Product
+// surfaces must not read JavaScript delta files when Rust/SQLite owns the
+// current graph.
+const CORE_CLIENT_SCHEMA = "flopeek-core-client/v5";
 
 const CORE_CLIENT_METHODS = Object.freeze([
   "scan",
@@ -17,6 +18,7 @@ const CORE_CLIENT_METHODS = Object.freeze([
   "getFlowProjection",
   "getFlowContextCard",
   "getChangeImpact",
+  "getGraphDelta",
   "getChangedContexts",
   "getRelatedTests",
   "getContextCard",

@@ -13,6 +13,7 @@ test("native core profiler reports percentile and JSONL transport summaries", ()
   assert.equal(summary.p50Ms, 3);
   assert.equal(summary.p95Ms, 5);
   assert.equal(summary.p99Ms, 5);
+  assert.deepEqual(summary.rawSamplesMs, [1, 2, 3, 4, 5]);
   assert.deepEqual(summary.transport, {
     samples: 2,
     requestBytes: 40,

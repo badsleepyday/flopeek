@@ -521,7 +521,7 @@ function createNativeCoreClient(options = {}) {
           throwIfNativeScanCancelled(scanOptions.signal);
           directEphemeralResult = await requestNativeWithSignal(native, scanOptions.signal, "refreshNativeProject", {
             projectRoot: authorityRoot,
-            sessionProjectId: cacheDisabledProjectId(authorityRoot),
+            sessionProjectId: scanOptions.sessionProjectId || cacheDisabledProjectId(authorityRoot),
             ...(typeof scanOptions.packagePath === "string" && scanOptions.packagePath.trim()
               ? { packagePath: scanOptions.packagePath.trim() }
               : {}),
@@ -871,12 +871,29 @@ function createNativeCoreClient(options = {}) {
       const impact = await requestNativeQuery("getChangeImpact", graph, {
         changedPaths: Array.isArray(changedPaths) ? changedPaths : [changedPaths],
         maxDepth: safeIntegerOption(queryOptions, "maxDepth"),
+        previousGraphVersion: safeIntegerOption(queryOptions, "previousGraphVersion"),
       });
       // JSONL omits JavaScript `undefined`, but the in-process CoreClient
       // contract historically exposes this optional field even when a result
       // is not truncated. Restore it at the adapter boundary.
       if (!Object.hasOwn(impact, "truncated")) impact.truncated = undefined;
       return impact;
+    },
+    getGraphDelta: async (graph, queryOptions = {}) => {
+      const root = roots.get(graph);
+      if (!root) return graph.analysis?.latestDelta || null;
+      const handle = requireBatch(graph);
+      const toGraphVersion = safeIntegerOption(queryOptions, "toVersion")
+        ?? graph.state.graphVersion;
+      const fromGraphVersion = safeIntegerOption(queryOptions, "fromVersion")
+        ?? toGraphVersion - 1;
+      if (fromGraphVersion < 1 || toGraphVersion <= fromGraphVersion) return null;
+      return native.request("getNativePublicGraphDelta", {
+        projectRoot: root,
+        projectId: handle.projectId,
+        fromGraphVersion,
+        toGraphVersion,
+      });
     },
     getChangedContexts: async (graph, queryOptions = {}) => {
       const root = roots.get(graph);

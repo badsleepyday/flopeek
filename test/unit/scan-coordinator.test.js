@@ -6,7 +6,7 @@ const { execFileSync } = require("node:child_process");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const { createContextRef } = require("../../src/context-card");
+const { createContextRef, parseContextRef } = require("../../src/context-card");
 const { resolveContextRef } = require("../../src/graph-service");
 const { createJsCoreClient } = require("../../src/js-core-client");
 const { createNativeCoreClient } = require("../../src/native-core-client");
@@ -218,7 +218,29 @@ test("strict Rust core executes a bounded package scan without the JavaScript wo
   assert.equal(result.graph.analysis.nativeBoundedDiscovery.verified, true);
   assert.equal(result.graph.analysis.nativeBoundedDiscovery.packagePath, "apps/api");
   assert.equal(result.graph.nodes.some((node) => node.path === "packages/core/src/core.ts"), false);
+  assert.equal(result.outcome.cachePromotion.allowed, false);
+  assert.equal(result.graph.analysis.graphState.persistence, "session-memory");
+  const firstNode = result.graph.nodes.find((node) => node.kind === "file");
+  const oldRef = createContextRef(
+    result.graph.project.projectId,
+    "node",
+    firstNode.id,
+    result.graph.state.graphVersion,
+  );
+  const changedFile = path.join(root, "apps", "api", "src", "route.ts");
+  fs.appendFileSync(changedFile, "\nexport const boundedRefresh = true;\n");
+  const refreshed = await coordinator.refresh(
+    ["apps/api/src/route.ts"],
+    "native-package-refresh",
+  );
+  assert.equal(refreshed.graph.project.projectId, result.graph.project.projectId);
+  assert.equal(refreshed.graph.state.graphVersion, result.graph.state.graphVersion + 1);
+  assert.equal(refreshed.graph.analysis.graphState.persistence, "session-memory");
+  const resolution = await core.resolveContextRef(refreshed.graph, oldRef);
+  assert.equal(resolution.status, "stale");
+  assert.equal(parseContextRef(resolution.resolvedRef).graphVersion, refreshed.graph.state.graphVersion);
   assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
+  assert.equal(fs.existsSync(path.join(root, ".flopeek", "graph.json")), false);
 });
 
 test("native-experimental surface runtime retains Rust bounded authority through its rollback wrapper", async (t) => {
