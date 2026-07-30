@@ -11,6 +11,7 @@ const path = require("node:path");
 const { createCoreCompatibilityDigest } = require("../src/core-compatibility");
 const { createJsCoreClient } = require("../src/js-core-client");
 const { createNativeCoreClient } = require("../src/native-core-client");
+const { createNativeIncrementalSession } = require("../src/native-incremental-coordinator");
 const { createScanCoordinator } = require("../src/scan-coordinator");
 
 const ROOT = path.resolve(__dirname, "..");
@@ -47,7 +48,10 @@ function parseArguments(argv) {
 
 async function verifyRoot(root, nativeOptions = releaseNativeOptions()) {
   const javascript = createJsCoreClient();
-  const native = createNativeCoreClient({ nativeOptions, sourceAuthority: "rust" });
+  const native = createNativeCoreClient({
+    native: createNativeIncrementalSession(nativeOptions, { cwd: ROOT }),
+    sourceAuthority: "rust",
+  });
   try {
     assert.equal(native.backendAuthority, "rust-sqlite");
     assert.equal(native.sourceAuthority, "rust");

@@ -14,6 +14,7 @@ const {
 } = require("../src/core-compatibility");
 const { createJsCoreClient } = require("../src/js-core-client");
 const { createNativeCoreClient } = require("../src/native-core-client");
+const { createNativeIncrementalSession } = require("../src/native-incremental-coordinator");
 const {
   MINIMUM_ADAPTER_CASES,
   NATIVE_ADAPTER_PARITY_SCHEMA,
@@ -320,7 +321,10 @@ async function generateEvidence(options) {
     throw new Error(`Native binary SHA-256 ${binding.sha256} does not match expected ${options.expectedBinarySha256}.`);
   }
   const native = createNativeCoreClient({
-    nativeOptions: { command: options.binary, args: [] },
+    native: createNativeIncrementalSession(
+      { command: options.binary, args: [] },
+      { cwd: ROOT },
+    ),
     sourceAuthority: "rust",
   });
   const javascript = createJsCoreClient();

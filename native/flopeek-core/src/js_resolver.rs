@@ -108,75 +108,90 @@ fn resolve_python_relative(
     resolve_file(&base, known_paths).or_else(|| resolve_file(without_extension(&base), known_paths))
 }
 
-fn rust_module_directory(from_path: &str) -> Option<PathBuf> {
-    let source = Path::new(from_path);
-    let parent = source.parent()?.to_path_buf();
-    let stem = source.file_stem()?.to_string_lossy();
-    if matches!(stem.as_ref(), "lib" | "main" | "mod") {
-        Some(parent)
-    } else {
-        Some(parent.join(stem.as_ref()))
-    }
-}
-
 fn resolve_rust_import(
-    _root: &Path,
+    root: &Path,
     from_path: &str,
     specifier: &str,
     known_paths: &BTreeSet<String>,
 ) -> Option<String> {
     let segments = specifier
         .split("::")
-        .filter(|segment| !segment.is_empty())
+        .filter(|segment| !segment.is_empty() && *segment != "*")
         .collect::<Vec<_>>();
     let first = *segments.first()?;
     if !["crate", "self", "super"].contains(&first) {
         return None;
     }
-    let (base, consumed) = match first {
-        "crate" => (PathBuf::from("src"), 1),
-        "self" => (rust_module_directory(from_path)?, 1),
-        "super" => {
-            let supers = segments
-                .iter()
-                .take_while(|segment| **segment == "super")
-                .count();
-            let mut module = rust_module_directory(from_path)?;
-            for _ in 0..supers {
-                module = module.parent()?.to_path_buf();
-            }
-            (module, supers)
+    let absolute_source = root.join(from_path);
+    let mut package = absolute_source.parent()?.to_path_buf();
+    loop {
+        if package.join("Cargo.toml").is_file() {
+            break;
         }
-        _ => return None,
+        if package == root || package.parent().is_none() {
+            return None;
+        }
+        package = package.parent()?.to_path_buf();
+    }
+    let source_root = package.join("src");
+    if !source_root.is_dir() {
+        return None;
+    }
+    let source_root_relative = normalize_relative(source_root.strip_prefix(root).ok()?)?;
+    let source_relative = absolute_source.strip_prefix(&source_root).ok()?;
+    let mut current = source_relative
+        .parent()
+        .into_iter()
+        .flat_map(Path::components)
+        .map(|part| part.as_os_str().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    let filename = source_relative.file_name()?.to_string_lossy();
+    if !matches!(filename.as_ref(), "lib.rs" | "main.rs" | "mod.rs")
+        && !(current.len() == 1
+            && current.first().is_some_and(|segment| segment == "bin")
+            && filename.ends_with(".rs"))
+    {
+        current.push(
+            filename
+                .strip_suffix(".rs")
+                .unwrap_or(&filename)
+                .to_string(),
+        );
+    } else if current.len() == 1
+        && current.first().is_some_and(|segment| segment == "bin")
+        && filename.ends_with(".rs")
+    {
+        current.clear();
+    }
+    let target = if first == "crate" {
+        segments[1..]
+            .iter()
+            .map(|segment| (*segment).to_string())
+            .collect::<Vec<_>>()
+    } else {
+        let mut index = usize::from(first == "self");
+        while segments
+            .get(index)
+            .is_some_and(|segment| *segment == "super")
+        {
+            current.pop()?;
+            index += 1;
+        }
+        current.extend(
+            segments[index..]
+                .iter()
+                .map(|segment| (*segment).to_string()),
+        );
+        current
     };
-    let remaining = &segments[consumed..];
-    for length in (1..=remaining.len()).rev() {
-        let mut candidate = base.clone();
-        for segment in &remaining[..length] {
+    for length in (1..=target.len()).rev() {
+        let mut candidate = PathBuf::from(&source_root_relative);
+        for segment in &target[..length] {
             candidate.push(segment);
         }
         let candidate = normalize_relative(&candidate)?;
         if let Some(resolved) = resolve_file(&candidate, known_paths) {
             return Some(resolved);
-        }
-    }
-    if remaining.is_empty() {
-        return resolve_file(&normalize_relative(&base)?, known_paths);
-    }
-    // `use super::shared` can name an item declared directly in the owning
-    // module rather than a child module file.  Resolve that final symbol to
-    // the module source so call binding can prove the item from cached facts.
-    if remaining.len() == 1 {
-        let base = normalize_relative(&base)?;
-        for owner in [
-            format!("{base}.rs"),
-            format!("{base}/mod.rs"),
-            format!("{base}/lib.rs"),
-            format!("{base}/main.rs"),
-        ] {
-            if known_paths.contains(&owner) {
-                return Some(owner);
-            }
         }
     }
     None
@@ -382,19 +397,28 @@ fn resolve_workspace_import(
 }
 
 fn title_case(value: &str) -> String {
-    value
-        .trim_start_matches('@')
-        .split(|character: char| !character.is_ascii_alphanumeric())
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            let mut characters = part.chars();
-            characters
-                .next()
-                .map(|first| first.to_ascii_uppercase().to_string() + characters.as_str())
-                .unwrap_or_default()
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    let mut result = String::new();
+    let mut previous_was_lower = false;
+    for character in value.chars() {
+        let separator = ".-_/@".contains(character);
+        let uppercase = character.is_ascii_uppercase();
+        if separator {
+            if !result.is_empty() && !result.ends_with(' ') {
+                result.push(' ');
+            }
+        } else {
+            if uppercase && previous_was_lower && !result.ends_with(' ') {
+                result.push(' ');
+            }
+            if result.is_empty() || result.ends_with(' ') {
+                result.push(character.to_ascii_uppercase());
+            } else {
+                result.push(character);
+            }
+        }
+        previous_was_lower = character.is_ascii_lowercase();
+    }
+    result.trim().to_string()
 }
 
 fn includes_any(value: &str, candidates: &[&str]) -> bool {
@@ -496,7 +520,22 @@ fn dependency_kind(specifier: &str, dev_packages: &BTreeSet<String>) -> &'static
 fn is_node_builtin(specifier: &str) -> bool {
     let name = specifier.strip_prefix("node:").unwrap_or(specifier);
     [
+        "_http_agent",
+        "_http_client",
+        "_http_common",
+        "_http_incoming",
+        "_http_outgoing",
+        "_http_server",
+        "_stream_duplex",
+        "_stream_passthrough",
+        "_stream_readable",
+        "_stream_transform",
+        "_stream_wrap",
+        "_stream_writable",
+        "_tls_common",
+        "_tls_wrap",
         "assert",
+        "assert/strict",
         "async_hooks",
         "buffer",
         "child_process",
@@ -507,36 +546,52 @@ fn is_node_builtin(specifier: &str) -> bool {
         "dgram",
         "diagnostics_channel",
         "dns",
+        "dns/promises",
         "domain",
         "events",
         "fs",
+        "fs/promises",
         "http",
         "http2",
         "https",
+        "inspector",
+        "inspector/promises",
         "module",
         "net",
         "os",
         "path",
+        "path/posix",
+        "path/win32",
         "perf_hooks",
         "process",
         "punycode",
         "querystring",
         "readline",
+        "readline/promises",
         "repl",
         "stream",
+        "stream/consumers",
+        "stream/promises",
+        "stream/web",
         "string_decoder",
         "sys",
         "timers",
+        "timers/promises",
         "tls",
         "trace_events",
         "tty",
         "url",
         "util",
+        "util/types",
         "v8",
         "vm",
         "wasi",
         "worker_threads",
         "zlib",
+        "sea",
+        "sqlite",
+        "test",
+        "test/reporters",
     ]
     .contains(&name)
 }
@@ -580,17 +635,20 @@ fn go_package_metadata(package_path: &str, files: &[String]) -> Value {
         .or_else(|| parts.first())
         .copied()
         .unwrap_or(".");
-    let domain =
-        if candidate.contains('.') || ["index", "main", "app", "routes"].contains(&candidate) {
-            "Project".to_string()
-        } else {
-            title_case_path(candidate)
-        };
+    let domain = if package_path == "." {
+        String::new()
+    } else if candidate.contains('.') || ["index", "main", "app", "routes"].contains(&candidate) {
+        "Project".to_string()
+    } else {
+        title_case_path(candidate)
+    };
     let feature_parts = source_root
         .map(|index| &parts[index + 1..])
         .unwrap_or(parts.as_slice());
     let feature = feature_parts.first().copied().unwrap_or("project");
-    let feature = if feature.contains('.') {
+    let feature = if package_path == "." {
+        ".".to_string()
+    } else if feature.contains('.') {
         "project".to_string()
     } else {
         feature.to_string()
@@ -883,7 +941,7 @@ pub fn resolve_native_js_imports(
 
 #[cfg(test)]
 mod tests {
-    use super::{package_name, resolve_native_js_imports};
+    use super::{external_import, go_package_metadata, package_name, resolve_native_js_imports};
     use crate::js_facts::parse_native_js_facts;
     use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
@@ -896,7 +954,7 @@ mod tests {
             "src/index.ts".to_string(),
             parse_native_js_facts(
                 "src/index.ts",
-                "import './service'; import '@/shared'; import cron from 'node-cron'; import fs from 'node:fs';",
+                "import './service'; import '@/shared'; import cron from 'node-cron'; import fs from 'node:fs'; import test from 'node:test'; import strict from 'node:assert/strict';",
             )
             .unwrap(),
         )]);
@@ -910,6 +968,26 @@ mod tests {
         assert_eq!(result.resolved_imports.len(), 2);
         assert_eq!(result.external_imports.len(), 1);
         assert_eq!(result.external_imports[0].specifier, "node-cron");
+    }
+
+    #[test]
+    fn preserves_python_future_import_as_the_javascript_oracle_external_contract() {
+        let facts = BTreeMap::from([(
+            "src/module.py".to_string(),
+            parse_native_js_facts("src/module.py", "from __future__ import annotations\n").unwrap(),
+        )]);
+        assert_eq!(facts["src/module.py"].imports, vec!["__future__"]);
+        assert_eq!(
+            facts["src/module.py"].structural.imports[0].specifier,
+            "__future__"
+        );
+        let known = BTreeSet::from(["src/module.py".to_string()]);
+        let resolved = resolve_native_js_imports(Path::new("."), &facts, &known);
+        assert_eq!(resolved["src/module.py"].external_imports.len(), 1);
+        assert_eq!(
+            resolved["src/module.py"].external_imports[0].specifier,
+            "__future__"
+        );
     }
 
     #[test]
@@ -938,6 +1016,18 @@ mod tests {
         assert_eq!(package_name("App\\Helper"), "App");
         assert_eq!(package_name("node:fs"), "node");
         assert_eq!(package_name("@scope/tool/runtime"), "@scope/tool");
+        assert_eq!(
+            external_import("LogicException", &BTreeSet::new()).metadata["label"],
+            "Logic Exception"
+        );
+    }
+
+    #[test]
+    fn root_go_package_metadata_matches_javascript_dot_path_classification() {
+        let metadata = go_package_metadata(".", &["main.go".to_string()]);
+        assert_eq!(metadata["label"], "Root Go package");
+        assert_eq!(metadata["domain"], "");
+        assert_eq!(metadata["feature"], ".");
     }
 
     #[test]
@@ -957,13 +1047,27 @@ mod tests {
     }
 
     #[test]
-    fn resolves_super_item_to_the_parent_module_source() {
+    fn rust_resolution_matches_javascript_module_files_without_inventing_item_owners() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-rust-resolution-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("src/area")).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"resolver-test\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
         let facts = BTreeMap::from([
             (
                 "src/area/child.rs".to_string(),
                 parse_native_js_facts(
                     "src/area/child.rs",
-                    "use super::shared;\npub fn run() { shared(); }\n",
+                    "use super::shared;\nuse super::sibling::ping;\npub fn run() { shared(); ping(); }\n",
                 )
                 .unwrap(),
             ),
@@ -971,13 +1075,23 @@ mod tests {
                 "src/area/mod.rs".to_string(),
                 parse_native_js_facts("src/area/mod.rs", "pub fn shared() {}\n").unwrap(),
             ),
+            (
+                "src/area/sibling.rs".to_string(),
+                parse_native_js_facts("src/area/sibling.rs", "pub fn ping() {}\n").unwrap(),
+            ),
         ]);
         let known = facts.keys().cloned().collect::<BTreeSet<_>>();
-        let resolved = resolve_native_js_imports(Path::new("."), &facts, &known);
+        let resolved = resolve_native_js_imports(&root, &facts, &known);
         assert_eq!(
-            resolved["src/area/child.rs"].resolved_imports[0].target_path,
-            "src/area/mod.rs"
+            resolved["src/area/child.rs"]
+                .resolved_imports
+                .iter()
+                .map(|item| (item.specifier.as_str(), item.target_path.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("super::sibling::ping", "src/area/sibling.rs")]
         );
+        assert!(resolved["src/area/child.rs"].external_imports.is_empty());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

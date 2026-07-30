@@ -120,6 +120,10 @@ fn recover_malformed_declaration(path: &str, source: &str) -> Option<NativeJsStr
 }
 
 pub fn parse_native_csharp_facts(path: &str, source: &str) -> Option<NativeJsFacts> {
+    // Roslyn treats an initial UTF-8 BOM as encoding metadata rather than
+    // source text. Tree-sitter otherwise counts its three encoded bytes as
+    // columns, shifting every range on the first line.
+    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
     let mut parser = Parser::new();
     parser
         .set_language(&tree_sitter_c_sharp::LANGUAGE.into())
@@ -204,7 +208,9 @@ pub fn parse_native_csharp_facts(path: &str, source: &str) -> Option<NativeJsFac
                 });
             }
         }
-        stack.extend(children(node));
+        // Roslyn DescendantNodes is a source-order preorder traversal. A LIFO
+        // stack must push children in reverse to preserve that contract.
+        stack.extend(children(node).into_iter().rev());
     }
     if diagnostic_count > 0
         && structural.symbols.is_empty()
@@ -226,13 +232,12 @@ pub fn parse_native_csharp_facts(path: &str, source: &str) -> Option<NativeJsFac
                     .cmp(&right.evidence.range.start.column),
             )
     });
+    let mut seen_methods = BTreeSet::new();
     structural.methods = structural
         .symbols
         .iter()
         .flat_map(|symbol| symbol.methods.iter().cloned())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .take(12)
+        .filter(|method| seen_methods.insert(method.clone()))
         .collect();
     let symbols = structural
         .symbols
@@ -274,6 +279,22 @@ mod tests {
         assert_eq!(facts.structural.imports[0].specifier, "System");
         assert_eq!(facts.structural.symbols[0].name, "OrdersService");
         assert_eq!(facts.structural.symbols[0].methods, ["Submit", "Count"]);
+        assert_eq!(facts.structural.methods, ["Submit", "Count"]);
+    }
+
+    #[test]
+    fn preserves_roslyn_bom_ranges_and_first_duplicate_type_declaration() {
+        let facts = parse_native_csharp_facts(
+            "src/Mailable.cs",
+            "\u{feff}using System;\npublic class Mailable<T> { public void First() {} }\npublic class Mailable { public void Second() {} }\n",
+        )
+        .unwrap();
+        assert_eq!(facts.structural.imports[0].evidence.range.start.column, 1);
+        assert_eq!(facts.structural.imports[0].evidence.range.end.column, 14);
+        assert_eq!(facts.structural.symbols[0].name, "Mailable");
+        assert_eq!(facts.structural.symbols[0].methods, ["First"]);
+        assert_eq!(facts.structural.symbols[1].methods, ["Second"]);
+        assert_eq!(facts.structural.methods, ["First", "Second"]);
     }
 
     #[test]

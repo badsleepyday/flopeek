@@ -116,6 +116,10 @@ fn add_import(
     if segments.is_empty() {
         return;
     }
+    let standard = matches!(
+        segments.first().map(String::as_str),
+        Some("std" | "core" | "alloc")
+    );
     let specifier = segments.join("::");
     let exported_name = segments.last().cloned().unwrap_or_default();
     if exported_name != "*" {
@@ -129,7 +133,7 @@ fn add_import(
     }
     facts.push(NativeJsImport {
         specifier,
-        standard: None,
+        standard: standard.then_some(true),
         evidence: evidence(path, node),
     });
 }
@@ -282,6 +286,7 @@ pub fn parse_native_rust_facts(path: &str, source: &str) -> Option<NativeJsFacts
             }
         }
     }
+    let class_names = classes.keys().cloned().collect::<BTreeSet<_>>();
     structural.symbols.extend(classes.into_values());
     let functions = children(root)
         .into_iter()
@@ -301,13 +306,13 @@ pub fn parse_native_rust_facts(path: &str, source: &str) -> Option<NativeJsFacts
             });
         }
     }
+    let mut seen_methods = BTreeSet::new();
     structural.methods = structural
         .symbols
         .iter()
         .filter(|symbol| symbol.symbol_type == "class")
         .flat_map(|symbol| symbol.methods.iter().cloned())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
+        .filter(|method| seen_methods.insert(method.clone()))
         .take(12)
         .collect();
     for function in &functions {
@@ -337,7 +342,8 @@ pub fn parse_native_rust_facts(path: &str, source: &str) -> Option<NativeJsFacts
         if let (Some(name), Some(body)) = (
             impl_type_name(implementation, source),
             implementation.child_by_field_name("body"),
-        ) {
+        ) && class_names.contains(&name)
+        {
             let owner = NativeJsSymbolReference {
                 symbol_type: "class".into(),
                 name,
@@ -387,4 +393,29 @@ pub fn parse_native_rust_facts(path: &str, source: &str) -> Option<NativeJsFacts
         direct_calls: direct_calls.into_iter().collect(),
         structural,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_native_rust_facts;
+
+    #[test]
+    fn preserves_standard_imports_method_order_and_declared_impl_call_owners() {
+        let facts = parse_native_rust_facts(
+            "src/lib.rs",
+            "use std::fmt::Debug;\ntrait Local { fn zebra(&self); fn alpha(&self); }\nfn helper() {}\nimpl Foreign { fn run() { helper(); } }\nimpl Local { fn run() { helper(); } }\n",
+        )
+        .unwrap();
+        assert_eq!(facts.structural.imports[0].specifier, "std::fmt::Debug");
+        assert_eq!(facts.structural.imports[0].standard, Some(true));
+        assert_eq!(facts.structural.methods, ["zebra", "alpha", "run"]);
+        assert_eq!(facts.structural.calls.len(), 1);
+        assert_eq!(
+            facts.structural.calls[0]
+                .source
+                .as_ref()
+                .map(|source| source.name.as_str()),
+            Some("Local")
+        );
+    }
 }

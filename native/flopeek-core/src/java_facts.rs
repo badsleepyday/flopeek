@@ -236,13 +236,13 @@ pub fn parse_native_java_facts(path: &str, source: &str) -> Option<NativeJsFacts
             }
         }
     }
+    let mut seen_methods = BTreeSet::new();
     structural.methods = structural
         .symbols
         .iter()
         .filter(|symbol| symbol.symbol_type == "class")
         .flat_map(|symbol| symbol.methods.iter().cloned())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
+        .filter(|method| seen_methods.insert(method.clone()))
         .take(12)
         .collect();
     let direct_calls = structural

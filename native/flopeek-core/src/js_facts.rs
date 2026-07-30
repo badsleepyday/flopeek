@@ -1336,6 +1336,7 @@ fn collect_structural(
         node.kind(),
         "function_declaration"
             | "generator_function_declaration"
+            | "function_signature"
             | "method_definition"
             | "method_signature"
     ) && facts.methods.len() < 12
@@ -1377,7 +1378,9 @@ fn collect_structural(
                 });
             }
         }
-        "function_declaration" | "generator_function_declaration" if is_top_level(node) => {
+        "function_declaration" | "generator_function_declaration" | "function_signature"
+            if is_top_level(node) =>
+        {
             if let Some(name) = identifier_for(node, source) {
                 facts.symbols.push(NativeJsStructuralSymbol {
                     symbol_type: "function".to_string(),
@@ -1669,7 +1672,7 @@ fn collect_facts(
                 imports.insert(specifier);
             }
         }
-        "function_declaration" | "generator_function_declaration" => {
+        "function_declaration" | "generator_function_declaration" | "function_signature" => {
             if let Some(name) = identifier_for(node, source) {
                 symbols.insert(("function".to_string(), name));
             }
@@ -2269,6 +2272,25 @@ mod tests {
                 .any(|symbol| symbol.kind == "type" && symbol.name == "Order")
         );
         assert!(typescript.direct_calls.contains(&"fetch".to_string()));
+
+        let declarations = parse_native_js_facts(
+            "index.d.ts",
+            "export default function pLimit(concurrency: number): void;\nexport function limitFunction(): void;\n",
+        )
+        .unwrap();
+        assert_eq!(
+            declarations
+                .symbols
+                .iter()
+                .filter(|symbol| symbol.kind == "function")
+                .map(|symbol| symbol.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["limitFunction", "pLimit"]
+        );
+        assert_eq!(
+            declarations.structural.methods,
+            vec!["pLimit", "limitFunction"]
+        );
     }
 
     #[test]

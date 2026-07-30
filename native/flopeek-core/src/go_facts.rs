@@ -442,12 +442,12 @@ pub fn parse_native_go_facts(path: &str, source: &str) -> Option<NativeJsFacts> 
             function_calls(path, *node, source, &top_level_functions, &import_bindings)
         })
         .collect::<Vec<_>>();
+    let mut seen_methods = BTreeSet::new();
     let methods = declarations
         .iter()
         .filter(|node| matches!(node.kind(), "function_declaration" | "method_declaration"))
         .filter_map(|node| declaration_name(*node, source))
-        .collect::<BTreeSet<_>>()
-        .into_iter()
+        .filter(|method| seen_methods.insert(method.clone()))
         .take(12)
         .collect::<Vec<_>>();
     let analysis = NativeJsAnalysis {

@@ -13,6 +13,7 @@ const { createHash } = require("node:crypto");
 const { createCoreCompatibilityDigest } = require("../src/core-compatibility");
 const { createJsCoreClient } = require("../src/js-core-client");
 const { createNativeCoreClient } = require("../src/native-core-client");
+const { createNativeIncrementalSession } = require("../src/native-incremental-coordinator");
 const { createScanCoordinator } = require("../src/scan-coordinator");
 const { nativePlatformTarget } = require("../src/native-platform-targets");
 const { copyRepository, executionOrder, parseArguments, sourceFiles, summarize } = require("./benchmark-native-incremental");
@@ -115,7 +116,10 @@ async function benchmarkCoreRoot(source, iteration, sandbox, nativeOptions = rel
   copyRepository(source, jsRoot);
   copyRepository(source, nativeRoot);
   const javascript = createJsCoreClient();
-  const native = createNativeCoreClient({ nativeOptions, sourceAuthority: "rust" });
+  const native = createNativeCoreClient({
+    native: createNativeIncrementalSession(nativeOptions, { cwd: ROOT }),
+    sourceAuthority: "rust",
+  });
   assert.equal(native.backendAuthority, "rust-sqlite", "Benchmark native side must use Rust+SQLite authority.");
   assert.equal(native.sourceAuthority, "rust", "Benchmark native side must use Rust source authority.");
   assert.equal(native.parserHost, "rust-tree-sitter-source/v19", "Benchmark must not retain a JavaScript parser host.");

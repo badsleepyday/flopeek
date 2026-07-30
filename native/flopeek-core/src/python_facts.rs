@@ -371,7 +371,7 @@ fn collect(
         }
     }
     match n.kind() {
-        "import_statement" | "import_from_statement" => {
+        "import_statement" | "import_from_statement" | "future_import_statement" => {
             for specifier in imports(n, s) {
                 f.imports.push(NativeJsImport {
                     specifier,
@@ -477,6 +477,13 @@ pub fn parse_native_python_facts(path: &str, source: &str) -> Option<NativeJsFac
     };
     collect(r, path, source, &b, &mut f);
     collect_framework_commands(r, path, source, &b, &imported_modules, &mut f);
+    // Python overload stubs share the same public symbol identity as their
+    // implementation. The JavaScript compatibility oracle retains the first
+    // declaration evidence for that identity, so later overloads must not
+    // create conflicting contains/declares edges.
+    let mut seen_symbols = BTreeSet::new();
+    f.symbols
+        .retain(|symbol| seen_symbols.insert((symbol.symbol_type.clone(), symbol.name.clone())));
     for z in &f.symbols {
         for m in &z.methods {
             if f.methods.len() < 12 && !f.methods.contains(m) {
@@ -537,5 +544,22 @@ mod tests {
         assert_eq!(endpoint.confidence.as_deref(), Some("likely"));
         assert_eq!(endpoint.evidence.range.end.line, 7);
         assert_eq!(endpoint.evidence.range.end.column, 1);
+    }
+
+    #[test]
+    fn keeps_first_overload_declaration_for_one_public_symbol_identity() {
+        let facts = parse_native_python_facts(
+            "tests/serializer.py",
+            "from typing import overload\n\n@overload\ndef coerce(value: str) -> str: ...\n\n@overload\ndef coerce(value: bytes) -> bytes: ...\n\ndef coerce(value):\n    return value\n",
+        )
+        .unwrap();
+        let symbols = facts
+            .structural
+            .symbols
+            .iter()
+            .filter(|symbol| symbol.name == "coerce")
+            .collect::<Vec<_>>();
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].evidence.range.start.line, 4);
     }
 }

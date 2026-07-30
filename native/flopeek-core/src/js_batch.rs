@@ -142,6 +142,7 @@ fn svelte_route(path: &str) -> Option<String> {
 fn classify_file(path: &str) -> (String, String, String) {
     let filename = path.rsplit('/').next().unwrap_or(path);
     let stem = without_extension(filename).to_ascii_lowercase();
+    let configuration_prefix = stem.split('.').next().unwrap_or(&stem);
     let mut file_type = "module";
     let mut label = title_case(without_extension(filename));
     let mut responsibility = "Code module that participates in the application graph.";
@@ -151,6 +152,24 @@ fn classify_file(path: &str) -> (String, String, String) {
     } else if is_test_path(path) {
         file_type = "test";
         responsibility = "Verifies application component behavior.";
+    } else if [
+        "vite",
+        "vitest",
+        "tailwind",
+        "postcss",
+        "eslint",
+        "prettier",
+        "drizzle",
+        "svelte",
+        "playwright",
+        "tsconfig",
+        "jsconfig",
+        "pgtyped",
+    ]
+    .contains(&configuration_prefix)
+    {
+        file_type = "config";
+        responsibility = "Build, tooling, or project configuration.";
     } else if let Some(route) = svelte_route(path) {
         if stem.split('.').next() == Some("+layout") {
             file_type = "module";
@@ -866,6 +885,25 @@ mod tests {
             )
         );
         assert_eq!(classify_file("src/routes/orders/+page.svelte").0, "route");
+    }
+
+    #[test]
+    fn classifies_javascript_oracle_configuration_prefixes_as_config() {
+        for path in [
+            "svelte.config.js",
+            "vite.config.ts",
+            "eslint.config.mjs",
+            "tsconfig.json",
+            "playwright.config.ts",
+        ] {
+            let classification = classify_file(path);
+            assert_eq!(classification.0, "config", "{path}");
+            assert_eq!(
+                classification.2, "Build, tooling, or project configuration.",
+                "{path}"
+            );
+        }
+        assert_eq!(classify_file("src/config.ts").0, "module");
     }
 
     #[test]

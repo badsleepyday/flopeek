@@ -609,6 +609,7 @@ fn record_edge_metadata(batch: &serde_json::Map<String, Value>) -> EdgeMetadataF
             continue;
         };
         let file_id = public_file_node_id(relative_path);
+        let mut seen_symbols = BTreeSet::new();
         for integration in result
             .get("integrations")
             .and_then(Value::as_array)
@@ -652,6 +653,9 @@ fn record_edge_metadata(batch: &serde_json::Map<String, Value>) -> EdgeMetadataF
             else {
                 continue;
             };
+            if !seen_symbols.insert((kind.to_string(), name.to_string())) {
+                continue;
+            }
             let symbol_id = public_symbol_node_id(relative_path, kind, name);
             symbols.insert(
                 (
@@ -2327,5 +2331,48 @@ mod tests {
         assert!(metadata["handlerId"].is_null());
         assert_eq!(metadata["methods"][1]["dynamic"], true);
         assert_eq!(metadata["evidence"]["parser"], "native");
+    }
+
+    #[test]
+    fn duplicate_symbols_keep_first_declaration_and_edge_evidence() {
+        let graph = build_structural_graph(&json!({
+            "schemaVersion": STRUCTURAL_FACT_BATCH_SCHEMA,
+            "records": [{
+                "recordOrder": 0,
+                "relativePath": "src/overload.rs",
+                "result": {
+                    "symbols": [
+                        {
+                            "type": "function",
+                            "name": "same",
+                            "methods": [],
+                            "evidence": {"parser":"tree-sitter-rust","file":"src/overload.rs","range":{"start":{"line":1,"column":1},"end":{"line":1,"column":13}}}
+                        },
+                        {
+                            "type": "function",
+                            "name": "same",
+                            "methods": [],
+                            "evidence": {"parser":"tree-sitter-rust","file":"src/overload.rs","range":{"start":{"line":3,"column":1},"end":{"line":3,"column":13}}}
+                        }
+                    ]
+                }
+            }]
+        }))
+        .unwrap();
+        let symbol = graph
+            .nodes
+            .iter()
+            .find(|node| node.id == "symbol:src/overload.rs:function:same")
+            .unwrap();
+        assert_eq!(
+            symbol.metadata.as_ref().unwrap()["evidence"]["range"]["start"]["line"],
+            1
+        );
+        for edge in graph.edges.iter().filter(|edge| {
+            edge.source == "symbol:src/overload.rs:function:same"
+                || edge.target == "symbol:src/overload.rs:function:same"
+        }) {
+            assert_eq!(edge.evidence.as_ref().unwrap()["range"]["start"]["line"], 1);
+        }
     }
 }
