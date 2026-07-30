@@ -3116,6 +3116,7 @@ function createPublicGraphEnvelope(prepared, entryFacts = null) {
       },
       entryPoints: entryFacts?.entryPoints || null,
       adapterCapabilities: getAdapterRegistry(),
+      executionAdapterCapabilities: getAdapterRegistry({ implementation: "javascript" }),
       capabilities: getAdapterRegistry().adapters,
     },
     // These source-derived values can be emitted before graph assembly. The
@@ -3409,6 +3410,7 @@ function buildGraphFromRecords(root, sourceRecords, refresh = null, graphContext
         ],
       },
       adapterCapabilities: getAdapterRegistry(),
+      executionAdapterCapabilities: getAdapterRegistry({ implementation: "javascript" }),
       capabilities: getAdapterRegistry().adapters,
     },
     stats: {

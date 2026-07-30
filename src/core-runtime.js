@@ -6,11 +6,23 @@ const { CORE_CLIENT_SCHEMA, assertCoreClient } = require("./core-client");
 const { createJsCoreClient } = require("./js-core-client");
 const { createNativeCoreClient } = require("./native-core-client");
 const { createNativeIncrementalSession } = require("./native-incremental-coordinator");
+const { NativeProtocolClient } = require("./native-protocol-client");
 const { createShadowCoreClient } = require("./shadow-core-client");
 const { loadBundledNativeRolloutEvidence, probeVerifiedNativeRuntime } = require("./native-rollout-evidence");
 
 const CORE_MODES = new Set(["js", "shadow", "native", "native-experimental"]);
 const FLOPEEK_PACKAGE_ROOT = path.resolve(__dirname, "..");
+
+function createVerifiedNativeProtocolClient(verifiedRuntime, packageRoot, ProtocolClient = NativeProtocolClient) {
+  if (verifiedRuntime?.available !== true || typeof verifiedRuntime.binary !== "string" || !verifiedRuntime.binary) {
+    throw new Error("Rollout-approved native activation requires an exact verified binary path.");
+  }
+  return new ProtocolClient({
+    command: verifiedRuntime.binary,
+    args: [],
+    cwd: packageRoot,
+  });
+}
 
 // A failed native bootstrap may use JavaScript only before native has promoted
 // any graph for this client. Once SQLite is authoritative, falling back to a
@@ -168,11 +180,8 @@ function createSurfaceCoreRuntime(options = {}) {
   let bundledEvidence = null;
   let verifiedRuntime = null;
   const packageRoot = path.resolve(options.packageRoot || FLOPEEK_PACKAGE_ROOT);
-  if (mode === "native" && options.rolloutEvidence === undefined) {
+  if (mode === "native") {
     bundledEvidence = loadBundledNativeRolloutEvidence(packageRoot);
-  }
-  if (mode === "native" && options.enableNativeCore === undefined
-    && !options.nativeCore && !options.native) {
     verifiedRuntime = probeVerifiedNativeRuntime(packageRoot, {
       expectedBinaries: bundledEvidence?.complete
         ? bundledEvidence.packet.binding.binaries
@@ -180,11 +189,17 @@ function createSurfaceCoreRuntime(options = {}) {
     });
   }
   const rolloutEvidence = options.rolloutEvidence ?? bundledEvidence?.evidence;
-  const nativeAvailable = options.enableNativeCore === true
-    || Boolean(options.nativeCore)
-    || Boolean(options.native)
-    || verifiedRuntime?.available === true
-    || mode === "native-experimental";
+  const approvedVerifiedRuntime = bundledEvidence?.complete === true
+    && verifiedRuntime?.available === true;
+  const verifiedNative = approvedVerifiedRuntime
+    ? createVerifiedNativeProtocolClient(verifiedRuntime, packageRoot)
+    : null;
+  const nativeAvailable = mode === "native"
+    ? approvedVerifiedRuntime
+    : options.enableNativeCore === true
+      || Boolean(options.nativeCore)
+      || Boolean(options.native)
+      || mode === "native-experimental";
   const selection = selectCoreMode({
     mode,
     rolloutEvidence,
@@ -195,6 +210,12 @@ function createSurfaceCoreRuntime(options = {}) {
     mode,
     rolloutEvidence,
     enableNativeCore: nativeAvailable,
+    // A rollout-approved automatic activation must execute the exact artifact
+    // that probeVerifiedNativeRuntime hashed and matched to the packet. The
+    // experimental resolver remains the only path that may honor
+    // FLOPEEK_NATIVE_CORE.
+    native: mode === "native" ? verifiedNative : options.native,
+    nativeCore: mode === "native" ? undefined : options.nativeCore,
   });
   return Object.freeze({ core, selection: Object.freeze({
     ...selection,
@@ -211,6 +232,7 @@ module.exports = {
   FLOPEEK_PACKAGE_ROOT,
   createConfiguredCoreClient,
   createNativeFallbackCoreClient,
+  createVerifiedNativeProtocolClient,
   createSurfaceCoreClient,
   createSurfaceCoreRuntime,
   observeCoreRuntime,

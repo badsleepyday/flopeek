@@ -19,6 +19,10 @@ const ROOT = path.join(__dirname, "..", "..");
 const SOURCE = path.join(__dirname, "..", "fixtures", "typescript-order-flow");
 const MANIFEST = path.join(ROOT, "native", "flopeek-core", "Cargo.toml");
 const NATIVE = { command: "cargo", args: ["run", "--quiet", "--manifest-path", MANIFEST, "--"] };
+const expectedBundledNativeFallback = () => {
+  const packet = JSON.parse(fs.readFileSync(path.join(ROOT, "packaging", "native-rollout-evidence.json"), "utf8"));
+  return packet.status === "complete" ? "native-public-core-unavailable" : "native-rollout-gate-blocked";
+};
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-scan-coordinator-"));
@@ -284,14 +288,14 @@ test("unbounded coordinator refreshes through its injected CoreClient", async (t
   assert.deepEqual(refreshCalls[1].options.changedPaths, [changedPath]);
 });
 
-test("native mode request is observable and falls back to JavaScript before the rollout gate passes", async (t) => {
+test("native mode request is observable and falls back unless an approved binary is installed", async (t) => {
   const root = fixture(t);
   const coordinator = createScanCoordinator(root, { cache: false, coreMode: "native" });
   const result = await coordinator.refresh(null, "native-gate-probe");
   assert.equal(result.outcome.status, "complete");
   assert.equal(result.outcome.coreRuntime.requestedMode, "native");
   assert.equal(result.outcome.coreRuntime.selectedImplementation, "javascript");
-  assert.equal(result.outcome.coreRuntime.fallback.reason, "native-rollout-gate-blocked");
+  assert.equal(result.outcome.coreRuntime.fallback.reason, expectedBundledNativeFallback());
   assert.equal(coordinator.coreMode, result.outcome.coreRuntime);
 });
 

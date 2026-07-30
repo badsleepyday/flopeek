@@ -39,6 +39,7 @@ test("persistent native protocol client preserves one session and reports typed 
   assert.equal(health.implementation, "rust");
   assert.equal(health.publicNodeIdsEnabled, true);
   assert.deepEqual(health.adapterCapabilities, getAdapterRegistry());
+  assert.deepEqual(health.executionAdapterCapabilities, getAdapterRegistry({ implementation: "native" }));
   assert.deepEqual(client.getLastResponseStats().requestId, "native-2");
   assert.ok(client.getLastResponseStats().requestBytes > 0);
   assert.ok(client.getLastResponseStats().responseBytes > 0);

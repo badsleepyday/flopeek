@@ -168,8 +168,17 @@ native-default rollout.
   Performance evidence covers at least five compatible repositories; cold,
   unchanged, and one-file median speedups must each be no lower than `0.90` on
   every repository, while one-file change speedup must reach at least `2.0` on
-  four repositories. It must also prove core-query local p95 below 50 ms,
-  Context Ref resolution local p95 below 20 ms, database-open behavior without
-  full-graph deserialization, and a memory peak no worse than the JavaScript
-  baseline. The gate reports eligibility but does not activate native; when
-  blocked, JavaScript remains selected.
+  four repositories. Every named query operation must retain 101 raw samples
+  for every repository and state. The gate uses the maximum per-cell p95 for
+  each operation, requires each core query below 50 ms and Context Ref
+  resolution below 20 ms, and rejects aggregates that do not equal those
+  maxima. Database-open behavior is accepted only from a byte-hashed,
+  release-binary/source-bound native observation that reads the current graph
+  metadata without graph payload rows or payload deserialization. Memory peak
+  must be no worse than the JavaScript baseline. The gate reports eligibility
+  but does not activate native; when blocked, JavaScript remains selected.
+- A tagged release is approved only after its exact release manifest exists.
+  The manifest binds the main package tarball, rollout evidence, every platform
+  tarball, and every native binary digest. The owner approval record carries
+  the exact manifest SHA-256; any rebuilt or changed artifact invalidates the
+  approval before publication.

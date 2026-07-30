@@ -14,7 +14,10 @@ const SOURCE = path.join(__dirname, "..", "fixtures", "typescript-order-flow");
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-session-state-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.cpSync(SOURCE, root, { recursive: true });
+  fs.cpSync(SOURCE, root, {
+    recursive: true,
+    filter: (source) => ![".flopeek", ".flowpeek"].includes(path.basename(source)),
+  });
   return root;
 }
 

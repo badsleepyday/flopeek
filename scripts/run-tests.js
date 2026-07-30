@@ -51,6 +51,11 @@ for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/mono
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/framework-command-flow.test.js");
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/public-core-ci.test.js");
 for (const name of ["full", "fast", "unit", "package"]) lanes[name].unshift("test/unit/native-release-controls.test.js");
+for (const name of ["full", "fast", "unit", "package"]) lanes[name].unshift(
+  "test/unit/native-database-open-evidence.test.js",
+  "test/unit/native-release-manifest.test.js",
+  "test/unit/github-release-approval.test.js",
+);
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/branch-name-policy.test.js");
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/native-activation-surfaces.test.js");
 for (const name of ["full", "fast", "unit", "package"]) lanes[name].unshift("test/unit/go-stdlib-catalog.test.js");

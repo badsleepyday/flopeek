@@ -17,14 +17,55 @@ function benchmarkRow(repository, { cold = 1.1, unchanged = 1.2, oneFileChange =
     nativeSamplesMs: [1, 1, 1],
     speedupNativeVsJavaScript: speedup,
   });
-  return { repository, states: {
-    cold: sample(cold),
-    unchanged: sample(unchanged),
-    oneFileChange: sample(oneFileChange),
-  } };
+  return {
+    repository,
+    repositoryRevision: "d".repeat(40),
+    sourceDigest: "e".repeat(64),
+    states: {
+      cold: sample(cold),
+      unchanged: sample(unchanged),
+      oneFileChange: sample(oneFileChange),
+    },
+  };
+}
+
+function queryRawSamples(operationP95Ms) {
+  return Array.from({ length: 5 }, (_, index) => ({
+    repository: `repo-${index + 1}`,
+    repositoryRevision: "d".repeat(40),
+    sourceDigest: "e".repeat(64),
+    states: Object.fromEntries(["cold", "unchanged", "oneFileChange"].map((state) => [
+      state,
+      Object.fromEntries(Object.entries(operationP95Ms)
+        .map(([operation, value]) => [operation, Array(101).fill(value)])),
+    ])),
+  }));
 }
 
 function evidence(overrides = {}) {
+  const databaseOpenEvidence = {
+    schemaVersion: "flopeek-native-database-open-evidence/v1",
+    platformPackage: "@flopeek/native-linux-x64-gnu",
+    repositoryRevision: "b".repeat(40),
+    sourceDigest: "c".repeat(64),
+    binarySha256: "a".repeat(64),
+    operation: "open-current-graph",
+    fullPayloadDeserialized: false,
+    observations: {
+      schemaVersion: "flopeek-native-database-open-observation/v1",
+      sqliteOperations: ["current-complete-graph-metadata"],
+      currentGraphFound: true,
+      graphPayloadRowsRead: 0,
+      graphPayloadBytesDeserialized: 0,
+    },
+  };
+  const operationP95Ms = {
+    findNodes: 49,
+    projectOverview: 49,
+    contextCard: 49,
+    flowProjection: 49,
+    resolveContextRef: 19,
+  };
   return {
     backendParity: {
       schemaVersion: NATIVE_BACKEND_PARITY_SCHEMA,
@@ -57,9 +98,12 @@ function evidence(overrides = {}) {
       rows: Array.from({ length: 5 }, (_, index) => benchmarkRow(`repo-${index + 1}`)),
     },
     performance: {
+      operationP95Ms,
       coreQueryP95Ms: 49,
       contextRefP95Ms: 19,
+      queryRawSamples: queryRawSamples(operationP95Ms),
       databaseOpenDoesNotDeserializeFullGraph: true,
+      databaseOpenEvidence: { sha256: "f".repeat(64), evidence: databaseOpenEvidence },
       memoryPeakNoWorseThanJavaScript: true,
     },
     ...overrides,
@@ -156,8 +200,49 @@ test("native rollout gate rejects incomplete corpus and unproven performance evi
   assert.ok(result.reasons.includes("one-file-change-acceleration-insufficient"));
   assert.ok(result.reasons.includes("core-query-p95-not-proven"));
   assert.ok(result.reasons.includes("context-ref-p95-not-proven"));
+  assert.ok(result.reasons.includes("query-raw-samples-not-proven"));
+  assert.ok(result.reasons.includes("query-operation-p95-not-proven:flowProjection"));
   assert.ok(result.reasons.includes("database-open-behavior-not-proven"));
   assert.ok(result.reasons.includes("memory-peak-not-proven"));
+});
+
+test("native rollout gate rejects one hidden slow operation even when supplied aggregates look fast", () => {
+  const performance = {
+    ...evidence().performance,
+    operationP95Ms: {
+      ...evidence().performance.operationP95Ms,
+      flowProjection: 200,
+    },
+    coreQueryP95Ms: 10,
+  };
+  const result = evaluateNativeDefaultRollout(evidence({ performance }));
+  assert.equal(result.eligible, false);
+  assert.ok(result.reasons.includes("query-operation-p95-not-proven:flowProjection"));
+  assert.ok(result.reasons.includes("core-query-p95-not-proven"));
+});
+
+test("native rollout gate rejects a fast summary that contradicts retained raw samples", () => {
+  const performance = {
+    ...evidence().performance,
+    operationP95Ms: {
+      ...evidence().performance.operationP95Ms,
+      findNodes: 1,
+    },
+    coreQueryP95Ms: 49,
+  };
+  const result = evaluateNativeDefaultRollout(evidence({ performance }));
+  assert.equal(result.eligible, false);
+  assert.ok(result.reasons.includes("query-operation-p95-not-proven:findNodes"));
+});
+
+test("native rollout gate rejects raw query samples rebound to another repository revision", () => {
+  const querySamples = structuredClone(evidence().performance.queryRawSamples);
+  querySamples[0].repositoryRevision = "f".repeat(40);
+  const result = evaluateNativeDefaultRollout(evidence({
+    performance: { ...evidence().performance, queryRawSamples: querySamples },
+  }));
+  assert.equal(result.eligible, false);
+  assert.ok(result.reasons.includes("query-raw-samples-not-proven"));
 });
 
 test("native rollout gate requires five distinct benchmark repositories", () => {

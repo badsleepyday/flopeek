@@ -188,4 +188,16 @@ mod tests {
         assert_eq!(facts.structural.symbols[0].name, "OrdersService");
         assert_eq!(facts.structural.symbols[0].methods, ["Submit", "Count"]);
     }
+
+    #[test]
+    fn malformed_source_is_diagnostic_and_does_not_invent_methods() {
+        let facts = parse_native_csharp_facts(
+            "src/Broken.cs",
+            "using Acme.Data;\npublic class Broken { public void Submit( {",
+        )
+        .expect("C# files have a strict native parser");
+        assert_eq!(facts.status, "parsed-with-diagnostics");
+        assert!(facts.diagnostics > 0);
+        assert!(facts.direct_calls.is_empty());
+    }
 }

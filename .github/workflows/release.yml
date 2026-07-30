@@ -80,6 +80,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.4'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
       - run: npm ci
       - run: npm run check:go-stdlib
       - uses: actions/download-artifact@v4
@@ -88,18 +91,15 @@ jobs:
           merge-multiple: true
       - name: Build rollout evidence from this exact release set
         run: node scripts/prepare-native-rollout-evidence.js --inputs packaging/native-rollout-inputs --assets release-assets --output packaging/native-rollout-evidence.json
-      - name: Verify owner and reviewer approval before any npm publication
-        run: |
-          npm run verify:npm-publication
-          npm run verify:github-release-preflight -- --tag "$GITHUB_REF_NAME"
-          node scripts/verify-native-release-set.js --assets release-assets
+      - name: Verify native artifacts before package assembly
+        run: node scripts/verify-native-release-set.js --assets release-assets
       - run: npm run check:support
       - run: npm run check:docs
       - run: npm run test:public-source
       - run: npm run test:package
       - run: npm run audit:package
       - run: npm run verify:clean-room
-      - name: Pack the exact main package after all verification
+      - name: Pack and bind the exact release set
         run: |
           mkdir main-dist
           npm pack --pack-destination main-dist
@@ -108,6 +108,18 @@ jobs:
           cp packaging/native-rollout-evidence.json main-dist/native-rollout-evidence.json
           sha256sum main-dist/native-rollout-evidence.json > main-dist/native-rollout-evidence.sha256
           sha256sum "$main_tarball" > main-dist/checksums-main.txt
+          node scripts/build-native-release-manifest.js \
+            --tag "$GITHUB_REF_NAME" \
+            --main "$main_tarball" \
+            --rollout-evidence packaging/native-rollout-evidence.json \
+            --assets release-assets \
+            --output main-dist/native-release-manifest.json
+      - name: Verify owner approval against the exact release manifest
+        run: |
+          npm run verify:npm-publication
+          npm run verify:github-release-preflight -- \
+            --tag "$GITHUB_REF_NAME" \
+            --manifest main-dist/native-release-manifest.json
       - uses: actions/upload-artifact@v4
         with:
           name: main-package
@@ -158,7 +170,7 @@ jobs:
           done
           npm dist-tag add "flopeek@${version}" beta
       - name: Verify the approved public registry state
-        run: npm run verify:published-release -- --tag "$GITHUB_REF_NAME"
+        run: npm run verify:published-release -- --tag "$GITHUB_REF_NAME" --manifest release-assets/native-release-manifest.json
       - name: Remove staging dist-tags after successful promotion
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -183,7 +195,7 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
-      - run: npm run verify:github-release -- --tag "$GITHUB_REF_NAME"
+      - run: npm run verify:github-release -- --tag "$GITHUB_REF_NAME" --manifest release-assets/native-release-manifest.json
       - name: Create prerelease
         if: contains(github.ref_name, '-')
         env:

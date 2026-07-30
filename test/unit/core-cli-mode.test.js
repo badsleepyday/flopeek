@@ -12,6 +12,10 @@ const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(__dirname, "..", "..");
 const cli = path.join(repositoryRoot, "src", "cli.js");
 const fixture = path.join(repositoryRoot, "test", "fixtures", "typescript-order-flow");
+const expectedBundledNativeFallback = () => {
+  const packet = JSON.parse(fs.readFileSync(path.join(repositoryRoot, "packaging", "native-rollout-evidence.json"), "utf8"));
+  return packet.status === "complete" ? "native-public-core-unavailable" : "native-rollout-gate-blocked";
+};
 
 test("CLI help exposes the explicit native experimental dogfood mode", async () => {
   const { stdout, stderr } = await execFileAsync(process.execPath, [cli, "help"], { cwd: repositoryRoot, windowsHide: true });
@@ -50,7 +54,7 @@ test("CLI records a blocked native request instead of silently presenting it as 
   const graph = JSON.parse(stdout);
   assert.equal(graph.analysis.coreRuntime.requestedMode, "native");
   assert.equal(graph.analysis.coreRuntime.selectedImplementation, "javascript");
-  assert.equal(graph.analysis.coreRuntime.fallback.reason, "native-rollout-gate-blocked");
+  assert.equal(graph.analysis.coreRuntime.fallback.reason, expectedBundledNativeFallback());
 });
 
 test("CLI records the strict Rust source authority for an unbounded native experimental scan", async () => {

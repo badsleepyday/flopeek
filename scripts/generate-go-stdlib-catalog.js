@@ -69,10 +69,21 @@ async function generatedCatalog() {
   };
 }
 
+function catalogMatches(text, expected) {
+  try {
+    return JSON.stringify(JSON.parse(text)) === JSON.stringify(expected);
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
-  const rendered = `${JSON.stringify(await generatedCatalog(), null, 2)}\n`;
+  const catalog = await generatedCatalog();
+  const rendered = `${JSON.stringify(catalog, null, 2)}\n`;
   if (process.argv.includes("--check")) {
-    if (!fs.existsSync(OUTPUT) || fs.readFileSync(OUTPUT, "utf8") !== rendered) {
+    // Git may materialize CRLF on Windows. The contract is the parsed,
+    // ordered JSON value, not checkout-specific newline bytes.
+    if (!fs.existsSync(OUTPUT) || !catalogMatches(fs.readFileSync(OUTPUT, "utf8"), catalog)) {
       throw new Error(`Go stdlib catalog is stale. Run node ${path.relative(ROOT, __filename)}.`);
     }
     process.stdout.write(`Go stdlib catalog matches ${EXPECTED_GO_VERSION}.\n`);
@@ -82,7 +93,11 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(`${error.stack || error.message}\n`);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    process.stderr.write(`${error.stack || error.message}\n`);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { catalogMatches, generatedCatalog };

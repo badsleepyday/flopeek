@@ -9,9 +9,19 @@ const { adapterContractDigest } = require("../src/adapter-registry");
 const { NATIVE_PROTOCOL_VERSION } = require("../src/native-protocol-client");
 const { nativePlatformTarget } = require("../src/native-platform-targets");
 const { evaluateNativeDefaultRollout } = require("../src/native-rollout-gate");
-const { NATIVE_ROLLOUT_EVIDENCE_SCHEMA } = require("../src/native-rollout-evidence");
+const {
+  NATIVE_ROLLOUT_EVIDENCE_SCHEMA,
+  loadDatabaseOpenEvidence,
+} = require("../src/native-rollout-evidence");
 
 const STATES = ["cold", "unchanged", "oneFileChange"];
+const REQUIRED_QUERY_OPERATIONS = Object.freeze([
+  "findNodes",
+  "projectOverview",
+  "contextCard",
+  "flowProjection",
+  "resolveContextRef",
+]);
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -98,8 +108,8 @@ function validateProfiles(directory, benchmarkRepositories, binaryBindings) {
     .map((file) => path.join(directory, file));
   const profiles = files.map(readJson);
   const repositories = new Set();
-  const coreP95 = [];
-  const contextP95 = [];
+  const operationCellP95 = Object.fromEntries(REQUIRED_QUERY_OPERATIONS.map((name) => [name, []]));
+  const queryRawSamples = [];
   let memoryNoWorse = true;
   for (const profile of profiles) {
     if (profile?.schemaVersion !== "flopeek-native-core-profile/v2"
@@ -108,6 +118,7 @@ function validateProfiles(directory, benchmarkRepositories, binaryBindings) {
       throw new Error("Profiles must be isolated, distinct flopeek-native-core-profile/v2 reports.");
     }
     repositories.add(profile.repository);
+    const retainedStates = {};
     for (const state of STATES) {
       const native = profile.states?.[state]?.native;
       const javascript = profile.states?.[state]?.javascript;
@@ -138,14 +149,20 @@ function validateProfiles(directory, benchmarkRepositories, binaryBindings) {
         throw new Error(`Profile ${profile.repository}/${state} was not measured with the exact release binary and compiler.`);
       }
       const operations = native.measurement?.queryLatency?.operations || {};
-      for (const [name, operation] of Object.entries(operations)) {
-        if (!Array.isArray(operation.rawSamplesMs) || operation.rawSamplesMs.length < 101
+      const operationNames = Object.keys(operations).sort();
+      if (JSON.stringify(operationNames) !== JSON.stringify([...REQUIRED_QUERY_OPERATIONS].sort())) {
+        throw new Error(`Profile ${profile.repository}/${state} must measure every required query operation exactly once.`);
+      }
+      for (const name of REQUIRED_QUERY_OPERATIONS) {
+        const operation = operations[name];
+        if (!Array.isArray(operation.rawSamplesMs) || operation.rawSamplesMs.length !== 101
           || !operation.rawSamplesMs.every((value) => Number.isFinite(value) && value >= 0)) {
           throw new Error(`Profile ${profile.repository}/${state}/${name} must retain 101 raw query samples.`);
         }
-        if (name === "resolveContextRef") contextP95.push(percentile(operation.rawSamplesMs, 95));
-        else coreP95.push(percentile(operation.rawSamplesMs, 95));
+        operationCellP95[name].push(percentile(operation.rawSamplesMs, 95));
       }
+      retainedStates[state] = Object.fromEntries(REQUIRED_QUERY_OPERATIONS
+        .map((name) => [name, [...operations[name].rawSamplesMs]]));
       const nativeMemory = native.measurement?.concurrentMemory;
       const javascriptPeak = javascript.measurement?.memoryAfter?.node?.peakRssBytes;
       if (!Array.isArray(nativeMemory?.rawCombinedRssBytes)
@@ -158,15 +175,28 @@ function validateProfiles(directory, benchmarkRepositories, binaryBindings) {
       }
       memoryNoWorse &&= nativeMemory.maximumConcurrentCombinedRssBytes <= javascriptPeak;
     }
+    const benchmarkRepository = benchmarkRepositories.get(profile.repository);
+    queryRawSamples.push({
+      repository: profile.repository,
+      repositoryRevision: benchmarkRepository.revision,
+      sourceDigest: benchmarkRepository.sourceDigest,
+      states: retainedStates,
+    });
   }
   if (repositories.size < 5 || repositories.size !== benchmarkRepositories.size
     || [...benchmarkRepositories.keys()].some((repository) => !repositories.has(repository))) {
     throw new Error("Profiles must exactly cover every repository in the five-repository benchmark.");
   }
+  const operationP95Ms = Object.fromEntries(REQUIRED_QUERY_OPERATIONS
+    .map((name) => [name, Math.max(...operationCellP95[name])]));
+  const coreOperationP95 = REQUIRED_QUERY_OPERATIONS
+    .filter((name) => name !== "resolveContextRef")
+    .map((name) => operationP95Ms[name]);
   return {
-    coreQueryP95Ms: percentile(coreP95, 95),
-    contextRefP95Ms: percentile(contextP95, 95),
-    databaseOpenDoesNotDeserializeFullGraph: true,
+    operationP95Ms,
+    coreQueryP95Ms: Math.max(...coreOperationP95),
+    contextRefP95Ms: operationP95Ms.resolveContextRef,
+    queryRawSamples: queryRawSamples.sort((left, right) => left.repository.localeCompare(right.repository)),
     memoryPeakNoWorseThanJavaScript: memoryNoWorse,
   };
 }
@@ -226,16 +256,15 @@ function platformBinaryBindings(assets, manifest, execFileSync = childProcess.ex
   return bindings;
 }
 
-function buildPacket({ root, candidate, benchmark, profiles, assets, execFileSync }) {
+function buildPacket({ root, candidate, benchmark, profiles, assets, databaseOpenEvidence, execFileSync }) {
   const manifest = readJson(path.join(root, "package.json"));
   const verifiedBenchmark = JSON.parse(JSON.stringify(benchmark));
   const binaries = platformBinaryBindings(assets, manifest, execFileSync);
   const benchmarkRepositories = validateBenchmark(verifiedBenchmark, binaries);
   const performance = validateProfiles(profiles, benchmarkRepositories, binaries);
-  if (candidate?.performanceAssertions?.databaseOpenDoesNotDeserializeFullGraph !== true
-    || typeof candidate.performanceAssertions.evidenceReference !== "string"
-    || !candidate.performanceAssertions.evidenceReference) {
-    throw new Error("Database-open behavior requires an explicit evidence reference.");
+  const databaseOpen = loadDatabaseOpenEvidence(databaseOpenEvidence, binaries);
+  if (candidate?.performanceAssertions?.databaseOpenEvidenceSha256 !== databaseOpen.sha256) {
+    throw new Error("Candidate database-open evidence SHA-256 does not match the validated evidence file.");
   }
   const evidence = {
     ...candidate,
@@ -243,6 +272,10 @@ function buildPacket({ root, candidate, benchmark, profiles, assets, execFileSyn
     performance: {
       ...performance,
       databaseOpenDoesNotDeserializeFullGraph: true,
+      databaseOpenEvidence: {
+        sha256: databaseOpen.sha256,
+        evidence: databaseOpen.evidence,
+      },
     },
   };
   const decision = evaluateNativeDefaultRollout(evidence);
@@ -273,9 +306,10 @@ if (require.main === module) {
   const benchmarkFile = argument(argv, "--benchmark");
   const profiles = argument(argv, "--profiles");
   const assets = argument(argv, "--assets");
+  const databaseOpenEvidence = argument(argv, "--database-open-evidence");
   const output = argument(argv, "--output");
-  if (![candidateFile, benchmarkFile, profiles, assets, output].every(Boolean)) {
-    throw new Error("Usage: build-native-rollout-evidence --candidate <json> --benchmark <json> --profiles <directory> --assets <directory> --output <json>.");
+  if (![candidateFile, benchmarkFile, profiles, assets, databaseOpenEvidence, output].every(Boolean)) {
+    throw new Error("Usage: build-native-rollout-evidence --candidate <json> --benchmark <json> --profiles <directory> --assets <directory> --database-open-evidence <json> --output <json>.");
   }
   const packet = buildPacket({
     root,
@@ -283,6 +317,7 @@ if (require.main === module) {
     benchmark: readJson(path.resolve(benchmarkFile)),
     profiles: path.resolve(profiles),
     assets: path.resolve(assets),
+    databaseOpenEvidence: path.resolve(databaseOpenEvidence),
   });
   fs.writeFileSync(path.resolve(output), `${JSON.stringify(packet, null, 2)}\n`);
   process.stdout.write(`Wrote complete native rollout evidence to ${path.resolve(output)}.\n`);
@@ -291,6 +326,7 @@ if (require.main === module) {
 module.exports = {
   buildPacket,
   platformBinaryBindings,
+  REQUIRED_QUERY_OPERATIONS,
   validateBenchmark,
   validateProfiles,
 };

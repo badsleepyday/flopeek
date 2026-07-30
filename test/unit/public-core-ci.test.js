@@ -15,6 +15,8 @@ test("public Core CI proves package and clean-room behavior on the declared Node
   assert.match(workflow, /node:\s*\[20, 22\]/);
   assert.match(workflow, /runs-on:\s*\$\{\{ matrix\.os \}\}/);
   assert.match(workflow, /uses: dtolnay\/rust-toolchain@stable/);
+  assert.match(workflow, /uses: actions\/setup-dotnet@v4/);
+  assert.match(workflow, /dotnet-version:\s*'10\.0\.x'/);
   assert.match(publicSourceRunner, /lanes\["public-source"\]\.unshift\("test\/unit\/native-inventory-parity\.test\.js"\)/);
   for (const command of ["npm run test:native-core", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --version", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-facts .", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-graph .", "node scripts/verify-branch-name.js", "npm run verify:core-baseline", "npm run test:public-source", "npm run test:package", "npm run audit:package", "npm run verify:clean-room"]) {
     assert.match(workflow, new RegExp(`- run: ${command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
@@ -27,23 +29,30 @@ test("tagged Core releases verify source and package evidence before creating a 
   const workflow = readWorkflow("release.yml");
   assert.match(workflow, /tags:\s*\n\s*- "v\*"/);
   assert.match(workflow, /fetch-depth:\s*0/);
-  assert.match(workflow, /npm run verify:github-release -- --tag "\$GITHUB_REF_NAME"/);
+  assert.match(workflow, /npm run verify:github-release -- --tag "\$GITHUB_REF_NAME" --manifest release-assets\/native-release-manifest\.json/);
   for (const command of ["npm run test:public-source", "npm run test:package", "npm run audit:package", "npm run verify:clean-room"]) {
     assert.match(workflow, new RegExp(`- run: ${command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   }
   assert.match(workflow, /prepare-native-rollout-evidence\.js --inputs packaging\/native-rollout-inputs --assets release-assets/);
   assert.match(workflow, /sha256sum main-dist\/native-rollout-evidence\.json > main-dist\/native-rollout-evidence\.sha256/);
   assert.match(workflow, /go-version:\s*'1\.26\.4'/);
+  assert.match(workflow, /dotnet-version:\s*'10\.0\.x'/);
   assert.match(workflow, /npm run check:go-stdlib/);
   assert.match(workflow, /node scripts\/verify-clean-room-native-platform\.js --platform-tarball/);
   assert.match(workflow, /name: Verify complete release set before publication/);
   assert.match(workflow, /npm run verify:npm-publication/);
-  assert.match(workflow, /npm run verify:github-release-preflight -- --tag "\$GITHUB_REF_NAME"/);
+  assert.match(workflow, /build-native-release-manifest\.js[\s\S]*--output main-dist\/native-release-manifest\.json/);
+  assert.match(workflow, /npm run verify:github-release-preflight --[\s\S]*--tag "\$GITHUB_REF_NAME"[\s\S]*--manifest main-dist\/native-release-manifest\.json/);
+  assert.ok(
+    workflow.indexOf("build-native-release-manifest.js")
+      < workflow.indexOf("npm run verify:github-release-preflight"),
+    "the exact release manifest must exist before owner approval is checked",
+  );
   assert.match(workflow, /node scripts\/verify-native-release-set\.js --assets release-assets/);
   assert.match(workflow, /node scripts\/publish-npm-release-set\.js --assets release-assets --staging-tag "\$staging_tag"/);
   assert.match(workflow, /name: Anonymous registry clean-room install of the exact main package/);
   assert.match(workflow, /name: Move public dist-tags only after clean-room verification/);
-  assert.match(workflow, /npm run verify:published-release -- --tag "\$GITHUB_REF_NAME"/);
+  assert.match(workflow, /npm run verify:published-release -- --tag "\$GITHUB_REF_NAME" --manifest release-assets\/native-release-manifest\.json/);
   assert.match(workflow, /node scripts\/cleanup-npm-staging-tags\.js --staging-tag "\$staging_tag"/);
   assert.doesNotMatch(workflow, /\|\|\s*true/);
   assert.match(workflow, /needs: \[native-binaries, publish-npm-release\]/);

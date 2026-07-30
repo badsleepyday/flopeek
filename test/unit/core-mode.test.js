@@ -9,6 +9,39 @@ const { createConfiguredCoreClient, createSurfaceCoreClient, createSurfaceCoreRu
 const { createJsCoreClient } = require("../../src/js-core-client");
 
 function completeEvidence() {
+  const databaseOpenEvidence = {
+    schemaVersion: "flopeek-native-database-open-evidence/v1",
+    platformPackage: "@flopeek/native-linux-x64-gnu",
+    repositoryRevision: "b".repeat(40),
+    sourceDigest: "c".repeat(64),
+    binarySha256: "a".repeat(64),
+    operation: "open-current-graph",
+    fullPayloadDeserialized: false,
+    observations: {
+      schemaVersion: "flopeek-native-database-open-observation/v1",
+      sqliteOperations: ["current-complete-graph-metadata"],
+      currentGraphFound: true,
+      graphPayloadRowsRead: 0,
+      graphPayloadBytesDeserialized: 0,
+    },
+  };
+  const operationP95Ms = {
+    findNodes: 49,
+    projectOverview: 49,
+    contextCard: 49,
+    flowProjection: 49,
+    resolveContextRef: 19,
+  };
+  const queryRawSamples = Array.from({ length: 5 }, (_, index) => ({
+    repository: `repo-${index + 1}`,
+    repositoryRevision: "d".repeat(40),
+    sourceDigest: "e".repeat(64),
+    states: Object.fromEntries(["cold", "unchanged", "oneFileChange"].map((state) => [
+      state,
+      Object.fromEntries(Object.entries(operationP95Ms)
+        .map(([operation, value]) => [operation, Array(101).fill(value)])),
+    ])),
+  }));
   return {
     backendParity: {
       schemaVersion: "flopeek-native-backend-parity/v1",
@@ -38,7 +71,11 @@ function completeEvidence() {
         repositoryRevision: "b".repeat(40),
         sourceDigest: "c".repeat(64),
       },
-      rows: Array.from({ length: 5 }, (_, index) => ({ repository: `repo-${index + 1}`, states: {
+      rows: Array.from({ length: 5 }, (_, index) => ({
+      repository: `repo-${index + 1}`,
+      repositoryRevision: "d".repeat(40),
+      sourceDigest: "e".repeat(64),
+      states: {
       cold: { jsSamplesMs: [1, 1, 1], nativeSamplesMs: [1, 1, 1], speedupNativeVsJavaScript: 1 },
       unchanged: { jsSamplesMs: [1, 1, 1], nativeSamplesMs: [1, 1, 1], speedupNativeVsJavaScript: 1 },
       oneFileChange: {
@@ -49,9 +86,12 @@ function completeEvidence() {
       } })),
     },
     performance: {
+      operationP95Ms,
       coreQueryP95Ms: 49,
       contextRefP95Ms: 19,
+      queryRawSamples,
       databaseOpenDoesNotDeserializeFullGraph: true,
+      databaseOpenEvidence: { sha256: "f".repeat(64), evidence: databaseOpenEvidence },
       memoryPeakNoWorseThanJavaScript: true,
     },
   };

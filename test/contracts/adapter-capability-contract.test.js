@@ -17,11 +17,13 @@ test("graph, agent context, and capability API expose the same adapter registry 
     const graph = scanRepository(root);
     const context = projectView(graph).aiContext;
     assert.deepEqual(context.adapterCapabilities, graph.analysis.adapterCapabilities);
+    assert.deepEqual(context.executionAdapterCapabilities, graph.analysis.executionAdapterCapabilities);
     app = await startServer({ root, port: 0 });
     const response = await fetch(`http://127.0.0.1:${app.port}/api/capabilities`);
     assert.equal(response.status, 200);
     const api = await response.json();
     assert.deepEqual(api.adapterCapabilities, graph.analysis.adapterCapabilities);
+    assert.deepEqual(api.executionAdapterCapabilities, graph.analysis.executionAdapterCapabilities);
     assert.equal(api.adapterCapabilities.schema, "flopeek-adapter-capabilities/v2");
     const csharp = api.adapterCapabilities.adapters.find((adapter) => adapter.id === "csharp");
     assert.equal(csharp.parser, "csharp-roslyn");

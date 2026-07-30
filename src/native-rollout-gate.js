@@ -8,6 +8,13 @@ const REQUIRED_ONE_FILE_SPEEDUP = 2;
 const REQUIRED_ONE_FILE_REPOSITORIES = 4;
 const NATIVE_BACKEND_PARITY_SCHEMA = "flopeek-native-backend-parity/v1";
 const NATIVE_BENCHMARK_SCHEMA = "flopeek-native-core-client-benchmark/v2";
+const REQUIRED_QUERY_OPERATION_P95_MS = Object.freeze({
+  findNodes: 50,
+  projectOverview: 50,
+  contextCard: 50,
+  flowProjection: 50,
+  resolveContextRef: 20,
+});
 const REQUIRED_NATIVE_ADAPTERS = Object.freeze(getAdapterRegistry().adapters
   .filter((adapter) => adapter.capabilities.structure !== "inventory-only")
   .map((adapter) => adapter.id)
@@ -48,6 +55,64 @@ function hasNativeBackendAuthority(value) {
 
 function finiteNonNegative(value) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function percentile(values, quantile) {
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.min(sorted.length - 1, Math.ceil((quantile / 100) * sorted.length) - 1)];
+}
+
+function measuredQueryOperationP95(performance, benchmark) {
+  const profiles = performance?.queryRawSamples;
+  const expectedRepositories = new Map(benchmarkRows(benchmark)
+    .map((row) => [row?.repository, row]));
+  if (!Array.isArray(profiles) || profiles.length < MINIMUM_BENCHMARK_REPOSITORIES
+    || profiles.length !== expectedRepositories.size
+    || new Set(profiles.map((profile) => profile?.repository)).size !== profiles.length) return null;
+  const values = Object.fromEntries(Object.keys(REQUIRED_QUERY_OPERATION_P95_MS)
+    .map((operation) => [operation, []]));
+  for (const profile of profiles) {
+    const expected = expectedRepositories.get(profile?.repository);
+    if (typeof profile?.repository !== "string" || !profile.repository.trim()
+      || !expected
+      || profile.repositoryRevision !== expected.repositoryRevision
+      || profile.sourceDigest !== expected.sourceDigest
+      || !profile.states || typeof profile.states !== "object") return null;
+    for (const state of ["cold", "unchanged", "oneFileChange"]) {
+      const stateSamples = profile.states[state];
+      if (!stateSamples || JSON.stringify(Object.keys(stateSamples).sort())
+        !== JSON.stringify(Object.keys(REQUIRED_QUERY_OPERATION_P95_MS).sort())) return null;
+      for (const operation of Object.keys(REQUIRED_QUERY_OPERATION_P95_MS)) {
+        const samples = stateSamples[operation];
+        if (!Array.isArray(samples) || samples.length !== 101
+          || !samples.every(finiteNonNegative)) return null;
+        values[operation].push(percentile(samples, 95));
+      }
+    }
+  }
+  return Object.fromEntries(Object.entries(values)
+    .map(([operation, cellP95]) => [operation, Math.max(...cellP95)]));
+}
+
+function hasDatabaseOpenEvidence(performance) {
+  const binding = performance?.databaseOpenEvidence;
+  const evidence = binding?.evidence;
+  const observations = evidence?.observations;
+  return performance?.databaseOpenDoesNotDeserializeFullGraph === true
+    && /^[a-f0-9]{64}$/u.test(binding?.sha256 || "")
+    && evidence?.schemaVersion === "flopeek-native-database-open-evidence/v1"
+    && evidence.operation === "open-current-graph"
+    && evidence.fullPayloadDeserialized === false
+    && /^[a-f0-9]{64}$/u.test(evidence.binarySha256 || "")
+    && /^[a-f0-9]{40,64}$/u.test(evidence.repositoryRevision || "")
+    && /^[a-f0-9]{64}$/u.test(evidence.sourceDigest || "")
+    && observations?.schemaVersion === "flopeek-native-database-open-observation/v1"
+    && observations.currentGraphFound === true
+    && observations.graphPayloadRowsRead === 0
+    && observations.graphPayloadBytesDeserialized === 0
+    && Array.isArray(observations.sqliteOperations)
+    && observations.sqliteOperations.length === 1
+    && observations.sqliteOperations[0] === "current-complete-graph-metadata";
 }
 
 function benchmarkRows(report) {
@@ -151,9 +216,26 @@ function evaluateNativeDefaultRollout(evidence = {}) {
   if (oneFileAcceleratedRepositories < REQUIRED_ONE_FILE_REPOSITORIES) reasons.push("one-file-change-acceleration-insufficient");
 
   const performance = evidence.performance || {};
-  if (!finiteNonNegative(performance.coreQueryP95Ms) || performance.coreQueryP95Ms >= 50) reasons.push("core-query-p95-not-proven");
-  if (!finiteNonNegative(performance.contextRefP95Ms) || performance.contextRefP95Ms >= 20) reasons.push("context-ref-p95-not-proven");
-  if (performance.databaseOpenDoesNotDeserializeFullGraph !== true) reasons.push("database-open-behavior-not-proven");
+  const operationP95Ms = performance.operationP95Ms || {};
+  const measuredOperationP95Ms = measuredQueryOperationP95(performance, evidence.benchmark);
+  if (!measuredOperationP95Ms) reasons.push("query-raw-samples-not-proven");
+  for (const [operation, threshold] of Object.entries(REQUIRED_QUERY_OPERATION_P95_MS)) {
+    const value = operationP95Ms[operation];
+    if (!finiteNonNegative(value) || value >= threshold
+      || measuredOperationP95Ms?.[operation] !== value) {
+      reasons.push(`query-operation-p95-not-proven:${operation}`);
+    }
+  }
+  const coreMaximum = Math.max(...Object.keys(REQUIRED_QUERY_OPERATION_P95_MS)
+    .filter((operation) => operation !== "resolveContextRef")
+    .map((operation) => operationP95Ms[operation]));
+  if (!finiteNonNegative(performance.coreQueryP95Ms)
+    || performance.coreQueryP95Ms !== coreMaximum
+    || performance.coreQueryP95Ms >= 50) reasons.push("core-query-p95-not-proven");
+  if (!finiteNonNegative(performance.contextRefP95Ms)
+    || performance.contextRefP95Ms !== operationP95Ms.resolveContextRef
+    || performance.contextRefP95Ms >= 20) reasons.push("context-ref-p95-not-proven");
+  if (!hasDatabaseOpenEvidence(performance)) reasons.push("database-open-behavior-not-proven");
   if (performance.memoryPeakNoWorseThanJavaScript !== true) reasons.push("memory-peak-not-proven");
 
   return Object.freeze({
@@ -182,6 +264,7 @@ module.exports = {
   REQUIRED_ONE_FILE_SPEEDUP,
   NATIVE_BACKEND_PARITY_SCHEMA,
   NATIVE_BENCHMARK_SCHEMA,
+  REQUIRED_QUERY_OPERATION_P95_MS,
   REQUIRED_NATIVE_ADAPTERS,
   evaluateNativeDefaultRollout,
 };

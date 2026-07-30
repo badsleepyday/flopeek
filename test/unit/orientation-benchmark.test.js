@@ -2,6 +2,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const test = require("node:test");
@@ -11,10 +12,23 @@ const ROOT = path.resolve(__dirname, "..", "..");
 const CASES_FILE = path.join(ROOT, "benchmarks", "orientation-cases.json");
 const DEFINITION = loadOrientationCases(CASES_FILE);
 let report;
+let suiteRoot;
 
 test.before(() => {
-  report = evaluateOrientation(ROOT, DEFINITION, { condition: "both" });
+  suiteRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-orientation-suite-"));
+  for (const repository of DEFINITION.repositories) {
+    const source = path.join(ROOT, ...repository.path.split("/"));
+    const target = path.join(suiteRoot, ...repository.path.split("/"));
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.cpSync(source, target, {
+      recursive: true,
+      filter: (entry) => ![".flopeek", ".flowpeek"].includes(path.basename(entry)),
+    });
+  }
+  report = evaluateOrientation(suiteRoot, DEFINITION, { condition: "both" });
 });
+
+test.after(() => fs.rmSync(suiteRoot, { recursive: true, force: true }));
 
 test("orientation benchmark separates direct retrieval, Flopeek evidence, and unrun studies", () => {
   assert.equal(report.schemaVersion, "flopeek-orientation-comparison/v2");
@@ -57,9 +71,10 @@ test("orientation reports disclose context accounting and return no source bodie
   assert.deepEqual(report.flopeek.summary.timing.preparationPhases.map((item) => item.phase), ["scope-and-identity", "source-analysis", "resolver-context", "graph-assembly"]);
   const serialized = JSON.stringify(report);
   assert.equal(serialized.includes(ROOT), false);
+  assert.equal(serialized.includes(suiteRoot), false);
   assert.equal(serialized.includes("export async function GET"), false);
   assert.equal(serialized.includes("from payments.service import"), false);
-  for (const repository of DEFINITION.repositories) assert.equal(fs.existsSync(path.join(ROOT, ...repository.path.split("/"), ".flopeek")), false);
+  for (const repository of DEFINITION.repositories) assert.equal(fs.existsSync(path.join(suiteRoot, ...repository.path.split("/"), ".flopeek")), false);
 });
 
 test("orientation case validation rejects source drift and paths outside the suite", () => {
@@ -68,13 +83,13 @@ test("orientation case validation rejects source drift and paths outside the sui
   assert.throws(() => evaluateOrientation(ROOT, drifted, { condition: "baseline" }), /tree-sha256 mismatch/);
   const escaped = structuredClone(DEFINITION);
   escaped.repositories[0].path = "../outside";
-  assert.throws(() => normalizeDefinition(escaped, ROOT), /outside the selected suite root/);
+  assert.throws(() => normalizeDefinition(escaped, suiteRoot), /outside the selected suite root/);
   assert.equal(treeSha256(path.join(ROOT, "test", "fixtures", "legacy-handoff")), DEFINITION.repositories[0].sourcePin.value);
 });
 
 test("orientation CLI emits the versioned Flopeek report", () => {
   const cli = path.join(ROOT, "src", "cli.js");
-  const result = spawnSync(process.execPath, [cli, "evaluate", "orientation", ROOT, "--cases", CASES_FILE, "--condition", "flopeek", "--format", "json"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+  const result = spawnSync(process.execPath, [cli, "evaluate", "orientation", suiteRoot, "--cases", CASES_FILE, "--condition", "flopeek", "--format", "json"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout);
   assert.equal(payload.schemaVersion, "flopeek-orientation-benchmark/v2");

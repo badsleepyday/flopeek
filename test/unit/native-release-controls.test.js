@@ -1,12 +1,14 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const { execFileSync: run } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const {
   platformBinaryBindings,
+  REQUIRED_QUERY_OPERATIONS,
   validateBenchmark,
   validateProfiles,
 } = require("../../scripts/build-native-rollout-evidence");
@@ -18,17 +20,42 @@ const {
   probeVerifiedNativeRuntime,
 } = require("../../src/native-rollout-evidence");
 const { NATIVE_PLATFORM_TARGETS } = require("../../src/native-platform-targets");
+const { repositoryBinding } = require("../../scripts/benchmark-native-core-client");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 
-test("bundled rollout evidence is version-bound and honestly incomplete", () => {
+test("release evidence source binding accepts only a clean committed repository", (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-release-source-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  run("git", ["init", "--quiet"], { cwd: root });
+  run("git", ["config", "user.name", "Flopeek Test"], { cwd: root });
+  run("git", ["config", "user.email", "test@flopeek.invalid"], { cwd: root });
+  fs.writeFileSync(path.join(root, "source.txt"), "committed\n");
+  run("git", ["add", "source.txt"], { cwd: root });
+  run("git", ["commit", "--quiet", "-m", "fixture"], { cwd: root });
+  const clean = repositoryBinding(root);
+  assert.match(clean.repositoryRevision, /^[a-f0-9]{40}$/u);
+  assert.match(clean.sourceDigest, /^[a-f0-9]{64}$/u);
+  fs.appendFileSync(path.join(root, "source.txt"), "dirty\n");
+  assert.throws(() => repositoryBinding(root), /must be clean and revision-bound/);
+});
+
+test("bundled rollout evidence is version-bound and fail-closed in either release state", () => {
   const result = loadBundledNativeRolloutEvidence(ROOT);
-  assert.equal(result.complete, false);
-  assert.equal(result.packet.status, "incomplete");
-  assert.equal(result.packet.binding.binaries, null);
-  assert.equal(result.packet.binding.repositoryRevision, null);
-  assert.equal(result.packet.binding.sourceDigest, null);
-  assert.deepEqual(result.evidence, {});
+  assert.equal(result.packet.binding.packageName, "flopeek");
+  if (result.packet.status === "incomplete") {
+    assert.equal(result.complete, false);
+    assert.equal(result.packet.binding.binaries, null);
+    assert.equal(result.packet.binding.repositoryRevision, null);
+    assert.equal(result.packet.binding.sourceDigest, null);
+    assert.deepEqual(result.evidence, {});
+  } else {
+    assert.equal(result.complete, true);
+    assert.ok(result.packet.binding.binaries);
+    assert.ok(result.packet.binding.repositoryRevision);
+    assert.ok(result.packet.binding.sourceDigest);
+    assert.ok(result.evidence.performance.queryRawSamples.length >= 5);
+  }
 });
 
 test("release evidence preparation is fail-closed for absent or partial raw inputs", (context) => {
@@ -278,10 +305,8 @@ test("rollout profiles must use the exact release binary and compiler", (context
       },
       measurement: {
         queryLatency: {
-          operations: {
-            findNodes: { rawSamplesMs: Array(101).fill(1) },
-            resolveContextRef: { rawSamplesMs: Array(101).fill(1) },
-          },
+          operations: Object.fromEntries(REQUIRED_QUERY_OPERATIONS
+            .map((operation) => [operation, { rawSamplesMs: Array(101).fill(1) }])),
         },
         concurrentMemory: {
           rawCombinedRssBytes: [100, 101],
@@ -304,12 +329,39 @@ test("rollout profiles must use the exact release binary and compiler", (context
     }));
   }
   const bindings = { "@flopeek/native-linux-x64-gnu": binding };
-  assert.deepEqual(validateProfiles(directory, repositories, bindings), {
+  const profileResult = validateProfiles(directory, repositories, bindings);
+  assert.deepEqual({
+    ...profileResult,
+    queryRawSamples: undefined,
+  }, {
+    operationP95Ms: {
+      findNodes: 1,
+      projectOverview: 1,
+      contextCard: 1,
+      flowProjection: 1,
+      resolveContextRef: 1,
+    },
     coreQueryP95Ms: 1,
     contextRefP95Ms: 1,
-    databaseOpenDoesNotDeserializeFullGraph: true,
+    queryRawSamples: undefined,
     memoryPeakNoWorseThanJavaScript: true,
   });
+  assert.equal(profileResult.queryRawSamples.length, 5);
+  assert.equal(profileResult.queryRawSamples[0].states.cold.findNodes.length, 101);
+
+  const slowCell = JSON.parse(fs.readFileSync(path.join(directory, "repo-4.json"), "utf8"));
+  slowCell.states.oneFileChange.native.measurement.queryLatency.operations.flowProjection.rawSamplesMs = Array(101).fill(200);
+  fs.writeFileSync(path.join(directory, "repo-4.json"), JSON.stringify(slowCell));
+  const slowResult = validateProfiles(directory, repositories, bindings);
+  assert.equal(slowResult.operationP95Ms.flowProjection, 200);
+  assert.equal(slowResult.coreQueryP95Ms, 200);
+  fs.writeFileSync(path.join(directory, "repo-4.json"), JSON.stringify({
+    ...slowCell,
+    states: {
+      ...slowCell.states,
+      oneFileChange: state("repo-4"),
+    },
+  }));
 
   const tampered = JSON.parse(fs.readFileSync(path.join(directory, "repo-0.json"), "utf8"));
   tampered.states.cold.native.machine.binarySha256 = "e".repeat(64);

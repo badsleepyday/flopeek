@@ -29,6 +29,7 @@ use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -283,10 +284,14 @@ fn with_persistent_session_connection<T>(
         &mut rusqlite::Connection,
     ) -> Result<T, NativeProtocolError>,
 ) -> Result<T, NativeProtocolError> {
-    let key = root.to_string_lossy().to_string();
+    // macOS commonly exposes /var and /private/var aliases for the same
+    // temporary directory. Key the session cache by filesystem identity so
+    // one project cannot acquire duplicate SQLite handles through aliases.
+    let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let key = canonical_root.to_string_lossy().to_string();
     let mut connection = match session.persistent_connections.remove(&key) {
         Some(connection) => connection,
-        None => open_native_store(root).map_err(|error| NativeProtocolError {
+        None => open_native_store(&canonical_root).map_err(|error| NativeProtocolError {
             code: "store-initialize-failed",
             message: error.to_string(),
         })?,
@@ -1345,7 +1350,7 @@ fn native_js_git_metadata(root: &Path) -> Value {
 /// The adapter contract is owned once at the repository root.  Rust embeds the
 /// same bytes that the JavaScript scanner loads, so a release cannot advertise
 /// divergent adapter capabilities across the two execution paths.
-fn native_adapter_registry() -> Value {
+fn adapter_registry_for_implementation(implementation: &str) -> Value {
     let mut registry: Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../contracts/adapter-capabilities.json"
@@ -1359,14 +1364,14 @@ fn native_adapter_registry() -> Value {
             if let Some(capability) = object.get("productCapability").cloned() {
                 object.insert("capabilities".to_string(), capability);
             }
-            let javascript = object
+            let selected = object
                 .get("implementations")
-                .and_then(|value| value.get("javascript"))
+                .and_then(|value| value.get(implementation))
                 .and_then(Value::as_object)
                 .cloned();
-            if let Some(javascript) = javascript {
+            if let Some(selected) = selected {
                 for field in ["parser", "availability", "requiredToolchain"] {
-                    if let Some(value) = javascript.get(field) {
+                    if let Some(value) = selected.get(field) {
                         object.insert(field.to_string(), value.clone());
                     }
                 }
@@ -1374,6 +1379,14 @@ fn native_adapter_registry() -> Value {
         }
     }
     registry
+}
+
+fn native_adapter_registry() -> Value {
+    adapter_registry_for_implementation("javascript")
+}
+
+fn native_execution_adapter_registry() -> Value {
+    adapter_registry_for_implementation("native")
 }
 
 fn native_js_batch_envelope(
@@ -1554,12 +1567,13 @@ fn native_js_batch_envelope_for_package_with_records(
         "changedPaths":&status.changed_paths,
     });
     let adapter_registry = native_adapter_registry();
+    let execution_adapter_registry = native_execution_adapter_registry();
     let project_identity = native_project_identity_value(&status.project_identity);
     let mut public_graph_context = json!({
         "schemaVersion":5,"generatedAt":generated_at,
         "project":{"root":status.project_root,"name":project_name,"projectId":status.project_identity.project_id,"identity":project_identity,"git":git},
         "state":{"graphVersion":0,"materialFingerprint":Value::Null,"sourceFingerprint":source_fingerprint,"sourceRevision":git["revision"],"updatedAt":generated_at,"status":"unpersisted"},
-        "analysis":{"mode":"deterministic","refresh":refresh,"codeInterpretation":"AST-only for registered language adapters","unparsedPolicy":"inventory-only; no dependency or flow is inferred","coverage":coverage,"nativeBoundedPackagePath":package_path,"repositoryScope":{"schemaVersion":1,"source":scope.source,"configPath":if scope.source == "config" { Value::String(".flopeek/config.json".to_string()) } else { Value::Null },"sourceRoots":scope.source_roots,"testRoots":scope.test_roots,"fixtureRoots":scope.fixture_roots,"exclude":scope.exclude,"projectId":scope.project_id,"flowEntries":{"tests":scope.flow_entries_tests,"fixtures":scope.flow_entries_fixtures},"precedence":["excluded","fixture","test","generated","application"],"counts":{"application":status.source_scope_counts.get("application").copied().unwrap_or(0),"test":status.source_scope_counts.get("test").copied().unwrap_or(0),"fixture":status.source_scope_counts.get("fixture").copied().unwrap_or(0),"generated":status.source_scope_counts.get("generated").copied().unwrap_or(0),"excluded":status.source_scope_counts.get("excluded").copied().unwrap_or(0)}},"resolution":{"internal":["relative imports","$lib","@/","tsconfig/jsconfig baseUrl and paths","literal aliases from exported Vite/Webpack configs","safe static Vite/Webpack alias expressions (__dirname, root process.cwd(), path.resolve/join/dirname, new URL/import.meta.url, fileURLToPath(import.meta.url), and constants)","package.json imports aliases","static import/node/default/require/types package condition trees","declared npm and pnpm workspace package entries","static Yarn PnP JSON workspace package entries","Python relative and src-package imports","static Go module packages","static Rust crate/self/super modules in conventional Cargo src roots"],"limitations":["Arbitrary computed Vite/Webpack aliases, custom package conditions, unsupported pnpm YAML constructs, PHP Composer autoloading, Java framework wiring and non-local-static method dispatch, Rust custom Cargo targets and #[path] modules, Go build tags and duplicate package function names, and runtime module loading are not resolved."]},"calls":{"supported":["direct identifier calls to top-level local functions","direct identifier calls to named ES/CommonJS imports resolved inside the repository","direct identifier calls to top-level local Python functions and named ES/CommonJS imports resolved inside the repository","direct local Go function calls and aliased Go package selectors resolved inside the repository","direct local PHP function calls","direct local Rust functions and named crate/self/super imports","direct unqualified unique local static Java method calls"],"limitations":"Java instance/qualified/overloaded method dispatch, Rust macros, qualified module calls, trait dispatch, custom Cargo targets, and #[path] modules, default and namespace imports, PHP Composer/autoloaded functions, Python attribute calls, Go function values, ambiguous package functions, and unaliased package-name mismatches, dependency injection, callbacks, reflection, dynamic loading, and non-literal CommonJS requires are not resolved as call edges."},"entryPoints":status.entry_facts["entryPoints"],"adapterCapabilities":adapter_registry,"capabilities":adapter_registry["adapters"]},
+        "analysis":{"mode":"deterministic","refresh":refresh,"codeInterpretation":"AST-only for registered language adapters","unparsedPolicy":"inventory-only; no dependency or flow is inferred","coverage":coverage,"nativeBoundedPackagePath":package_path,"repositoryScope":{"schemaVersion":1,"source":scope.source,"configPath":if scope.source == "config" { Value::String(".flopeek/config.json".to_string()) } else { Value::Null },"sourceRoots":scope.source_roots,"testRoots":scope.test_roots,"fixtureRoots":scope.fixture_roots,"exclude":scope.exclude,"projectId":scope.project_id,"flowEntries":{"tests":scope.flow_entries_tests,"fixtures":scope.flow_entries_fixtures},"precedence":["excluded","fixture","test","generated","application"],"counts":{"application":status.source_scope_counts.get("application").copied().unwrap_or(0),"test":status.source_scope_counts.get("test").copied().unwrap_or(0),"fixture":status.source_scope_counts.get("fixture").copied().unwrap_or(0),"generated":status.source_scope_counts.get("generated").copied().unwrap_or(0),"excluded":status.source_scope_counts.get("excluded").copied().unwrap_or(0)}},"resolution":{"internal":["relative imports","$lib","@/","tsconfig/jsconfig baseUrl and paths","literal aliases from exported Vite/Webpack configs","safe static Vite/Webpack alias expressions (__dirname, root process.cwd(), path.resolve/join/dirname, new URL/import.meta.url, fileURLToPath(import.meta.url), and constants)","package.json imports aliases","static import/node/default/require/types package condition trees","declared npm and pnpm workspace package entries","static Yarn PnP JSON workspace package entries","Python relative and src-package imports","static Go module packages","static Rust crate/self/super modules in conventional Cargo src roots"],"limitations":["Arbitrary computed Vite/Webpack aliases, custom package conditions, unsupported pnpm YAML constructs, PHP Composer autoloading, Java framework wiring and non-local-static method dispatch, Rust custom Cargo targets and #[path] modules, Go build tags and duplicate package function names, and runtime module loading are not resolved."]},"calls":{"supported":["direct identifier calls to top-level local functions","direct identifier calls to named ES/CommonJS imports resolved inside the repository","direct identifier calls to top-level local Python functions and named ES/CommonJS imports resolved inside the repository","direct local Go function calls and aliased Go package selectors resolved inside the repository","direct local PHP function calls","direct local Rust functions and named crate/self/super imports","direct unqualified unique local static Java method calls"],"limitations":"Java instance/qualified/overloaded method dispatch, Rust macros, qualified module calls, trait dispatch, custom Cargo targets, and #[path] modules, default and namespace imports, PHP Composer/autoloaded functions, Python attribute calls, Go function values, ambiguous package functions, and unaliased package-name mismatches, dependency injection, callbacks, reflection, dynamic loading, and non-literal CommonJS requires are not resolved as call edges."},"entryPoints":status.entry_facts["entryPoints"],"adapterCapabilities":adapter_registry,"executionAdapterCapabilities":execution_adapter_registry,"capabilities":adapter_registry["adapters"]},
         "stats":{"scannedFiles":summary["scannedFiles"],"parsedFiles":summary["parsedFiles"],"inventoryOnlyFiles":summary["inventoryOnlyFiles"],"parseFailedFiles":summary["parseFailedFiles"]}
     });
     if let Some(package_path) = package_path {
@@ -4184,6 +4198,7 @@ fn native_agent_context_core(
             "Files marked inventory-only have no inferred dependencies or flows.",
         ],
         "adapterCapabilities": graph.pointer("/analysis/adapterCapabilities").cloned().unwrap_or(Value::Null),
+        "executionAdapterCapabilities": graph.pointer("/analysis/executionAdapterCapabilities").cloned().unwrap_or(Value::Null),
         "capabilities": graph.pointer("/analysis/capabilities").cloned().unwrap_or(Value::Null),
         "calls": graph.pointer("/analysis/calls").cloned().unwrap_or(Value::Null),
         "resolution": graph.pointer("/analysis/resolution").cloned().unwrap_or(Value::Null),
@@ -8118,6 +8133,51 @@ fn get_native_current_public_graph(params: &Value) -> Result<Value, NativeProtoc
     }))
 }
 
+// Open SQLite afresh and read only the current complete-graph metadata row.
+// This evidence path deliberately never calls complete_graph_payload or parses
+// payload_json, so its counters are structural properties of this exact code
+// path rather than caller-supplied attestations.
+fn get_native_database_open_evidence(params: &Value) -> Result<Value, NativeProtocolError> {
+    let root = project_root(params)?;
+    let project_id = params
+        .get("projectId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| NativeProtocolError {
+            code: "invalid-params",
+            message: "getNativeDatabaseOpenEvidence requires params.projectId.".to_string(),
+        })?;
+    let canonical_root = fs::canonicalize(&root).unwrap_or(root);
+    let connection = open_native_store(&canonical_root).map_err(|error| NativeProtocolError {
+        code: "store-read-failed",
+        message: error.to_string(),
+    })?;
+    let current = current_complete_graph(&connection, project_id)
+        .map_err(|error| NativeProtocolError {
+            code: "store-read-failed",
+            message: error.to_string(),
+        })?
+        .ok_or_else(|| NativeProtocolError {
+            code: "missing-native-graph",
+            message: "No complete native graph is available for database-open evidence."
+                .to_string(),
+        })?;
+    Ok(json!({
+        "schemaVersion": "flopeek-native-database-open-observation/v1",
+        "operation": "open-current-graph",
+        "fullPayloadDeserialized": false,
+        "nativeGraphVersion": current.graph_version,
+        "publicGraphVersion": current.public_graph_version,
+        "observations": {
+            "schemaVersion": "flopeek-native-database-open-observation/v1",
+            "sqliteOperations": ["current-complete-graph-metadata"],
+            "currentGraphFound": true,
+            "graphPayloadRowsRead": 0,
+            "graphPayloadBytesDeserialized": 0,
+        },
+    }))
+}
+
 fn get_native_public_graph_delta(params: &Value) -> Result<Value, NativeProtocolError> {
     let root = project_root(params)?;
     let project_id = params
@@ -8424,7 +8484,7 @@ fn handle_request(
                 request.request_id,
                 json!({
                     "implementation": "rust",
-                    "capabilities": ["health", "initialize", "nativeIncrementalManifest", "nativeBoundedDiscovery", "refreshNativeProject", "refreshNativePersistentProject", "nativeJsRecordCache", "nativeJsStructuralFacts", "submitStructuralFacts", "assembleStructuralGraph", "assembleNativePublicGraph", "assembleNativeFlows", "findNodes", "getNodeDetails", "getEntryFlows", "getRequestFlows", "createContextRef", "resolveNativeContextRef", "getNativeFlowLensCore", "getNativeNodeContextCard", "getNativeFlowContextCard", "getNativeScanStatus", "getNativeProjectOverviewCore", "getRelatedTests", "getChangeImpact", "persistStructuralGraph", "persistNativePublicGraph", "persistNativePublicGraphPatch", "refreshNativeSessionGraph", "refreshNativeJsSessionGraph", "getNativeStructuralDelta", "getNativePublicGraphSnapshot", "getNativeCurrentPublicGraph", "materializeNativeGraph", "getNativePublicGraphDelta", "getNativeChangedContexts", "shutdown"],
+                    "capabilities": ["health", "initialize", "nativeIncrementalManifest", "nativeBoundedDiscovery", "refreshNativeProject", "refreshNativePersistentProject", "nativeJsRecordCache", "nativeJsStructuralFacts", "submitStructuralFacts", "assembleStructuralGraph", "assembleNativePublicGraph", "assembleNativeFlows", "findNodes", "getNodeDetails", "getEntryFlows", "getRequestFlows", "createContextRef", "resolveNativeContextRef", "getNativeFlowLensCore", "getNativeNodeContextCard", "getNativeFlowContextCard", "getNativeScanStatus", "getNativeProjectOverviewCore", "getRelatedTests", "getChangeImpact", "persistStructuralGraph", "persistNativePublicGraph", "persistNativePublicGraphPatch", "refreshNativeSessionGraph", "refreshNativeJsSessionGraph", "getNativeStructuralDelta", "getNativePublicGraphSnapshot", "getNativeCurrentPublicGraph", "getNativeDatabaseOpenEvidence", "materializeNativeGraph", "getNativePublicGraphDelta", "getNativeChangedContexts", "shutdown"],
                     "storeAuthoritative": false,
                     "publicNodeIdsEnabled": true,
                     "sessionGraphHistory": {
@@ -8433,6 +8493,7 @@ fn handle_request(
                         "default": DEFAULT_NATIVE_SESSION_HISTORY,
                     },
                     "adapterCapabilities": native_adapter_registry(),
+                    "executionAdapterCapabilities": native_execution_adapter_registry(),
                 }),
             ),
             false,
@@ -8729,6 +8790,15 @@ fn handle_request(
                 false,
             ),
         },
+        "getNativeDatabaseOpenEvidence" => {
+            match get_native_database_open_evidence(&request.params) {
+                Ok(result) => (success_response(request.request_id, result), false),
+                Err(error) => (
+                    error_response(Some(request.request_id), error.code, error.message),
+                    false,
+                ),
+            }
+        }
         "materializeNativeGraph" => match materialize_native_graph(session, &request.params) {
             Ok(result) => (success_response(request.request_id, result), false),
             Err(error) => (
@@ -8758,7 +8828,7 @@ fn handle_request(
             error_response(
                 Some(request.request_id),
                 "unknown-method",
-                "Supported methods are health, initialize, nativeIncrementalManifest, nativeBoundedDiscovery, refreshNativeProject, refreshNativePersistentProject, nativeJsRecordCache, nativeJsStructuralFacts, submitStructuralFacts, assembleStructuralGraph, assembleNativePublicGraph, assembleNativeFlows, findNodes, getNodeDetails, getEntryFlows, getRequestFlows, createContextRef, resolveNativeContextRef, getNativeFlowLensCore, getNativeNodeContextCard, getNativeFlowContextCard, getNativeScanStatus, getNativeProjectOverviewCore, getRelatedTests, getChangeImpact, persistStructuralGraph, persistNativePublicGraph, persistNativePublicGraphPatch, refreshNativeSessionGraph, refreshNativeJsSessionGraph, getNativeStructuralDelta, getNativePublicGraphSnapshot, getNativeCurrentPublicGraph, materializeNativeGraph, getNativePublicGraphDelta, getNativeChangedContexts, and shutdown.",
+                "Supported methods are health, initialize, nativeIncrementalManifest, nativeBoundedDiscovery, refreshNativeProject, refreshNativePersistentProject, nativeJsRecordCache, nativeJsStructuralFacts, submitStructuralFacts, assembleStructuralGraph, assembleNativePublicGraph, assembleNativeFlows, findNodes, getNodeDetails, getEntryFlows, getRequestFlows, createContextRef, resolveNativeContextRef, getNativeFlowLensCore, getNativeNodeContextCard, getNativeFlowContextCard, getNativeScanStatus, getNativeProjectOverviewCore, getRelatedTests, getChangeImpact, persistStructuralGraph, persistNativePublicGraph, persistNativePublicGraphPatch, refreshNativeSessionGraph, refreshNativeJsSessionGraph, getNativeStructuralDelta, getNativePublicGraphSnapshot, getNativeCurrentPublicGraph, getNativeDatabaseOpenEvidence, materializeNativeGraph, getNativePublicGraphDelta, getNativeChangedContexts, and shutdown.",
             ),
             false,
         ),
@@ -8816,13 +8886,15 @@ pub fn serve_jsonl<R: BufRead, W: Write>(reader: R, mut writer: W) -> Result<(),
 mod tests {
     use super::{
         NATIVE_PROTOCOL_VERSION, NativeProtocolSession, NativeRequest,
-        STRUCTURAL_FACT_BATCH_SCHEMA, build_isolated_incremental_graph, handle_request,
-        hydrate_cached_query_batch, hydrate_session_query_batch, isolated_structural_change_path,
-        native_entry_source_nodes, parse_session_history_limit, refresh_native_js_session_graph,
+        STRUCTURAL_FACT_BATCH_SCHEMA, build_isolated_incremental_graph,
+        get_native_database_open_evidence, handle_request, hydrate_cached_query_batch,
+        hydrate_session_query_batch, isolated_structural_change_path, native_entry_source_nodes,
+        parse_session_history_limit, refresh_native_js_session_graph,
         refresh_native_persistent_project, refresh_native_session_graph, same_canonical_json,
         serve_jsonl, structural_facts_canonical_json, structural_facts_digest,
         structural_topology_digest,
     };
+    use crate::store::open_native_store;
     use crate::structural_graph::build_structural_graph;
     use serde_json::{Value, json};
     use sha2::{Digest, Sha256};
@@ -9206,6 +9278,54 @@ mod tests {
     }
 
     #[test]
+    fn database_open_evidence_reads_metadata_without_deserializing_graph_payload() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-database-open-evidence-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/main.ts"), "export const current = true;\n").unwrap();
+        let mut session = NativeProtocolSession::default();
+        let graph =
+            refresh_native_persistent_project(&mut session, &json!({ "projectRoot": root }))
+                .unwrap();
+        // Make any accidental payload deserialization fail loudly. The
+        // evidence endpoint must still succeed because opening the current
+        // graph reads only graph_versions metadata.
+        let connection = open_native_store(&root).unwrap();
+        assert!(
+            connection
+                .execute(
+                    "UPDATE native_public_graph_components SET payload_json = '{invalid-json'",
+                    [],
+                )
+                .unwrap()
+                > 0
+        );
+        drop(connection);
+        let evidence = get_native_database_open_evidence(&json!({
+            "projectRoot": root,
+            "projectId": graph["graphHandle"]["projectId"],
+        }))
+        .unwrap();
+        assert_eq!(
+            evidence["schemaVersion"],
+            "flopeek-native-database-open-observation/v1"
+        );
+        assert_eq!(evidence["operation"], "open-current-graph");
+        assert_eq!(evidence["fullPayloadDeserialized"], false);
+        assert_eq!(evidence["observations"]["currentGraphFound"], true);
+        assert_eq!(evidence["observations"]["graphPayloadRowsRead"], 0);
+        assert_eq!(evidence["observations"]["graphPayloadBytesDeserialized"], 0);
+        drop(session);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn persistent_native_project_explicit_no_op_reuses_the_session_snapshot_without_a_write() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -9502,6 +9622,23 @@ mod tests {
                 .unwrap()
                 .contains(&json!("refreshNativeJsSessionGraph"))
         );
+        let compatibility_csharp = result[0]["result"]["adapterCapabilities"]["adapters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|adapter| adapter["id"] == "csharp")
+            .unwrap();
+        let execution_csharp = result[0]["result"]["executionAdapterCapabilities"]["adapters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|adapter| adapter["id"] == "csharp")
+            .unwrap();
+        assert_eq!(compatibility_csharp["parser"], "csharp-roslyn");
+        assert_eq!(compatibility_csharp["requiredToolchain"], ".NET SDK");
+        assert_eq!(execution_csharp["parser"], "csharp-static-ast");
+        assert_eq!(execution_csharp["availability"], "bundled");
+        assert_eq!(execution_csharp["requiredToolchain"], Value::Null);
         assert_eq!(result[1]["result"]["accepted"], true);
     }
 

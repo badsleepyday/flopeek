@@ -41,7 +41,8 @@ function preparePacket({ root, inputs, assets }) {
   const candidate = path.join(inputs, "candidate.json");
   const benchmark = path.join(inputs, "benchmark.json");
   const profiles = path.join(inputs, "profiles");
-  const missing = [candidate, benchmark, profiles].filter((entry) => !fs.existsSync(entry));
+  const databaseOpenEvidence = path.join(inputs, "database-open-evidence.json");
+  const missing = [candidate, benchmark, profiles, databaseOpenEvidence].filter((entry) => !fs.existsSync(entry));
   if (missing.length) {
     throw new Error(`Native rollout inputs are partial; missing: ${missing.map((entry) => path.relative(inputs, entry)).join(", ")}.`);
   }
@@ -51,6 +52,7 @@ function preparePacket({ root, inputs, assets }) {
     benchmark: readJson(benchmark),
     profiles,
     assets,
+    databaseOpenEvidence,
   });
 }
 

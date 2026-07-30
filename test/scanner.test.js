@@ -18,6 +18,7 @@ const { createContextRef } = require("../src/context-card");
 const { createFlowProjection } = require("../src/flow-lens");
 const { createSemanticFlowSuggestion } = require("../src/semantic-flow-suggestion");
 const { createMcpServer } = require("../src/mcp");
+const { selectLatestSdk } = require("../src/csharp-adapter");
 
 // This is an integration-test scheduling deadline, not a product latency guarantee.
 const SSE_INTEGRATION_DEADLINE_MS = 15_000;
@@ -571,6 +572,31 @@ test("C# Roslyn analysis extracts usings, class declarations, and methods", () =
     assert.equal(file.analysis.status, "parsed");
     assert.deepEqual(service.methods, ["Submit", "Count"]);
     assert.ok(graph.nodes.some((node) => node.id === "external:System"));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("C# helper selects the newest SDK numerically instead of lexicographically", () => {
+  assert.equal(selectLatestSdk(["9.0.400", "10.0.100", "10.0.302", "preview"]), "10.0.302");
+  assert.equal(selectLatestSdk(["10.0.300-preview.1", "10.0.300"]), "10.0.300");
+  assert.equal(selectLatestSdk(["10.0.300", "10.0.301-preview.1"]), "10.0.301-preview.1");
+  assert.equal(selectLatestSdk(["invalid", "preview"]), null);
+});
+
+test("C# Roslyn reports malformed input with diagnostics without inventing symbols", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-csharp-malformed-"));
+  try {
+    write(root, "package.json", JSON.stringify({ name: "csharp-malformed" }));
+    write(root, "src/Broken.cs", "using Acme.Data;\npublic class Broken { public void Submit( {");
+    const graph = scanRepository(root);
+    const file = graph.nodes.find((node) => node.id === "file:src/Broken.cs");
+    if (!CSHARP_TOOLCHAIN_AVAILABLE) {
+      assert.equal(file.analysis.status, "inventory-only");
+      return;
+    }
+    assert.equal(file.analysis.parser, "csharp-static-ast");
+    assert.equal(file.analysis.status, "parsed-with-diagnostics");
+    assert.ok(file.analysis.diagnostics > 0);
+    assert.equal(graph.nodes.some((node) => node.id.includes(":function:")), false);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

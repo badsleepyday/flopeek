@@ -67,9 +67,12 @@ Status: `current`
   `<type>/<change-name>` SDLC branch names and rejects tool, vendor, account, or
   agent identity prefixes before running the remaining source and package gates.
 - Public Core releases are created from immutable tags on `main` only after the
-  source-owned GitHub release approval validates the exact tag/package identity,
-  recorded release evidence, and—outside alpha—the published npm dist-tag. The
-  approval record is an owner attestation with evidence references, not an
+  source-owned GitHub release approval validates the SHA-256 digest of an exact
+  release manifest. That manifest binds the main tarball, rollout-evidence
+  bytes, every native platform tarball, and every native binary digest to the
+  tag/package/source identity. Outside alpha, the published npm dist-tag is
+  validated as well. The approval record is an owner attestation with evidence
+  references, not an
   automated proof of human/provider independence. A separate private overlay
   consumes those tagged Core versions and must not copy Core source or become a
   second Core source of truth.
@@ -288,7 +291,16 @@ The serialized graph uses schema version 5:
 }
 ```
 
-`analysis.adapterCapabilities` contains the versioned `flopeek-adapter-capabilities/v1` registry. It is deterministic general adapter metadata and does not vary with the scanned repository. `analysis.coverage` remains separate: it reports what happened while parsing this repository and is not runtime coverage. The same registry identity is exposed through `/api/capabilities` and `get_agent_context`.
+`analysis.adapterCapabilities` contains the versioned
+`flopeek-adapter-capabilities/v2` compatibility registry. It is deterministic
+product-level metadata and does not vary with the scanned repository.
+`analysis.executionAdapterCapabilities` reports the implementation actually
+executing that graph. For example, JavaScript C# execution requires the .NET
+Roslyn helper while the native C# parser is bundled; the compatibility registry
+does not change, so compatibility digests remain stable. `analysis.coverage`
+remains separate: it reports what happened while parsing this repository and is
+not runtime coverage. Agent context and capability surfaces expose both
+registries.
 
 `schemaVersion` identifies the file format. `projectId` identifies the local project context. `state.graphVersion` identifies one material static graph state within that project, while `generatedAt` only records a scan time. The material fingerprint includes the deterministic graph payload and source content/revision evidence, excluding transient refresh/cache fields. Thus a source-only edit can advance the graph version while its delta correctly reports no topology change. See [ADR-002](docs/adr/ADR-002-graph-version.md).
 

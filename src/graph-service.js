@@ -466,6 +466,7 @@ function createAgentContextStatic(graph, projection, mode, scope, focusId) {
       "Files marked inventory-only have no inferred dependencies or flows.",
     ],
     adapterCapabilities: graph.analysis.adapterCapabilities,
+    executionAdapterCapabilities: graph.analysis.executionAdapterCapabilities,
     capabilities: graph.analysis.capabilities,
     calls: graph.analysis.calls,
     resolution: graph.analysis.resolution,

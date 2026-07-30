@@ -1,5 +1,6 @@
 "use strict";
 
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { adapterContractDigest } = require("./adapter-registry");
@@ -11,9 +12,85 @@ const {
 const { NATIVE_PROTOCOL_VERSION } = require("./native-protocol-client");
 
 const NATIVE_ROLLOUT_EVIDENCE_SCHEMA = "flopeek-native-rollout-evidence/v2";
+const NATIVE_DATABASE_OPEN_EVIDENCE_SCHEMA = "flopeek-native-database-open-evidence/v1";
+const NATIVE_DATABASE_OPEN_OBSERVATION_SCHEMA = "flopeek-native-database-open-observation/v1";
 
 function validSha256(value) {
   return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
+}
+
+function exactKeys(value, expected, field) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${field} must be an object.`);
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  if (JSON.stringify(actual) !== JSON.stringify(wanted)) {
+    throw new Error(`${field} must contain exactly: ${wanted.join(", ")}.`);
+  }
+}
+
+function validateDatabaseOpenEvidence(evidence, binaryBindings) {
+  exactKeys(evidence, [
+    "schemaVersion",
+    "platformPackage",
+    "repositoryRevision",
+    "sourceDigest",
+    "binarySha256",
+    "operation",
+    "fullPayloadDeserialized",
+    "observations",
+  ], "database-open evidence");
+  if (evidence.schemaVersion !== NATIVE_DATABASE_OPEN_EVIDENCE_SCHEMA) {
+    throw new Error(`Database-open evidence must use ${NATIVE_DATABASE_OPEN_EVIDENCE_SCHEMA}.`);
+  }
+  if (evidence.operation !== "open-current-graph" || evidence.fullPayloadDeserialized !== false) {
+    throw new Error("Database-open evidence must report the exact open-current-graph operation without full payload deserialization.");
+  }
+  if (typeof evidence.platformPackage !== "string" || !evidence.platformPackage
+    || !/^[a-f0-9]{40,64}$/u.test(evidence.repositoryRevision || "")
+    || !validSha256(evidence.sourceDigest)
+    || !validSha256(evidence.binarySha256)) {
+    throw new Error("Database-open evidence must be bound to a platform package, repository revision, source digest, and binary SHA-256.");
+  }
+  exactKeys(evidence.observations, [
+    "schemaVersion",
+    "sqliteOperations",
+    "currentGraphFound",
+    "graphPayloadRowsRead",
+    "graphPayloadBytesDeserialized",
+  ], "database-open observations");
+  const observations = evidence.observations;
+  if (observations.schemaVersion !== NATIVE_DATABASE_OPEN_OBSERVATION_SCHEMA
+    || !Array.isArray(observations.sqliteOperations)
+    || observations.sqliteOperations.length !== 1
+    || observations.sqliteOperations[0] !== "current-complete-graph-metadata"
+    || observations.currentGraphFound !== true
+    || observations.graphPayloadRowsRead !== 0
+    || observations.graphPayloadBytesDeserialized !== 0) {
+    throw new Error("Database-open observations do not prove a metadata-only current-graph read.");
+  }
+  const binding = binaryBindings?.[evidence.platformPackage];
+  if (!binding
+    || binding.binarySha256 !== evidence.binarySha256
+    || binding.repositoryRevision !== evidence.repositoryRevision
+    || binding.sourceDigest !== evidence.sourceDigest) {
+    throw new Error("Database-open evidence does not match the exact release binary and source revision.");
+  }
+  return evidence;
+}
+
+function loadDatabaseOpenEvidence(file, binaryBindings, readFile = fs.readFileSync) {
+  const bytes = readFile(file);
+  let evidence;
+  try {
+    evidence = JSON.parse(bytes.toString("utf8"));
+  } catch (error) {
+    throw new Error(`Database-open evidence is not valid JSON: ${error.message}`);
+  }
+  validateDatabaseOpenEvidence(evidence, binaryBindings);
+  return {
+    evidence,
+    sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+  };
 }
 
 function validBinaryBinding(value, repositoryRevision, sourceDigest) {
@@ -65,6 +142,15 @@ function loadBundledNativeRolloutEvidence(root = path.resolve(__dirname, ".."), 
     || benchmarkBinding.compiler.version !== benchmarkArtifact.compilerVersion) {
     throw new Error("Complete native rollout evidence requires exact revision, source, compiler, target, tarball, and binary bindings for every platform.");
   }
+  const databaseOpen = packet.evidence.performance?.databaseOpenEvidence;
+  if (!validSha256(databaseOpen?.sha256)) {
+    throw new Error("Complete native rollout evidence requires a SHA-256-bound database-open evidence file.");
+  }
+  try {
+    validateDatabaseOpenEvidence(databaseOpen.evidence, binaries);
+  } catch (error) {
+    throw new Error(`Complete native rollout evidence has invalid database-open evidence: ${error.message}`);
+  }
   return Object.freeze({ packet, evidence: Object.freeze(packet.evidence), complete: true });
 }
 
@@ -102,7 +188,11 @@ function probeVerifiedNativeRuntime(root = path.resolve(__dirname, ".."), option
 }
 
 module.exports = {
+  NATIVE_DATABASE_OPEN_EVIDENCE_SCHEMA,
+  NATIVE_DATABASE_OPEN_OBSERVATION_SCHEMA,
   NATIVE_ROLLOUT_EVIDENCE_SCHEMA,
+  loadDatabaseOpenEvidence,
   loadBundledNativeRolloutEvidence,
   probeVerifiedNativeRuntime,
+  validateDatabaseOpenEvidence,
 };

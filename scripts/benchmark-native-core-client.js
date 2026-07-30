@@ -35,13 +35,7 @@ function releaseNativeOptions() {
 function nativeArtifactBinding(command) {
   const platform = nativePlatformTarget();
   if (!platform) throw new Error(`No release target is registered for ${process.platform}/${process.arch}.`);
-  const repositoryRevision = execFileSync("git", ["rev-parse", "HEAD"], {
-    cwd: ROOT,
-    encoding: "utf8",
-  }).trim();
-  const sourceDigest = createHash("sha256")
-    .update(execFileSync("git", ["ls-tree", "-r", "--full-tree", "HEAD"], { cwd: ROOT }))
-    .digest("hex");
+  const source = repositoryBinding(ROOT);
   const compilerVersion = execFileSync("rustc", ["--version"], {
     cwd: ROOT,
     encoding: "utf8",
@@ -51,8 +45,8 @@ function nativeArtifactBinding(command) {
     platformPackage: platform.packageName,
     target: platform.rustTarget,
     compilerVersion,
-    repositoryRevision,
-    sourceDigest,
+    repositoryRevision: source.repositoryRevision,
+    sourceDigest: source.sourceDigest,
   };
 }
 

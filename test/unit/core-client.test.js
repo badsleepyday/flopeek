@@ -1315,6 +1315,14 @@ test("strict Rust source authority uses its bundled C# adapter without the JavaS
   const graph = await native.scan(root);
   assert.equal(graph.nodes.find((node) => node.path === "src/OrdersService.cs").analysis.parser, "csharp-static-ast");
   assert.deepEqual(graph.nodes.find((node) => node.id === "symbol:src/OrdersService.cs:class:OrdersService").methods, ["Submit", "Count"]);
+  const compatibilityCsharp = graph.analysis.adapterCapabilities.adapters.find((adapter) => adapter.id === "csharp");
+  const executionCsharp = graph.analysis.executionAdapterCapabilities.adapters.find((adapter) => adapter.id === "csharp");
+  assert.equal(compatibilityCsharp.parser, "csharp-roslyn");
+  assert.equal(compatibilityCsharp.availability, "toolchain-conditional");
+  assert.equal(compatibilityCsharp.requiredToolchain, ".NET SDK");
+  assert.equal(executionCsharp.parser, "csharp-static-ast");
+  assert.equal(executionCsharp.availability, "bundled");
+  assert.equal(executionCsharp.requiredToolchain, null);
   assert.ok(graph.nodes.some((node) => node.id === "external:System"));
   assert.ok(graph.nodes.some((node) => node.id === "external:Acme.Data"));
   assert.ok(requests.some((request) => request.method === "refreshNativePersistentProject"));

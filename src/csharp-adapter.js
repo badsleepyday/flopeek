@@ -23,6 +23,31 @@ function dotnetRoot() {
   }
 }
 
+function numericSdkVersion(value) {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/u.exec(value);
+  return match ? {
+    components: match.slice(1).map(Number),
+    prerelease: value.includes("-"),
+  } : null;
+}
+
+function selectLatestSdk(entries) {
+  return entries
+    .map((name) => ({ name, version: numericSdkVersion(name) }))
+    .filter((entry) => entry.version)
+    .sort((left, right) => {
+      for (let index = 0; index < left.version.components.length; index += 1) {
+        const difference = left.version.components[index] - right.version.components[index];
+        if (difference) return difference;
+      }
+      if (left.version.prerelease !== right.version.prerelease) {
+        return left.version.prerelease ? -1 : 1;
+      }
+      return left.name.localeCompare(right.name);
+    })
+    .at(-1)?.name || null;
+}
+
 function buildHelper() {
   const source = fs.readFileSync(path.join(__dirname, "csharp-facts.cs"));
   const fingerprint = crypto.createHash("sha256").update("copy-local-roslyn-v1\0").update(source).digest("hex").slice(0, 16);
@@ -31,7 +56,8 @@ function buildHelper() {
   if (fs.existsSync(helper)) return helper;
   const sdkRoot = path.join(dotnetRoot(), "sdk");
   let sdk;
-  try { sdk = fs.readdirSync(sdkRoot).sort().at(-1); } catch { return null; }
+  try { sdk = selectLatestSdk(fs.readdirSync(sdkRoot)); } catch { return null; }
+  if (!sdk) return null;
   const roslyn = path.join(sdkRoot, sdk, "Roslyn", "bincore");
   if (!fs.existsSync(path.join(roslyn, "Microsoft.CodeAnalysis.CSharp.dll"))) return null;
   const work = `${target}.build-${process.pid}-${Date.now()}`;
@@ -54,4 +80,4 @@ function csharpFacts(files) {
   } catch { return new Map(); }
 }
 
-module.exports = { csharpFacts };
+module.exports = { csharpFacts, selectLatestSdk };
