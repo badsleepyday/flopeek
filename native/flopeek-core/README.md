@@ -39,8 +39,12 @@ inside the native graph because their schema is intentionally extensible. This
 reduces repeated long ID storage without changing the Flopeek graph contract.
 
 This is not the default product core. Strict Rust source authority now covers
-JavaScript/TypeScript, Python, PHP, Rust, Java, Svelte, and C#; Go remains a
-separate toolchain-conditional adapter. Platform-package release automation is
+JavaScript/TypeScript, Python, PHP, Rust, Java, Svelte, C#, and Go. The bundled
+Go Tree-sitter adapter owns static types/functions/methods, imports, unshadowed
+local function calls, aliased package selectors, and local `go.mod` package
+resolution without requiring the Go toolchain. Build tags, function values,
+method dispatch, ambiguous package functions, and package-name mismatches
+remain explicitly unsupported. Platform-package release automation is
 available for supported Windows, Linux, and macOS targets. The main npm package
 declares every target-locked binary as an exact optional dependency; npm selects
 the current OS/CPU package and JavaScript remains the explicit fallback if it is
@@ -113,8 +117,8 @@ public-compatible SHA-256 source hashes, source scope, and file metadata. The
 mandatory `npm run verify:native-js-parser-parity` gate currently proves exact
 parser, resolver, and record projection output for all 22 JS/TS files in the
 eleven-case baseline. Strict native source authority additionally promotes
-Python, PHP, Rust, Java, Svelte, and C# through the Rust graph/session path;
-Go is deliberately excluded from that path. This command itself returns facts,
+Python, PHP, Rust, Java, Svelte, C#, and Go through the Rust graph/session path.
+This command itself returns facts,
 not a public graph. BLAKE3 remains only the native inventory/cache identity.
 Each semantic parser change bumps its adapter version so stale cached facts
 cannot be compared as new evidence.
@@ -171,11 +175,17 @@ cargo build --release --manifest-path native/flopeek-core/Cargo.toml
 $env:FLOPEEK_NATIVE_CORE = (Resolve-Path native/flopeek-core/target/release/flopeek-native-core.exe)
 npm run benchmark:native-incremental -- --root .\repo-a --root .\repo-b --iterations 3
 npm run profile:native-incremental -- .\repo-a
+npm run build:native-rollout-evidence -- --candidate .\candidate.json --benchmark .\benchmark.json --profiles .\profiles --assets .\release-assets --output .\packaging\native-rollout-evidence.json
 ```
 
 Do not use one local result as a speed claim. Retain it only with the declared
 repository revision and parity digest; JavaScript remains the CI oracle and
-rollback authority until the complete rollout gate passes.
+rollback authority until the complete rollout gate passes. The evidence builder
+fails closed unless five distinct repositories retain paired raw timing samples,
+101 raw query samples per operation, concurrent combined-memory samples,
+revision/binary identity, an explicit database-open evidence reference, and all
+six verified platform artifacts. The packaged incomplete packet deliberately
+keeps normal `native` activation blocked; it is not a substitute for those runs.
 
 `--native-serve` is the persistent `flopeek-native-protocol/v1` JSON Lines
 bootstrap. Each request has a request ID and emits one typed response on stdout;
@@ -199,7 +209,12 @@ is reserved for an explicit historical compatibility request whose exact
 version is no longer current. Its optional `returnPublicGraph: false` protocol
 parameter is the backing contract for the client-level handle-only transport;
 the response carries `publicGraphEnvelope` and `publicGraphTransport` but never
-the public collections. Client shutdown waits for process exit so
+the public collections. `materializeNativeGraph` reconstructs only an exact
+verified current SQLite handle or an exact retained session-memory handle.
+`CoreClient.materializeGraph()` uses that operation for explicitly classified
+legacy MCP surfaces; native-safe tools remain handle-only, while the broad HTTP
+server stays materialized until its synchronous routes are migrated. Client
+shutdown waits for process exit so
 session-owned SQLite handles are released before temporary repositories are
 removed on Windows.
 `assembleStructuralGraph` is an equally non-authoritative shadow subset

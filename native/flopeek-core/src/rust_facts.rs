@@ -129,6 +129,7 @@ fn add_import(
     }
     facts.push(NativeJsImport {
         specifier,
+        standard: None,
         evidence: evidence(path, node),
     });
 }

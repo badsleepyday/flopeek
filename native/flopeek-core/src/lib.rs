@@ -1,5 +1,6 @@
 pub mod csharp_facts;
 pub mod facts;
+pub mod go_facts;
 pub mod graph;
 pub mod identity;
 pub mod inventory;

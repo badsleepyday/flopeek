@@ -166,6 +166,7 @@ pub fn parse_native_java_facts(path: &str, source: &str) -> Option<NativeJsFacts
         {
             structural.imports.push(NativeJsImport {
                 specifier,
+                standard: None,
                 evidence: evidence(path, import),
             });
         }

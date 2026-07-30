@@ -104,6 +104,12 @@ struct NativeSessionGraph {
     // Query handlers accept the original StructuralFactBatch. Retain it once
     // in Rust so cache-disabled Node callers can refer to it by graph handle.
     query_batch: Arc<Value>,
+    // Materialization is an explicit compatibility operation. Retain only the
+    // small mutable envelope fields needed to reconstruct the exact public
+    // session graph from the already-owned native payload.
+    public_state: Value,
+    public_graph_state: Value,
+    latest_delta: Option<Value>,
 }
 
 // One bounded derived cache for the current complete persistent graph. SQLite
@@ -6812,6 +6818,9 @@ fn refresh_native_session_graph(
         public_graph_version,
         payload: Arc::new(payload),
         query_batch: Arc::new(params.clone()),
+        public_state: graph["state"].clone(),
+        public_graph_state: graph["analysis"]["graphState"].clone(),
+        latest_delta: adjacent_delta.clone(),
     };
     session
         .graphs
@@ -7718,6 +7727,181 @@ fn get_native_public_graph_snapshot(params: &Value) -> Result<Value, NativeProto
     }))
 }
 
+// Materialize only an exact, verified graph handle. Persistent handles must
+// still match SQLite's current complete pointer; session handles must still
+// exist in the owning JSONL process. This prevents a compatibility surface
+// from silently reading a different graph version or falling back to
+// JavaScript graph.json.
+fn materialize_native_graph(
+    session: &NativeProtocolSession,
+    params: &Value,
+) -> Result<Value, NativeProtocolError> {
+    if let Some(handle) = params.get("sessionGraph").and_then(Value::as_object) {
+        let schema = handle.get("schemaVersion").and_then(Value::as_str);
+        let project_id = handle
+            .get("projectId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty());
+        let facts_digest = handle
+            .get("factsDigest")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty());
+        let public_graph_version = handle
+            .get("publicGraphVersion")
+            .and_then(Value::as_i64)
+            .filter(|value| *value > 0);
+        if schema != Some("flopeek-native-session-graph-handle/v1")
+            || handle.get("persistence").and_then(Value::as_str) != Some("session-memory")
+            || project_id.is_none()
+            || facts_digest.is_none()
+            || public_graph_version.is_none()
+        {
+            return Err(NativeProtocolError {
+                code: "invalid-params",
+                message: "materializeNativeGraph received an invalid session graph handle."
+                    .to_string(),
+            });
+        }
+        let project_id = project_id.expect("validated session project ID");
+        let facts_digest = facts_digest.expect("validated session facts digest");
+        let public_graph_version = public_graph_version.expect("validated session graph version");
+        let key = native_session_graph_key(project_id, public_graph_version);
+        let retained = session
+            .session_query_graphs
+            .get(&key)
+            .filter(|graph| graph.facts_digest == facts_digest)
+            .ok_or_else(|| NativeProtocolError {
+                code: "native-session-graph-miss",
+                message:
+                    "The requested cache-disabled graph is not retained by this JSONL session."
+                        .to_string(),
+            })?;
+        let mut graph = native_public_graph_snapshot(&retained.payload)?;
+        graph["state"] = retained.public_state.clone();
+        graph["analysis"]["graphState"] = retained.public_graph_state.clone();
+        graph["analysis"]["latestDelta"] = retained.latest_delta.clone().unwrap_or(Value::Null);
+        graph["analysis"]["graphState"]["transport"] = Value::String("materialized".to_string());
+        if graph["project"]["projectId"].as_str() != Some(project_id)
+            || graph["state"]["graphVersion"].as_i64() != Some(public_graph_version)
+            || graph["analysis"]["graphState"]["materialFingerprint"].as_str() != Some(facts_digest)
+        {
+            return Err(NativeProtocolError {
+                code: "native-materialization-identity-mismatch",
+                message: "The retained session graph does not match its verified handle."
+                    .to_string(),
+            });
+        }
+        return Ok(json!({
+            "schemaVersion": "flopeek-native-materialized-graph/v1",
+            "persistence": "session-memory",
+            "graph": graph,
+            "limitation": "This explicit compatibility snapshot is valid only in the owning native JSONL session.",
+        }));
+    }
+
+    let root = project_root(params)?;
+    let handle = params
+        .get("graphHandle")
+        .and_then(Value::as_object)
+        .ok_or_else(|| NativeProtocolError {
+            code: "invalid-params",
+            message: "materializeNativeGraph requires params.graphHandle or params.sessionGraph."
+                .to_string(),
+        })?;
+    let project_id = handle
+        .get("projectId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| NativeProtocolError {
+            code: "invalid-params",
+            message: "materializeNativeGraph graphHandle.projectId is required.".to_string(),
+        })?;
+    let facts_digest = handle
+        .get("factsDigest")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| NativeProtocolError {
+            code: "invalid-params",
+            message: "materializeNativeGraph graphHandle.factsDigest is required.".to_string(),
+        })?;
+    let public_graph_version = handle
+        .get("publicGraphVersion")
+        .and_then(Value::as_i64)
+        .filter(|value| *value > 0)
+        .ok_or_else(|| NativeProtocolError {
+            code: "invalid-params",
+            message: "materializeNativeGraph graphHandle.publicGraphVersion must be positive."
+                .to_string(),
+        })?;
+    if handle.get("schemaVersion").and_then(Value::as_str) != Some("flopeek-native-graph-handle/v1")
+        || handle.get("persistence").and_then(Value::as_str) != Some("sqlite")
+    {
+        return Err(NativeProtocolError {
+            code: "invalid-params",
+            message: "materializeNativeGraph received an invalid persistent graph handle."
+                .to_string(),
+        });
+    }
+    let connection = open_native_store(&root).map_err(|error| NativeProtocolError {
+        code: "store-read-failed",
+        message: error.to_string(),
+    })?;
+    let current = current_complete_graph(&connection, project_id)
+        .map_err(|error| NativeProtocolError {
+            code: "store-read-failed",
+            message: error.to_string(),
+        })?
+        .filter(|current| {
+            current.public_graph_version == Some(public_graph_version)
+                && current.material_fingerprint == facts_digest
+        })
+        .ok_or_else(|| NativeProtocolError {
+            code: "native-materialization-handle-stale",
+            message:
+                "The persistent graph handle does not match SQLite's current complete pointer."
+                    .to_string(),
+        })?;
+    let payload = complete_graph_payload(&connection, project_id, current.graph_version)
+        .map_err(|error| NativeProtocolError {
+            code: "store-read-failed",
+            message: error.to_string(),
+        })?
+        .ok_or_else(|| NativeProtocolError {
+            code: "missing-native-graph",
+            message: "The verified persistent graph payload is unavailable.".to_string(),
+        })?;
+    let mut graph = native_public_graph_snapshot(&payload.payload)?;
+    graph["analysis"]["graphState"] = json!({
+        "schemaVersion": "flopeek-native-graph-state/v1",
+        "status": "materialized",
+        "persistence": "sqlite",
+        "nativeGraphVersion": current.graph_version,
+        "graphVersion": public_graph_version,
+        "materialFingerprint": facts_digest,
+        "sourceFingerprint": current.source_fingerprint,
+        "sourceRevision": graph["state"]["sourceRevision"].clone(),
+        "updatedAt": graph["state"]["updatedAt"].clone(),
+        "latestDelta": Value::Null,
+        "limitation": "This state authenticates an explicit compatibility materialization of SQLite's exact current complete graph.",
+    });
+    graph["analysis"]["graphState"]["transport"] = Value::String("materialized".to_string());
+    if graph["project"]["projectId"].as_str() != Some(project_id)
+        || graph["state"]["graphVersion"].as_i64() != Some(public_graph_version)
+        || graph["analysis"]["graphState"]["materialFingerprint"].as_str() != Some(facts_digest)
+    {
+        return Err(NativeProtocolError {
+            code: "native-materialization-identity-mismatch",
+            message: "The persistent public graph does not match its verified handle.".to_string(),
+        });
+    }
+    Ok(json!({
+        "schemaVersion": "flopeek-native-materialized-graph/v1",
+        "persistence": "sqlite",
+        "graph": graph,
+        "limitation": "This is an explicit compatibility snapshot of SQLite's exact current complete graph.",
+    }))
+}
+
 // Read only the project pointer to the last transactionally complete graph.
 // This is the native last-complete fallback: it never consults graph.json and
 // never serves a `building` version after a failed refresh.
@@ -8097,7 +8281,7 @@ fn handle_request(
                 request.request_id,
                 json!({
                     "implementation": "rust",
-                    "capabilities": ["health", "initialize", "nativeIncrementalManifest", "nativeBoundedDiscovery", "refreshNativeProject", "refreshNativePersistentProject", "nativeJsRecordCache", "nativeJsStructuralFacts", "submitStructuralFacts", "assembleStructuralGraph", "assembleNativePublicGraph", "assembleNativeFlows", "findNodes", "getNodeDetails", "getEntryFlows", "getRequestFlows", "createContextRef", "resolveNativeContextRef", "getNativeFlowLensCore", "getNativeNodeContextCard", "getNativeFlowContextCard", "getNativeScanStatus", "getNativeProjectOverviewCore", "getRelatedTests", "getChangeImpact", "persistStructuralGraph", "persistNativePublicGraph", "persistNativePublicGraphPatch", "refreshNativeSessionGraph", "refreshNativeJsSessionGraph", "getNativeStructuralDelta", "getNativePublicGraphSnapshot", "getNativeCurrentPublicGraph", "getNativePublicGraphDelta", "getNativeChangedContexts", "shutdown"],
+                    "capabilities": ["health", "initialize", "nativeIncrementalManifest", "nativeBoundedDiscovery", "refreshNativeProject", "refreshNativePersistentProject", "nativeJsRecordCache", "nativeJsStructuralFacts", "submitStructuralFacts", "assembleStructuralGraph", "assembleNativePublicGraph", "assembleNativeFlows", "findNodes", "getNodeDetails", "getEntryFlows", "getRequestFlows", "createContextRef", "resolveNativeContextRef", "getNativeFlowLensCore", "getNativeNodeContextCard", "getNativeFlowContextCard", "getNativeScanStatus", "getNativeProjectOverviewCore", "getRelatedTests", "getChangeImpact", "persistStructuralGraph", "persistNativePublicGraph", "persistNativePublicGraphPatch", "refreshNativeSessionGraph", "refreshNativeJsSessionGraph", "getNativeStructuralDelta", "getNativePublicGraphSnapshot", "getNativeCurrentPublicGraph", "materializeNativeGraph", "getNativePublicGraphDelta", "getNativeChangedContexts", "shutdown"],
                     "storeAuthoritative": false,
                     "publicNodeIdsEnabled": true,
                     "adapterCapabilities": native_adapter_registry(),
@@ -8397,6 +8581,13 @@ fn handle_request(
                 false,
             ),
         },
+        "materializeNativeGraph" => match materialize_native_graph(session, &request.params) {
+            Ok(result) => (success_response(request.request_id, result), false),
+            Err(error) => (
+                error_response(Some(request.request_id), error.code, error.message),
+                false,
+            ),
+        },
         "getNativePublicGraphDelta" => match get_native_public_graph_delta(&request.params) {
             Ok(result) => (success_response(request.request_id, result), false),
             Err(error) => (
@@ -8419,7 +8610,7 @@ fn handle_request(
             error_response(
                 Some(request.request_id),
                 "unknown-method",
-                "Supported methods are health, initialize, nativeIncrementalManifest, nativeBoundedDiscovery, refreshNativeProject, refreshNativePersistentProject, nativeJsRecordCache, nativeJsStructuralFacts, submitStructuralFacts, assembleStructuralGraph, assembleNativePublicGraph, assembleNativeFlows, findNodes, getNodeDetails, getEntryFlows, getRequestFlows, createContextRef, resolveNativeContextRef, getNativeFlowLensCore, getNativeNodeContextCard, getNativeFlowContextCard, getNativeScanStatus, getNativeProjectOverviewCore, getRelatedTests, getChangeImpact, persistStructuralGraph, persistNativePublicGraph, persistNativePublicGraphPatch, refreshNativeSessionGraph, refreshNativeJsSessionGraph, getNativeStructuralDelta, getNativePublicGraphSnapshot, getNativeCurrentPublicGraph, getNativePublicGraphDelta, getNativeChangedContexts, and shutdown.",
+                "Supported methods are health, initialize, nativeIncrementalManifest, nativeBoundedDiscovery, refreshNativeProject, refreshNativePersistentProject, nativeJsRecordCache, nativeJsStructuralFacts, submitStructuralFacts, assembleStructuralGraph, assembleNativePublicGraph, assembleNativeFlows, findNodes, getNodeDetails, getEntryFlows, getRequestFlows, createContextRef, resolveNativeContextRef, getNativeFlowLensCore, getNativeNodeContextCard, getNativeFlowContextCard, getNativeScanStatus, getNativeProjectOverviewCore, getRelatedTests, getChangeImpact, persistStructuralGraph, persistNativePublicGraph, persistNativePublicGraphPatch, refreshNativeSessionGraph, refreshNativeJsSessionGraph, getNativeStructuralDelta, getNativePublicGraphSnapshot, getNativeCurrentPublicGraph, materializeNativeGraph, getNativePublicGraphDelta, getNativeChangedContexts, and shutdown.",
             ),
             false,
         ),

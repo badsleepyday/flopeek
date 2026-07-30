@@ -26,7 +26,7 @@ use tree_sitter::{Language, Node, Parser};
 
 pub const NATIVE_JS_FACTS_SCHEMA: &str = "flopeek-native-js-facts/v2";
 // This must advance when a cached fact's observable structural semantics change.
-pub const NATIVE_JS_ADAPTER_VERSION: &str = "native-tree-sitter-source/v17";
+pub const NATIVE_JS_ADAPTER_VERSION: &str = "native-tree-sitter-source/v18";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeJsFacts {
@@ -83,6 +83,8 @@ pub struct NativeJsEvidence {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeJsImport {
     pub specifier: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub standard: Option<bool>,
     pub evidence: NativeJsEvidence,
 }
 
@@ -352,6 +354,16 @@ pub fn refresh_native_js_facts_session(
         if normalized == ".flopeek/config.json" || normalized.ends_with('/') {
             return Err(format!("native-session-reconcile-required:{normalized}"));
         }
+        if native_js_ignored_path(&normalized) {
+            continue;
+        }
+        // Excluded files are intentionally absent from candidate_paths, so an
+        // add/delete event cannot be accounted for incrementally from the
+        // previous candidate set. Force the owning client through full native
+        // reconciliation so repository-scope telemetry changes immediately.
+        if scope.classify(&normalized) == crate::scope::SourceScope::Excluded {
+            return Err(format!("native-session-reconcile-required:{normalized}"));
+        }
         if !native_fact_supported_path(&normalized) {
             return Err(format!("native-session-reconcile-required:{normalized}"));
         }
@@ -550,8 +562,24 @@ fn native_js_incremental_candidate(
     relative_path: &str,
     absolute_path: &Path,
 ) -> Result<bool, String> {
+    if scope.classify(relative_path) == crate::scope::SourceScope::Excluded {
+        return Ok(false);
+    }
+    let metadata = match fs::symlink_metadata(absolute_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(format!(
+                "Unable to inspect JavaScript/TypeScript source {relative_path}: {error}"
+            ));
+        }
+    };
+    Ok(metadata.file_type().is_file() && metadata.len() <= MAX_NATIVE_SOURCE_FILE_BYTES)
+}
+
+fn native_js_ignored_path(relative_path: &str) -> bool {
     let segments = relative_path.split('/').collect::<Vec<_>>();
-    if segments
+    segments
         .iter()
         .take(segments.len().saturating_sub(1))
         .any(|segment| {
@@ -574,20 +602,6 @@ fn native_js_incremental_candidate(
                         | "vendor"
                 )
         })
-        || scope.classify(relative_path) == crate::scope::SourceScope::Excluded
-    {
-        return Ok(false);
-    }
-    let metadata = match fs::symlink_metadata(absolute_path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => {
-            return Err(format!(
-                "Unable to inspect JavaScript/TypeScript source {relative_path}: {error}"
-            ));
-        }
-    };
-    Ok(metadata.file_type().is_file() && metadata.len() <= MAX_NATIVE_SOURCE_FILE_BYTES)
 }
 
 fn language_for_path(path: &str) -> Option<Language> {
@@ -597,6 +611,7 @@ fn language_for_path(path: &str) -> Option<Language> {
         "ts" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
         "tsx" => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
         "cs" => Some(tree_sitter_c_sharp::LANGUAGE.into()),
+        "go" => Some(tree_sitter_go::LANGUAGE.into()),
         "java" => Some(tree_sitter_java::LANGUAGE.into()),
         "php" => Some(tree_sitter_php::LANGUAGE_PHP.into()),
         "py" => Some(tree_sitter_python::LANGUAGE.into()),
@@ -609,9 +624,7 @@ fn language_for_path(path: &str) -> Option<Language> {
 /// Extensions that Flopeek registers for inventory, but for which the native
 /// source authority deliberately has no structural parser.  These must remain
 /// visible as inventory-only records, rather than making a mixed repository
-/// look unsupported or silently disappearing from the native graph.  `.go`
-/// is intentionally absent: it has a structural JS adapter today, so claiming
-/// it as inventory-only here would be a lossy downgrade, not native parity.
+/// look unsupported or silently disappearing from the native graph.
 fn inventory_only_adapter_name(path: &str) -> Option<&'static str> {
     let filename = path.rsplit('/').next()?.to_ascii_lowercase();
     if filename == "makefile" {
@@ -1301,6 +1314,7 @@ fn collect_structural(
             if let Some(specifier) = import_specifier(node, source) {
                 facts.imports.push(NativeJsImport {
                     specifier,
+                    standard: None,
                     evidence: evidence(path, source, node),
                 });
             }
@@ -1309,6 +1323,7 @@ fn collect_structural(
             if let Some(specifier) = import_specifier(node, source) {
                 facts.imports.push(NativeJsImport {
                     specifier,
+                    standard: None,
                     evidence: evidence(path, source, node),
                 });
             }
@@ -1378,6 +1393,7 @@ fn collect_structural(
                         {
                             facts.imports.push(NativeJsImport {
                                 specifier,
+                                standard: None,
                                 evidence: evidence(path, source, node),
                             });
                         }
@@ -1662,6 +1678,9 @@ pub fn parse_native_js_facts(path: &str, source: &str) -> Option<NativeJsFacts> 
     }
     if path.rsplit('.').next()?.eq_ignore_ascii_case("cs") {
         return crate::csharp_facts::parse_native_csharp_facts(path, source);
+    }
+    if path.rsplit('.').next()?.eq_ignore_ascii_case("go") {
+        return crate::go_facts::parse_native_go_facts(path, source);
     }
     if path.rsplit('.').next()?.eq_ignore_ascii_case("java") {
         return crate::java_facts::parse_native_java_facts(path, source);
@@ -2251,7 +2270,10 @@ mod tests {
             makefile.structural.analysis.reason.as_deref(),
             Some("No structural adapter registered for Makefile build-control files.")
         );
-        assert!(parse_native_js_facts("cmd/server.go", "package main").is_none());
+        let go = parse_native_js_facts("cmd/server.go", "package main\nfunc main() {}\n")
+            .expect("Go files must use the bundled strict-native parser");
+        assert_eq!(go.parser, "go-parser");
+        assert_eq!(go.structural.symbols[0].name, "main");
     }
 
     #[test]
@@ -2508,6 +2530,47 @@ mod tests {
         let refreshed =
             refresh_native_js_facts_session(&initial, &["src/main.ts".to_string()]).unwrap();
         assert_eq!(refreshed.source_scope_counts.get("excluded"), Some(&1));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn excluded_membership_events_require_immediate_reconciliation() {
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-js-excluded-membership-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("generated")).unwrap();
+        fs::create_dir_all(root.join(".flopeek")).unwrap();
+        fs::write(
+            root.join(".flopeek/config.json"),
+            r#"{"schemaVersion":1,"exclude":["generated/**"]}"#,
+        )
+        .unwrap();
+        fs::write(root.join("src/main.ts"), "export const stable = true;\n").unwrap();
+        let initial =
+            scan_native_js_facts_ephemeral(&root, Some("session:excluded-membership")).unwrap();
+        fs::write(
+            root.join("generated/new-client.ts"),
+            "export const generated = true;\n",
+        )
+        .unwrap();
+        let added =
+            refresh_native_js_facts_session(&initial, &["generated/new-client.ts".to_string()])
+                .unwrap_err();
+        assert_eq!(
+            added,
+            "native-session-reconcile-required:generated/new-client.ts"
+        );
+        fs::remove_file(root.join("generated/new-client.ts")).unwrap();
+        let removed =
+            refresh_native_js_facts_session(&initial, &["generated/new-client.ts".to_string()])
+                .unwrap_err();
+        assert_eq!(
+            removed,
+            "native-session-reconcile-required:generated/new-client.ts"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

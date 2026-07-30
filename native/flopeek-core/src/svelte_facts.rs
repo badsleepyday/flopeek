@@ -104,6 +104,7 @@ fn script_imports(
         };
         imports.push(NativeJsImport {
             specifier,
+            standard: None,
             evidence: evidence(
                 path,
                 source,

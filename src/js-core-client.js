@@ -46,6 +46,7 @@ function createJsCoreClient() {
     scan,
     refresh: scan,
     getLastCompleteGraph: async () => null,
+    materializeGraph: async (graph) => graph,
     getScanStatus: (graph, options = {}) => getAgentBootstrap(graph, options),
     getProjectOverview: (graph, options = {}) => projectView(graph, options),
     findNodes: (graph, options = {}) => findNodes(graph, options),

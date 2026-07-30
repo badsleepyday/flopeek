@@ -1,14 +1,15 @@
 "use strict";
 
-// v5 adds graph-delta retrieval to the shared authority boundary. Product
-// surfaces must not read JavaScript delta files when Rust/SQLite owns the
-// current graph.
-const CORE_CLIENT_SCHEMA = "flopeek-core-client/v5";
+// v6 adds explicit graph materialization to the shared authority boundary.
+// Handle-only product surfaces must ask the owning core for a verified public
+// graph instead of reading graph.json or assuming Node still owns collections.
+const CORE_CLIENT_SCHEMA = "flopeek-core-client/v6";
 
 const CORE_CLIENT_METHODS = Object.freeze([
   "scan",
   "refresh",
   "getLastCompleteGraph",
+  "materializeGraph",
   "getScanStatus",
   "getProjectOverview",
   "findNodes",

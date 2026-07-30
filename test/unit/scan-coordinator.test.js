@@ -388,6 +388,7 @@ test("unbounded native coordinator forwards cancellation to the native CoreClien
       }, { once: true });
     }),
     getLastCompleteGraph: async () => null,
+    materializeGraph: async (graph) => graph,
   };
   const coordinator = createScanCoordinator(root, { cache: true, coreClient: native });
   const pending = coordinator.refresh(null, "native-cancel-test");

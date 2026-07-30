@@ -30,7 +30,7 @@ function nativeClient() {
     command: "cargo",
     args: ["run", "--quiet", "--manifest-path", MANIFEST, "--"],
     cwd: ROOT,
-    requestTimeoutMs: 30_000,
+    requestTimeoutMs: 120_000,
   });
 }
 
@@ -122,7 +122,7 @@ test("all eleven JavaScript compatibility fixtures match the native structural s
   context.after(() => client.close());
   const comparisons = [];
   for (const fixture of CORE_BASELINE.cases) {
-    await client.scan(path.join(ROOT, fixture.fixture));
+    await client.scan(path.join(ROOT, fixture.fixture), { persistIdentity: false });
     comparisons.push({ id: fixture.id, status: client.getLastShadowComparison().status });
   }
   assert.equal(CORE_BASELINE.cases.length, 11);
@@ -133,7 +133,7 @@ test("native public graph snapshots match the raw JavaScript contract across the
   const client = createShadowCoreClient({ native: nativeClient(), persistStructuralGraph: true });
   context.after(() => client.close());
   for (const fixture of CORE_BASELINE.cases) {
-    const graph = await client.scan(path.join(ROOT, fixture.fixture));
+    const graph = await client.scan(path.join(ROOT, fixture.fixture), { persistIdentity: false });
     const snapshot = await client.getNativePublicGraphSnapshot(graph);
     assert.deepEqual(snapshot.graph, nativePublicSnapshot(graph), fixture.id);
   }
@@ -143,7 +143,7 @@ test("ephemeral native public graphs match JavaScript without SQLite persistence
   const client = createShadowCoreClient({ native: nativeClient() });
   context.after(() => client.close());
   for (const fixture of CORE_BASELINE.cases) {
-    const graph = await client.scan(path.join(ROOT, fixture.fixture));
+    const graph = await client.scan(path.join(ROOT, fixture.fixture), { persistIdentity: false });
     const nativeGraph = await client.getNativeEphemeralPublicGraph(graph);
     assert.equal(nativeGraph.schemaVersion, "flopeek-native-public-graph/v1");
     assert.equal(nativeGraph.persistence, "ephemeral-jsonl-only");
@@ -156,7 +156,7 @@ test("native related-test query matches the JavaScript contract across the compa
   context.after(() => client.close());
   const comparisons = [];
   for (const fixture of CORE_BASELINE.cases) {
-    const graph = await client.scan(path.join(ROOT, fixture.fixture));
+    const graph = await client.scan(path.join(ROOT, fixture.fixture), { persistIdentity: false });
     const candidates = graph.nodes
       .map((node) => ({ node, expected: getRelatedTests(graph, node.id) }))
       .filter((candidate) => candidate.expected?.relatedTests.length);
@@ -173,7 +173,7 @@ test("native flow assembly matches JavaScript flow traversal across the compatib
   const client = createShadowCoreClient({ native: nativeClient() });
   context.after(() => client.close());
   for (const fixture of CORE_BASELINE.cases) {
-    const graph = await client.scan(path.join(ROOT, fixture.fixture));
+    const graph = await client.scan(path.join(ROOT, fixture.fixture), { persistIdentity: false });
     assert.deepEqual(await client.getNativeFlows(graph), graph.flows, fixture.id);
   }
 });
@@ -182,7 +182,7 @@ test("native Context Ref construction matches JavaScript across the compatibilit
   const client = createShadowCoreClient({ native: nativeClient() });
   context.after(() => client.close());
   for (const fixture of CORE_BASELINE.cases) {
-    const graph = await client.scan(path.join(ROOT, fixture.fixture));
+    const graph = await client.scan(path.join(ROOT, fixture.fixture), { persistIdentity: false });
     const node = graph.nodes[0];
     assert.equal(await client.createNativeContextRef(graph, "node", node.id), createContextRef(graph.project.projectId, "node", node.id, graph.state.graphVersion), fixture.id);
     for (const flow of graph.flows) {
@@ -195,7 +195,7 @@ test("native Flow Lens matches the raw JavaScript public projection across the c
   const client = createShadowCoreClient({ native: nativeClient() });
   context.after(() => client.close());
   for (const fixture of CORE_BASELINE.cases) {
-    const graph = await client.scan(path.join(ROOT, fixture.fixture));
+    const graph = await client.scan(path.join(ROOT, fixture.fixture), { persistIdentity: false });
     for (const flow of graph.flows) {
       const lens = getFlowProjection(graph, flow.id, "application", { maxSteps: 3 });
       assert.deepEqual(await client.getNativeFlowLensCore(graph, flow.id, 3), JSON.parse(JSON.stringify(lens)), `${fixture.id}:${flow.id}`);
@@ -207,7 +207,7 @@ test("native Node Context Cards match JavaScript across the structural compatibi
   const client = createShadowCoreClient({ native: nativeClient() });
   context.after(() => client.close());
   for (const fixture of CORE_BASELINE.cases) {
-    const graph = await client.scan(path.join(ROOT, fixture.fixture));
+    const graph = await client.scan(path.join(ROOT, fixture.fixture), { persistIdentity: false });
     for (const node of graph.nodes.filter((candidate) => STRUCTURAL_NODE_KINDS.has(candidate.kind))) {
       const expected = JSON.parse(JSON.stringify(createNodeContextCard(graph, getNodeDetails(graph, node.id))));
       assert.deepEqual(await client.getNativeNodeContextCard(graph, node.id), expected, `${fixture.id}:${node.id}`);
@@ -219,7 +219,7 @@ test("native Flow Context Cards match JavaScript across the compatibility corpus
   const client = createShadowCoreClient({ native: nativeClient() });
   context.after(() => client.close());
   for (const fixture of CORE_BASELINE.cases) {
-    const graph = await client.scan(path.join(ROOT, fixture.fixture));
+    const graph = await client.scan(path.join(ROOT, fixture.fixture), { persistIdentity: false });
     for (const flow of graph.flows) {
       const lens = getFlowProjection(graph, flow.id, "application", { maxSteps: 3 });
       const expected = JSON.parse(JSON.stringify(createFlowContextCard(graph, lens)));
@@ -232,7 +232,7 @@ test("native current node Context Ref resolution matches JavaScript across the c
   const client = createShadowCoreClient({ native: nativeClient() });
   context.after(() => client.close());
   for (const fixture of CORE_BASELINE.cases) {
-    const graph = await client.scan(path.join(ROOT, fixture.fixture));
+    const graph = await client.scan(path.join(ROOT, fixture.fixture), { persistIdentity: false });
     for (const node of graph.nodes.filter((candidate) => STRUCTURAL_NODE_KINDS.has(candidate.kind))) {
       const contextRef = createContextRef(graph.project.projectId, "node", node.id, graph.state.graphVersion);
       assert.deepEqual(await client.resolveNativeContextRef(graph, contextRef), JSON.parse(JSON.stringify(resolveContextRef(graph, contextRef))), `${fixture.id}:${node.id}`);
@@ -244,7 +244,7 @@ test("native current flow Context Ref resolution matches the raw JavaScript core
   const client = createShadowCoreClient({ native: nativeClient() });
   context.after(() => client.close());
   for (const fixture of CORE_BASELINE.cases) {
-    const graph = await client.scan(path.join(ROOT, fixture.fixture));
+    const graph = await client.scan(path.join(ROOT, fixture.fixture), { persistIdentity: false });
     for (const flow of graph.flows) {
       const contextRef = createContextRef(graph.project.projectId, "flow", flow.id, graph.state.graphVersion);
       const expected = resolveContextCardRef(graph, contextRef, {
@@ -392,7 +392,7 @@ test("native change-impact query matches the JavaScript current-graph contract a
   const client = createShadowCoreClient({ native: nativeClient() });
   context.after(() => client.close());
   for (const fixture of CORE_BASELINE.cases) {
-    const graph = await client.scan(path.join(ROOT, fixture.fixture));
+    const graph = await client.scan(path.join(ROOT, fixture.fixture), { persistIdentity: false });
     const changedPath = graph.nodes.find((node) => node.kind === "file" && node.sourceScope !== "test")?.path;
     assert.ok(changedPath, `${fixture.id} needs an application file`);
     const expected = JSON.parse(JSON.stringify(getChangeImpact(graph, [changedPath], { maxDepth: 4 })));

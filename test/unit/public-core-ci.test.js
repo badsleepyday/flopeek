@@ -33,10 +33,15 @@ test("tagged Core releases verify source and package evidence before creating a 
   }
   assert.match(workflow, /node scripts\/verify-clean-room-native-platform\.js --platform-tarball/);
   assert.match(workflow, /name: Verify complete release set before publication/);
+  assert.match(workflow, /npm run verify:npm-publication/);
+  assert.match(workflow, /npm run verify:github-release-preflight -- --tag "\$GITHUB_REF_NAME"/);
   assert.match(workflow, /node scripts\/verify-native-release-set\.js --assets release-assets/);
-  assert.match(workflow, /npm publish "\$package" --access public --tag "\$staging_tag" --provenance/);
+  assert.match(workflow, /node scripts\/publish-npm-release-set\.js --assets release-assets --staging-tag "\$staging_tag"/);
   assert.match(workflow, /name: Anonymous registry clean-room install of the exact main package/);
   assert.match(workflow, /name: Move public dist-tags only after clean-room verification/);
+  assert.match(workflow, /npm run verify:published-release -- --tag "\$GITHUB_REF_NAME"/);
+  assert.match(workflow, /node scripts\/cleanup-npm-staging-tags\.js --staging-tag "\$staging_tag"/);
+  assert.doesNotMatch(workflow, /\|\|\s*true/);
   assert.match(workflow, /needs: \[native-binaries, publish-npm-release\]/);
   assert.match(workflow, /gh release create/);
 });

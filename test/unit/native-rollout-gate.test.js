@@ -94,6 +94,19 @@ test("native rollout gate is bound to exact adapter contract coverage", () => {
   assert.ok(result.reasons.includes("native-backend-parity-incomplete"));
 });
 
+test("native rollout gate rejects a duplicated adapter that replaces a required adapter", () => {
+  const nativeAdapters = [
+    ...REQUIRED_NATIVE_ADAPTERS.slice(0, -1),
+    REQUIRED_NATIVE_ADAPTERS.at(-2),
+  ];
+  assert.equal(nativeAdapters.length, REQUIRED_NATIVE_ADAPTERS.length);
+  const result = evaluateNativeDefaultRollout(evidence({
+    backendParity: { ...evidence().backendParity, nativeAdapters },
+  }));
+  assert.equal(result.eligible, false);
+  assert.ok(result.reasons.includes("native-backend-parity-incomplete"));
+});
+
 test("native rollout gate rejects incomplete corpus and unproven performance evidence", () => {
   const result = evaluateNativeDefaultRollout(evidence({
     benchmark: { rows: Array.from({ length: 4 }, (_, index) => benchmarkRow(`repo-${index + 1}`, { oneFileChange: 1.2 })) },

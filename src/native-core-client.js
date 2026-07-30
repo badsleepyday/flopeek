@@ -380,6 +380,7 @@ function createNativeCoreClient(options = {}) {
   }
   const batches = new WeakMap();
   const roots = new WeakMap();
+  const materializedGraphs = new WeakMap();
   const cacheDisabledProjectIds = new Map();
   const scanners = new Map();
   const nativeSourceStates = new Map();
@@ -801,7 +802,7 @@ function createNativeCoreClient(options = {}) {
     implementation: "native-experimental",
     backendAuthority: "rust-sqlite",
     sourceAuthority,
-    parserHost: sourceAuthority === "rust" ? "rust-tree-sitter-source/v17" : "javascript-structural-fact-batch/v1",
+    parserHost: sourceAuthority === "rust" ? "rust-tree-sitter-source/v18" : "javascript-structural-fact-batch/v1",
     factEnvelopeHost: sourceAuthority === "rust" ? "rust-native-structural-batch/v1" : "javascript-structural-fact-batch/v1",
     extensionAdapterMethods,
     scan,
@@ -826,6 +827,55 @@ function createNativeCoreClient(options = {}) {
       batches.set(result.graph, graphHandle);
       roots.set(result.graph, durableRoot);
       return result.graph;
+    },
+    materializeGraph: async (graph) => {
+      if (!isNativeGraphHandleOnly(graph)) return graph;
+      let pending = materializedGraphs.get(graph);
+      if (!pending) {
+        pending = (async () => {
+          const handle = requireBatch(graph);
+          const root = roots.get(graph);
+          const result = await native.request("materializeNativeGraph", root
+            ? { projectRoot: root, graphHandle: handle }
+            : { sessionGraph: handle });
+          const materialized = result?.graph;
+          if (result?.schemaVersion !== "flopeek-native-materialized-graph/v1"
+            || !materialized || !Array.isArray(materialized.nodes)
+            || !Array.isArray(materialized.edges) || !Array.isArray(materialized.flows)
+            || materialized.project?.projectId !== handle.projectId
+            || materialized.state?.graphVersion !== handle.publicGraphVersion
+            || materialized.analysis?.graphState?.materialFingerprint !== handle.factsDigest) {
+            throw new Error("Native core returned a materialized graph that does not match its verified handle.");
+          }
+          // The handle-only envelope is the exact public lifecycle response
+          // already owned by Node. Native supplies only the verified heavy
+          // collections; retain the original scan telemetry and state fields.
+          const compatible = {
+            ...graph,
+            nodes: materialized.nodes,
+            edges: materialized.edges,
+            flows: materialized.flows,
+            diagnosticFlows: materialized.diagnosticFlows,
+          };
+          compatible.analysis = {
+            ...compatible.analysis,
+            graphState: {
+              ...compatible.analysis?.graphState,
+              transport: "materialized",
+            },
+          };
+          batches.set(compatible, handle);
+          roots.set(compatible, root || null);
+          return compatible;
+        })();
+        materializedGraphs.set(graph, pending);
+      }
+      try {
+        return await pending;
+      } catch (error) {
+        materializedGraphs.delete(graph);
+        throw error;
+      }
     },
     getScanStatus: async (graph, queryOptions = {}) => requestNativeQuery("getNativeScanStatus", graph, {
       scanOutcome: queryOption(queryOptions, "scanOutcome"),

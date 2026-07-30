@@ -375,6 +375,7 @@ fn collect(
             for specifier in imports(n, s) {
                 f.imports.push(NativeJsImport {
                     specifier,
+                    standard: None,
                     evidence: ev(p, s, n),
                 })
             }

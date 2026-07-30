@@ -148,6 +148,7 @@ function createShadowCoreClient(options = {}) {
     return graph;
   };
   methods.getLastCompleteGraph = javascript.getLastCompleteGraph.bind(javascript);
+  methods.materializeGraph = javascript.materializeGraph.bind(javascript);
   // Shadow refresh uses the same bridge as a scan while carrying the changed
   // path hint through to the fact adapter. Native lifecycle ownership is
   // intentionally tested by NativeCoreClient; this client remains an oracle

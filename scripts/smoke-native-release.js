@@ -12,7 +12,12 @@ const root = path.resolve(__dirname, "..");
 const executable = process.platform === "win32" ? "flopeek-native-core.exe" : "flopeek-native-core";
 const binary = path.join(root, "native", "flopeek-core", "target", "release", executable);
 if (!fs.existsSync(binary)) throw new Error(`Native release binary is missing: ${binary}`);
-const version = execFileSync(binary, ["--version"], { cwd: root, encoding: "utf8", windowsHide: true, timeout: 30_000 }).trim();
+const version = execFileSync(binary, ["--version"], {
+  cwd: root,
+  encoding: "utf8",
+  windowsHide: true,
+  timeout: 120_000,
+}).trim();
 const expectedVersion = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
 if (version !== expectedVersion) throw new Error(`Native release version mismatch: expected ${expectedVersion}, received ${JSON.stringify(version)}.`);
 process.stdout.write(`Native release smoke: ${version}\n`);

@@ -1,11 +1,13 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { AsyncLocalStorage } = require("node:async_hooks");
 const packageInfo = require("../package.json");
 const { assignWorkflow, availableGraphDelta, createContinuationCheckpoint, createPlannedOverlay, createWorkRecord, findNodes, getActiveBranchGitEvidence, getAgentBootstrap, getAgentEvidenceTraces, getAgentSemanticProposal, getCacheHygiene, getChangeImpact, getChangedContexts, getCheckpointDivergence, getContextCard, getContinuationCheckpoint, getContinuationComparison, getContinuationContext, getEntryFlows, getFlowComparison, getFlowProjection, getFlowVerification, getGitContextContinuity, getGraphDelta, getHandoffContext, getNodeDetails, getPlanReconciliation, getPlannedOverlay, getProductProof, getRelatedImplementations, getRelatedTests, getRequestFlows, getSemanticSuggestionFeedback, getTestRuns, getTrustAnalytics, getVerifiedSemanticMemory, getWorkDependencyStatus, getWorkRecordWorkflow, getWorkTimeline, latestAvailableGraphDelta, listContinuationCheckpoints, listPlanReconciliations, listPlannedOverlays, listWorkRecords, listWorkflows, projectView, recordAgentEvidenceTrace, recordAgentSemanticProposal, recordPlanReconciliation, recordSemanticSuggestionFeedback, recordTestRunEvent, recordWorkEvent, resolveContextRef, resolvePlanRef, saveWorkflow, transitionWorkRecord, updateWorkPlan } = require("./graph-service");
 const { createScanCoordinator } = require("./scan-coordinator");
 const { compareGitSnapshots, createGitSnapshot } = require("./history");
 const { DEFAULT_FLOW_LENS_MAX_STEPS, MAX_FLOW_LENS_STEPS, MIN_FLOW_LENS_STEPS } = require("./flow-lens-options");
 const { createSurfaceCoreRuntime } = require("./core-runtime");
+const { MATERIALIZED, mcpSurfaceCategory } = require("./native-surface-contract");
 
 function graphDeltaCompatibilityProjection(delta, previousGraph, graph) {
   if (!delta || delta.available === true) return delta;
@@ -67,6 +69,8 @@ async function createMcpServer(options) {
   let graph;
   let previousGraph = null;
   let initialScanPromise = null;
+  const materializedGraphs = new WeakMap();
+  const graphContext = new AsyncLocalStorage();
   const refresh = async (changedPaths = null, reason = "agent-refresh") => {
     const result = await coordinator.refresh(changedPaths, reason);
     previousGraph = result.previousGraph;
@@ -80,11 +84,31 @@ async function createMcpServer(options) {
     return { graph, delta, scanOutcome: result.outcome };
   };
   const currentGraph = () => {
+    const scoped = graphContext.getStore();
+    if (scoped) return scoped;
     if (graph) return graph;
     const outcome = coordinator.currentOutcome();
     const error = new Error(`No complete Flopeek graph is available while the scan status is ${outcome.status}. Call get_scan_status and wait for a complete/current graph, or inspect source directly.`);
     error.code = "FLOPEEK_GRAPH_NOT_READY";
     throw error;
+  };
+  const currentMaterializedGraph = async () => {
+    const current = graph;
+    if (!current) return currentGraph();
+    if (Array.isArray(current.nodes)) return current;
+    let pending = materializedGraphs.get(current);
+    if (!pending) {
+      pending = Promise.resolve(core.materializeGraph(current)).then((materialized) => {
+        if (!materialized || !Array.isArray(materialized.nodes)
+          || materialized.project?.projectId !== current.project?.projectId
+          || materialized.state?.graphVersion !== current.state?.graphVersion) {
+          throw new Error("CoreClient materialization did not match the current graph handle.");
+        }
+        return materialized;
+      });
+      materializedGraphs.set(current, pending);
+    }
+    return pending;
   };
   const startInitialScan = () => {
     if (!initialScanPromise) initialScanPromise = refresh(null, "mcp-initial");
@@ -99,7 +123,11 @@ async function createMcpServer(options) {
   const registerWithAnnotations = (name, config, annotations, handler) => {
     server.registerTool(name, { ...config, annotations }, async (input) => {
       try {
-        return jsonResult(await handler(input));
+        const execute = () => handler(input);
+        const value = mcpSurfaceCategory(name) === MATERIALIZED
+          ? await graphContext.run(await currentMaterializedGraph(), execute)
+          : await execute();
+        return jsonResult(value);
       } catch (error) {
         return errorResult(error);
       }
@@ -755,7 +783,11 @@ async function createMcpServer(options) {
       graphState: refreshed.state,
       stats: refreshed.stats,
       refresh: refreshed.analysis.refresh,
-      cache: options.cache === false ? "disabled" : path.join(root, ".flopeek", "graph.json"),
+      cache: options.cache === false
+        ? "disabled"
+        : core.sourceAuthority === "rust"
+          ? path.join(root, ".flopeek", "native-core.sqlite3")
+          : path.join(root, ".flopeek", "graph.json"),
       cacheState: refreshed.analysis.cacheState,
       derivedCacheInvalidation: refreshed.analysis.derivedCacheInvalidation,
       delta: graphDeltaCompatibilityProjection(delta, previousGraph, refreshed),

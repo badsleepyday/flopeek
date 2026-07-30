@@ -16,6 +16,7 @@ const { scanRepository } = require("../../src/scanner");
 const ROOT = path.join(__dirname, "..", "..");
 const MANIFEST = path.join(ROOT, "native", "flopeek-core", "Cargo.toml");
 const NATIVE = { command: "cargo", args: ["run", "--quiet", "--manifest-path", MANIFEST, "--"] };
+const NATIVE_TEST_OPTIONS = { native: NATIVE, requestTimeoutMs: 120_000 };
 
 test("native binary selection prefers explicit configuration, platform package, release, then debug", () => {
   const allAvailable = () => true;
@@ -86,7 +87,7 @@ test("native incremental coordinator reuses cross-process JS facts through one p
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 
   const jsFirst = scanRepository(root);
-  const first = await scanWithNativeIncremental(root, { native: NATIVE });
+  const first = await scanWithNativeIncremental(root, NATIVE_TEST_OPTIONS);
   assert.deepEqual(createCoreCompatibilityProjection(first.graph), createCoreCompatibilityProjection(jsFirst));
   assert.equal(first.native.manifest.changedFiles, jsFirst.stats.scannedFiles);
   assert.equal(first.native.manifest.ephemeralSourceRecords, jsFirst.stats.scannedFiles);
@@ -100,7 +101,7 @@ test("native incremental coordinator reuses cross-process JS facts through one p
   assert.ok(first.native.profile.nativeSessionCloseMs >= 0);
 
   const jsUnchanged = scanRepository(root);
-  const unchanged = await scanWithNativeIncremental(root, { native: NATIVE });
+  const unchanged = await scanWithNativeIncremental(root, NATIVE_TEST_OPTIONS);
   assert.deepEqual(createCoreCompatibilityProjection(unchanged.graph), createCoreCompatibilityProjection(jsUnchanged));
   assert.equal(unchanged.native.manifest.changedFiles, 0);
   assert.equal(unchanged.native.manifest.ephemeralSourceRecords, 0);
@@ -112,7 +113,7 @@ test("native incremental coordinator reuses cross-process JS facts through one p
   const changedPath = jsUnchanged.nodes.find((node) => node.kind === "file").path;
   fs.appendFileSync(path.join(root, changedPath), "\n");
   const jsChanged = scanRepository(root);
-  const changed = await scanWithNativeIncremental(root, { native: NATIVE });
+  const changed = await scanWithNativeIncremental(root, NATIVE_TEST_OPTIONS);
   assert.deepEqual(createCoreCompatibilityProjection(changed.graph), createCoreCompatibilityProjection(jsChanged));
   assert.equal(changed.native.manifest.changedFiles, 1);
   assert.equal(changed.native.manifest.ephemeralSourceRecords, 1);
@@ -126,7 +127,7 @@ test("caller-owned native session stays open for multiple incremental scans", as
   const root = copiedFixture("legacy-handoff");
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const { createNativeIncrementalSession } = require("../../src/native-incremental-coordinator");
-  const session = createNativeIncrementalSession(NATIVE);
+  const session = createNativeIncrementalSession(NATIVE, NATIVE_TEST_OPTIONS);
   t.after(() => session.close());
   const first = await scanWithNativeIncremental(root, { session });
   const second = await scanWithNativeIncremental(root, { session });

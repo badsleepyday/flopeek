@@ -13,9 +13,13 @@ const REQUIRED_NATIVE_ADAPTERS = Object.freeze(getAdapterRegistry().adapters
   .sort());
 
 function sameStringSet(left, right) {
-  return Array.isArray(left)
-    && left.length === right.length
-    && [...new Set(left)].sort().every((value, index) => value === right[index]);
+  if (!Array.isArray(left) || !Array.isArray(right)) return false;
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  return left.length === leftSet.size
+    && right.length === rightSet.size
+    && leftSet.size === rightSet.size
+    && [...leftSet].every((value) => rightSet.has(value));
 }
 
 // A native graph store is not a native backend when JavaScript still parses

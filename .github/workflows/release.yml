@@ -82,17 +82,22 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
+      - name: Verify owner and reviewer approval before any npm publication
+        run: |
+          npm run verify:npm-publication
+          npm run verify:github-release-preflight -- --tag "$GITHUB_REF_NAME"
+          node scripts/verify-native-release-set.js --assets release-assets
       - run: npm run check:support
       - run: npm run check:docs
       - run: npm run test:public-source
       - run: npm run test:package
       - run: npm run audit:package
       - run: npm run verify:clean-room
-      - run: node scripts/verify-native-release-set.js --assets release-assets
       - name: Pack the exact main package after all verification
         run: |
           mkdir main-dist
           npm pack --pack-destination main-dist
+          node scripts/verify-native-release-set.js --assets release-assets --main "$(find main-dist -maxdepth 1 -name 'flopeek-[0-9]*.tgz' -print -quit)"
       - uses: actions/upload-artifact@v4
         with:
           name: main-package
@@ -113,7 +118,7 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
-      - name: Publish immutable versions under a staging tag
+      - name: Publish or verify immutable versions under a staging tag
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -122,10 +127,7 @@ jobs:
             exit 1
           fi
           staging_tag="native-candidate-${GITHUB_RUN_ID}"
-          for package in release-assets/flopeek-native-*.tgz; do
-            npm publish "$package" --access public --tag "$staging_tag" --provenance
-          done
-          npm publish "$(find release-assets -maxdepth 1 -name 'flopeek-[0-9]*.tgz' -print -quit)" --access public --tag "$staging_tag" --provenance
+          node scripts/publish-npm-release-set.js --assets release-assets --staging-tag "$staging_tag"
       - name: Anonymous registry clean-room install of the exact main package
         env:
           NODE_AUTH_TOKEN: ""
@@ -145,6 +147,14 @@ jobs:
             npm dist-tag add "${package}@${version}" beta
           done
           npm dist-tag add "flopeek@${version}" beta
+      - name: Verify the approved public registry state
+        run: npm run verify:published-release -- --tag "$GITHUB_REF_NAME"
+      - name: Remove staging dist-tags after successful promotion
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          staging_tag="native-candidate-${GITHUB_RUN_ID}"
+          node scripts/cleanup-npm-staging-tags.js --staging-tag "$staging_tag"
 
   release:
     name: Verify and publish GitHub Release

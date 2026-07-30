@@ -491,6 +491,7 @@ fn collect_imports(node: Node<'_>, path: &str, source: &str, imports: &mut Vec<N
                     if let Some(specifier) = text(child, source) {
                         imports.push(NativeJsImport {
                             specifier,
+                            standard: None,
                             evidence: evidence(path, child),
                         });
                     }
@@ -504,6 +505,7 @@ fn collect_imports(node: Node<'_>, path: &str, source: &str, imports: &mut Vec<N
                     {
                         imports.push(NativeJsImport {
                             specifier,
+                            standard: None,
                             evidence: evidence(path, child),
                         });
                     }

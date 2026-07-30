@@ -34,7 +34,8 @@
     "benchmarks/semantic-flow-suggestions.json",
     "benchmarks/semantic-suggestion-feedback-contract.json",
     "benchmarks/monorepo-package-selection.json",
-    "contracts/adapter-capabilities.json"
+    "contracts/adapter-capabilities.json",
+    "packaging/native-rollout-evidence.json"
   ],
   "allowedDirectories": [
     "docs",
@@ -51,6 +52,7 @@
     "docs/assets/shared-context-workflow.svg",
     "docs/assets/screenshots/flow-lens.png",
     "package.json",
+    "packaging/native-rollout-evidence.json",
     "src/cli.js",
     "src/core-compatibility.js",
     "src/mcp.js",

@@ -133,7 +133,7 @@ function main() {
   const report = {
     schemaVersion: "flopeek-native-js-facts-comparison/v1",
     oracle: "javascript-scanner-record-subset",
-    parser: "native-tree-sitter-source/v17",
+    parser: "native-tree-sitter-source/v18",
     resolver: "native-js-resolver/v1",
     scope: "complete JavaScript/TypeScript scanner-result contract, import-resolution facts, and ordered StructuralFactBatch record projection",
     summary: {

@@ -590,11 +590,13 @@ The scanner integration suite is large and should be split into faster feedback 
 
 ### Native-core strangler boundary
 
-The current `flopeek-core-client/v3` facade gives an unbounded scan coordinator
-one explicit `scan`/`refresh`/`getLastCompleteGraph`/`close` lifecycle. Native
+The current `flopeek-core-client/v6` facade gives an unbounded scan coordinator
+one explicit `scan`/`refresh`/`getLastCompleteGraph`/`materializeGraph`/`close`
+lifecycle. Native
 mode uses Rust+SQLite as its sole graph and core-query authority; it cannot
-construct or accept `JsCoreClient`. The strict stage-7 source path is narrower:
-Rust owns inventory, JS/TS parsing, import resolution, source hashes, and
+construct or accept `JsCoreClient`. On the strict source path, Rust owns
+inventory, parsing for every rollout-required adapter (including bundled Go),
+import resolution, source hashes, and
 structural-record ordering, batch envelope, entry metadata, and graph assembly;
 bounded Project Overview selection and its static agent-context evidence are
 also assembled by Rust. Node may append only explicitly local runtime evidence,
@@ -604,8 +606,16 @@ it rejects unpromoted adapters instead of invoking a JavaScript parser. The
 ephemeral path performs the same work in one Rust JSONL session without SQLite
 or repository metadata. `native-experimental` is the explicit dogfood request;
 the rollout-gated `native` request records a visible JavaScript fallback when
-it cannot select native. MCP and HTTP share that same client instance with their coordinator. Legacy delivery
-and extension calls remain separate adapters. `native/flopeek-core --native-serve` exposes the persistent
+it cannot select native. Normal `native` activation loads an immutable bundled
+rollout packet and probes the installed platform package; selection still
+requires an eligible five-repository gate and an exact package/protocol/adapter
+contract/platform-binary binding. MCP uses handle-only graphs for native-safe
+tools and one lazy verified `materializeGraph` snapshot per graph handle for
+legacy tools. The broad synchronous HTTP surface deliberately requests a
+materialized graph until every route has an async native boundary; its native
+cache/capability/delta routes do not read `graph.json`. MCP and HTTP share the
+same client instance with their coordinator. Legacy delivery and extension
+calls remain separate adapters. `native/flopeek-core --native-serve` exposes the persistent
 `flopeek-native-protocol/v1` JSONL bootstrap with request IDs and typed errors.
 `StructuralFactBatch/v1` has no source-body transport. A separate bounded
 manifest-only `sourceBatch` may transfer current changed UTF-8 text once to the

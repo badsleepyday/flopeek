@@ -23,6 +23,7 @@ pub struct NativeResolvedPackage {
     pub specifier: String,
     pub package_path: String,
     pub files: Vec<String>,
+    pub metadata: Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -352,6 +353,146 @@ fn is_java_standard_library(specifier: &str) -> bool {
     specifier.starts_with("java.") || specifier.starts_with("javax.")
 }
 
+fn title_case_path(value: &str) -> String {
+    let mut result = String::new();
+    let mut previous_was_lower = false;
+    for character in value.chars() {
+        let separator = ".-_/@".contains(character);
+        let uppercase = character.is_ascii_uppercase();
+        if separator {
+            if !result.is_empty() && !result.ends_with(' ') {
+                result.push(' ');
+            }
+        } else {
+            if uppercase && previous_was_lower && !result.ends_with(' ') {
+                result.push(' ');
+            }
+            if result.is_empty() || result.ends_with(' ') {
+                result.push(character.to_ascii_uppercase());
+            } else {
+                result.push(character);
+            }
+        }
+        previous_was_lower = character.is_ascii_lowercase();
+    }
+    result.trim().to_string()
+}
+
+fn go_package_metadata(package_path: &str, files: &[String]) -> Value {
+    let parts = package_path.split('/').collect::<Vec<_>>();
+    let source_root = parts
+        .iter()
+        .position(|part| ["src", "apps", "packages", "modules", "services"].contains(part));
+    let candidate = source_root
+        .and_then(|index| parts.get(index + 1))
+        .or_else(|| parts.first())
+        .copied()
+        .unwrap_or(".");
+    let domain =
+        if candidate.contains('.') || ["index", "main", "app", "routes"].contains(&candidate) {
+            "Project".to_string()
+        } else {
+            title_case_path(candidate)
+        };
+    let feature_parts = source_root
+        .map(|index| &parts[index + 1..])
+        .unwrap_or(parts.as_slice());
+    let feature = feature_parts.first().copied().unwrap_or("project");
+    let feature = if feature.contains('.') {
+        "project".to_string()
+    } else {
+        feature.to_string()
+    };
+    let basename = parts.last().copied().unwrap_or(".");
+    json!({
+        "label": if package_path == "." { "Root Go package".to_string() } else { title_case_path(basename) },
+        "domain": domain,
+        "feature": feature,
+        "layer": "application",
+        "detectedResponsibility": "Internal Go package resolved statically from go.mod.",
+        "methods": [],
+        "language": "go",
+        "analysis": { "parser": "go-module-resolver", "status": "resolved-import", "confidence": "exact" },
+        "evidence": { "file": package_path },
+        "files": files,
+    })
+}
+
+fn go_module_declaration(root: &Path, from_path: &str) -> Option<(String, String)> {
+    let mut directory = Path::new(from_path).parent()?.to_path_buf();
+    loop {
+        let relative = normalize_relative(&directory).unwrap_or_default();
+        let manifest = root.join(&directory).join("go.mod");
+        if let Ok(contents) = std::fs::read_to_string(manifest) {
+            let module = contents.lines().find_map(|line| {
+                let line = line.trim();
+                line.strip_prefix("module ")
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })?;
+            return Some((
+                module,
+                if relative.is_empty() {
+                    ".".into()
+                } else {
+                    relative
+                },
+            ));
+        }
+        if directory.as_os_str().is_empty() || !directory.pop() {
+            break;
+        }
+    }
+    None
+}
+
+fn resolve_go_module(
+    root: &Path,
+    from_path: &str,
+    specifier: &str,
+    known_paths: &BTreeSet<String>,
+) -> Option<Result<NativeResolvedImport, NativeResolvedPackage>> {
+    let (module, module_directory) = go_module_declaration(root, from_path)?;
+    let suffix = if specifier == module {
+        ""
+    } else {
+        specifier.strip_prefix(&format!("{module}/"))?
+    };
+    let package_path = match (module_directory.as_str(), suffix) {
+        (".", "") => ".".to_string(),
+        (".", suffix) => suffix.to_string(),
+        (base, "") => base.to_string(),
+        (base, suffix) => format!("{base}/{suffix}"),
+    };
+    let mut files = known_paths
+        .iter()
+        .filter(|path| path.ends_with(".go") && !path.ends_with("_test.go"))
+        .filter(|path| {
+            let parent = Path::new(path)
+                .parent()
+                .and_then(normalize_relative)
+                .unwrap_or_else(|| ".".to_string());
+            parent == package_path
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    files.sort_by(|left, right| js_locale_compare(left, right));
+    match files.as_slice() {
+        [] => None,
+        [target_path] => Some(Ok(NativeResolvedImport {
+            specifier: specifier.to_string(),
+            target_path: target_path.clone(),
+        })),
+        _ => Some(Err(NativeResolvedPackage {
+            specifier: specifier.to_string(),
+            package_path: package_path.clone(),
+            metadata: go_package_metadata(&package_path, &files),
+            files,
+        })),
+    }
+}
+
 fn external_import(specifier: &str, dev_packages: &BTreeSet<String>) -> NativeExternalImport {
     let name = package_name(specifier);
     let dependency_kind = dependency_kind(specifier, dev_packages);
@@ -480,6 +621,16 @@ pub fn resolve_native_js_imports(
             };
             for imported in &fact.structural.imports {
                 let specifier = imported.specifier.as_str();
+                if path.ends_with(".go")
+                    && let Some(go_resolution) =
+                        resolve_go_module(root, path, specifier, known_paths)
+                {
+                    match go_resolution {
+                        Ok(value) => result.resolved_imports.push(value),
+                        Err(value) => result.resolved_packages.push(value),
+                    }
+                    continue;
+                }
                 let resolved = if path.ends_with(".rs") {
                     resolve_rust_import(root, path, specifier, known_paths)
                 } else if specifier.starts_with('.') {
@@ -506,6 +657,7 @@ pub fn resolve_native_js_imports(
                 // import (for example a CSS asset outside its resolver
                 // extensions) into an external dependency node.
                 } else if !specifier.starts_with('.')
+                    && imported.standard != Some(true)
                     && !is_node_builtin(specifier)
                     && !is_java_standard_library(specifier)
                 {

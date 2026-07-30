@@ -6,6 +6,7 @@ const { createJsCoreClient } = require("./js-core-client");
 const { createNativeCoreClient } = require("./native-core-client");
 const { createNativeIncrementalSession } = require("./native-incremental-coordinator");
 const { createShadowCoreClient } = require("./shadow-core-client");
+const { loadBundledNativeRolloutEvidence, probeVerifiedNativeRuntime } = require("./native-rollout-evidence");
 
 const CORE_MODES = new Set(["js", "shadow", "native", "native-experimental"]);
 
@@ -57,6 +58,7 @@ function createNativeFallbackCoreClient(native, javascript) {
     scan: scanWithFallback("scan"),
     refresh: scanWithFallback("refresh"),
     getLastCompleteGraph: (...args) => (nativeAuthoritative ? nativeCore : javascriptCore).getLastCompleteGraph(...args),
+    materializeGraph: query("materializeGraph"),
     getScanStatus: query("getScanStatus"),
     getProjectOverview: query("getProjectOverview"),
     findNodes: query("findNodes"),
@@ -161,21 +163,45 @@ function createSurfaceCoreRuntime(options = {}) {
   const mode = options.coreMode == null
     ? (CORE_MODES.has(options.mode) ? options.mode : undefined)
     : options.coreMode;
+  let bundledEvidence = null;
+  let verifiedRuntime = null;
+  if (mode === "native" && options.rolloutEvidence === undefined) {
+    bundledEvidence = loadBundledNativeRolloutEvidence(options.root);
+  }
+  if (mode === "native" && options.enableNativeCore === undefined
+    && !options.nativeCore && !options.native) {
+    verifiedRuntime = probeVerifiedNativeRuntime(options.root, {
+      expectedBinaries: bundledEvidence?.complete
+        ? bundledEvidence.packet.binding.binaries
+        : null,
+    });
+  }
+  const rolloutEvidence = options.rolloutEvidence ?? bundledEvidence?.evidence;
   const nativeAvailable = options.enableNativeCore === true
     || Boolean(options.nativeCore)
     || Boolean(options.native)
+    || verifiedRuntime?.available === true
     || mode === "native-experimental";
   const selection = selectCoreMode({
     mode,
-    rolloutEvidence: options.rolloutEvidence,
+    rolloutEvidence,
     nativeAvailable,
   });
   const core = createConfiguredCoreClient({
     ...options,
     mode,
+    rolloutEvidence,
     enableNativeCore: nativeAvailable,
   });
-  return Object.freeze({ core, selection });
+  return Object.freeze({ core, selection: Object.freeze({
+    ...selection,
+    ...(bundledEvidence ? { rolloutEvidence: {
+      schemaVersion: bundledEvidence.packet.schemaVersion,
+      status: bundledEvidence.packet.status,
+      boundPackageVersion: bundledEvidence.packet.binding.packageVersion,
+    } } : {}),
+    ...(verifiedRuntime ? { nativeRuntime: verifiedRuntime } : {}),
+  }) });
 }
 
 module.exports = { createConfiguredCoreClient, createNativeFallbackCoreClient, createSurfaceCoreClient, createSurfaceCoreRuntime, observeCoreRuntime };

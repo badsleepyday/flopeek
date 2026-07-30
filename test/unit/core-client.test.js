@@ -79,7 +79,7 @@ function observedNativeRequests(requests) {
   };
 }
 
-test("JavaScript core client declares the complete v5 core boundary", () => {
+test("JavaScript core client declares the complete v6 core boundary", () => {
   const client = createJsCoreClient();
   assert.equal(client.schemaVersion, CORE_CLIENT_SCHEMA);
   assert.equal(client.implementation, "javascript");
@@ -290,6 +290,47 @@ test("experimental native core preserves Go package nodes, edges, and call evide
   }
 });
 
+test("strict Rust source authority owns Go parsing, module resolution, and direct calls", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-go-package-"));
+  fs.mkdirSync(path.join(root, "cmd"), { recursive: true });
+  fs.mkdirSync(path.join(root, "internal", "helper"), { recursive: true });
+  fs.writeFileSync(path.join(root, "go.mod"), "module example.test/native\n\ngo 1.23\n");
+  fs.writeFileSync(path.join(root, "cmd", "main.go"), [
+    "package main",
+    'import helper "example.test/native/internal/helper"',
+    "func validate() {}",
+    "func main() { validate(); helper.Ping() }",
+    "",
+  ].join("\n"));
+  fs.writeFileSync(path.join(root, "internal", "helper", "helper.go"), "package helper\nfunc Ping() {}\n");
+  fs.writeFileSync(path.join(root, "internal", "helper", "other.go"), "package helper\nfunc Other() {}\n");
+  const native = createNativeCoreClient({
+    native: nativeClient(),
+    sessionId: "strict-rust-go-package",
+    sourceAuthority: "rust",
+  });
+  context.after(async () => {
+    await native.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  const graph = await native.scan(root, { persistIdentity: false });
+  const oracle = createJsCoreClient().scan(root, {
+    persistIdentity: false,
+    sessionProjectId: graph.project.projectId,
+  });
+  assert.equal(createCoreCompatibilityDigest(graph), createCoreCompatibilityDigest(oracle));
+  const main = graph.nodes.find((node) => node.id === "symbol:cmd/main.go:function:main");
+  const validate = graph.nodes.find((node) => node.id === "symbol:cmd/main.go:function:validate");
+  const ping = graph.nodes.find((node) => node.id === "symbol:internal/helper/helper.go:function:Ping");
+  const packageNode = graph.nodes.find((node) => node.id === "go-package:internal/helper");
+  assert.equal(graph.nodes.find((node) => node.id === "file:cmd/main.go").analysis.parser, "go-parser");
+  assert.ok(main && validate && ping && packageNode);
+  assert.ok(graph.edges.some((edge) => edge.source === main.id && edge.target === validate.id && edge.type === "calls"));
+  assert.ok(graph.edges.some((edge) => edge.source === main.id && edge.target === ping.id && edge.type === "calls"));
+  assert.equal(graph.nodes.some((node) => node.id === "external:example.test"), false);
+});
+
 test("experimental native core owns persistent public graph versions", async (context) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-native-core-client-"));
   fs.cpSync(FIXTURE, root, { recursive: true, filter: (source) => path.basename(source) !== ".flopeek" });
@@ -498,7 +539,7 @@ test("strict Rust source authority parses and resolves a TypeScript graph withou
     fs.rmSync(root, { recursive: true, force: true });
   });
   assert.equal(native.sourceAuthority, "rust");
-  assert.equal(native.parserHost, "rust-tree-sitter-source/v17");
+  assert.equal(native.parserHost, "rust-tree-sitter-source/v18");
   assert.equal(native.factEnvelopeHost, "rust-native-structural-batch/v1");
   const graph = await native.scan(root);
   const oracle = javascript.scan(root);
@@ -740,9 +781,11 @@ test("strict Rust handle-only scan keeps public graph collections out of Node", 
   assert.equal(resolved.status, "current");
   assert.equal(resolved.card?.kind, "flow");
 
-  const materialized = await native.scan(root);
+  const materialized = await native.materializeGraph(graph);
   assert.ok(Array.isArray(materialized.nodes));
-  assert.ok(requests.some((request) => request.method === "getNativeCurrentPublicGraph"));
+  assert.equal(materialized.project.projectId, graph.project.projectId);
+  assert.equal(materialized.state.graphVersion, graph.state.graphVersion);
+  assert.ok(requests.some((request) => request.method === "materializeNativeGraph"));
 });
 
 test("native last-complete recovery keeps the StructuralFactBatch in Rust", async (context) => {
@@ -790,6 +833,13 @@ test("strict Rust no-cache handle-only scan keeps its public graph inside the na
   await native.findNodes(graph, { query: "validation" });
   const query = requests.find((request) => request.method === "findNodes");
   assert.equal(query.params.sessionGraph.schemaVersion, "flopeek-native-session-graph-handle/v1");
+  const materialized = await native.materializeGraph(graph);
+  assert.ok(Array.isArray(materialized.nodes));
+  assert.equal(materialized.project.projectId, graph.project.projectId);
+  assert.equal(materialized.state.graphVersion, graph.state.graphVersion);
+  const materialization = requests.find((request) => request.method === "materializeNativeGraph");
+  assert.equal(materialization.params.sessionGraph.schemaVersion, "flopeek-native-session-graph-handle/v1");
+  assert.equal(Object.hasOwn(materialization.params, "projectRoot"), false);
   assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
 });
 
@@ -916,6 +966,38 @@ test("strict Rust ephemeral refresh ignores watcher events from excluded directo
   assert.equal(refreshed.nodes.some((node) => node.path === ignoredPath), false);
   assert.deepEqual(refreshed.analysis.refresh.changedPaths, []);
   assert.equal(refreshed.analysis.refresh.analyzedFiles, 0);
+});
+
+test("strict Rust excluded add and delete events reconcile repository-scope counts immediately", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-excluded-membership-"));
+  fs.mkdirSync(path.join(root, "src"), { recursive: true });
+  fs.mkdirSync(path.join(root, "generated"), { recursive: true });
+  fs.mkdirSync(path.join(root, ".flopeek"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".flopeek", "config.json"), JSON.stringify({
+    schemaVersion: 1,
+    exclude: ["generated/**"],
+  }));
+  fs.writeFileSync(path.join(root, "src", "main.ts"), "export const main = true;\n");
+  const native = createNativeCoreClient({
+    native: nativeClient(),
+    sourceAuthority: "rust",
+    sessionId: "excluded-membership",
+  });
+  context.after(async () => {
+    await native.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  let graph = await native.scan(root, { persistIdentity: false });
+  assert.equal(graph.analysis.repositoryScope.counts.excluded, 0);
+  const excludedPath = "generated/new-client.ts";
+  fs.writeFileSync(path.join(root, ...excludedPath.split("/")), "export const generated = true;\n");
+  graph = await native.refresh(root, { persistIdentity: false, changedPaths: [excludedPath] });
+  assert.equal(graph.analysis.repositoryScope.counts.excluded, 1);
+  assert.equal(graph.nodes.some((node) => node.path === excludedPath), false);
+  fs.rmSync(path.join(root, ...excludedPath.split("/")));
+  graph = await native.refresh(root, { persistIdentity: false, changedPaths: [excludedPath] });
+  assert.equal(graph.analysis.repositoryScope.counts.excluded, 0);
 });
 
 test("strict Rust ephemeral session reconciles explicitly after scope configuration changes", async (context) => {

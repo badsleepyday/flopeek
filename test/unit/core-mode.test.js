@@ -196,7 +196,7 @@ test("surface runtime exposes strict Rust source authority in its execution reco
     ...createJsCoreClient(),
     implementation: "native-experimental",
     sourceAuthority: "rust",
-    parserHost: "rust-tree-sitter-source/v17",
+    parserHost: "rust-tree-sitter-source/v18",
     factEnvelopeHost: "rust-native-structural-batch/v1",
   };
   const runtime = createSurfaceCoreRuntime({ coreMode: "native-experimental", nativeCore });
@@ -205,7 +205,7 @@ test("surface runtime exposes strict Rust source authority in its execution reco
   assert.deepEqual(observed.execution, {
     selectedImplementation: "native",
     sourceAuthority: "rust",
-    parserHost: "rust-tree-sitter-source/v17",
+    parserHost: "rust-tree-sitter-source/v18",
     factEnvelopeHost: "rust-native-structural-batch/v1",
     fallback: { active: false, reason: null },
   });

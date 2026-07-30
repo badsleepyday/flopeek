@@ -95,6 +95,7 @@ pub fn parse_native_csharp_facts(path: &str, source: &str) -> Option<NativeJsFac
             {
                 structural.imports.push(NativeJsImport {
                     specifier: name,
+                    standard: None,
                     evidence: evidence(path, node),
                 });
             }

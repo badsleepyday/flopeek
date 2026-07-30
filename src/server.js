@@ -180,6 +180,7 @@ async function startServer(options) {
   let graph = null;
   let previousGraph = null;
   let materializedGraph = null;
+  let previousMaterializedGraph = null;
   let closeWatcher = () => {};
   let refreshTimer = null;
   let refreshInProgress = false;
@@ -219,12 +220,12 @@ async function startServer(options) {
       toVersion: graph.state?.graphVersion,
     });
     const changedContexts = delta?.schemaVersion
-      ? await core.getChangedContexts(graph, { fromVersion: delta.fromGraphVersion, toVersion: delta.toGraphVersion })
+      ? await core.getChangedContexts(materializedGraph, { fromVersion: delta.fromGraphVersion, toVersion: delta.toGraphVersion })
       : null;
     const changedContextMs = elapsedMilliseconds(contextStartedAt);
-    const previousNodeIds = new Set(previousGraph?.nodes?.map((node) => node.id));
-    const addedFiles = previousGraph && Array.isArray(graph.nodes)
-      ? graph.nodes
+    const previousNodeIds = new Set(previousMaterializedGraph?.nodes?.map((node) => node.id));
+    const addedFiles = previousGraph && Array.isArray(materializedGraph?.nodes)
+      ? materializedGraph.nodes
         .filter((node) => node.kind === "file" && !previousNodeIds.has(node.id))
         .sort((left, right) => left.path.localeCompare(right.path))
       : [];
@@ -249,14 +250,19 @@ async function startServer(options) {
     const refreshStartedAt = process.hrtime.bigint();
     const result = await coordinator.refresh(changedPaths, reason || "scan");
     previousGraph = result.previousGraph;
+    previousMaterializedGraph = materializedGraph;
     graph = result.graph;
     materializedGraph = null;
     if (!graph) {
       const failure = result.outcome.failure?.message || result.outcome.reason || "No complete graph is available.";
       throw new Error(`Flopeek scan ${result.outcome.status}: ${failure}`);
     }
+    materializedGraph = Array.isArray(graph.nodes) ? graph : await core.materializeGraph(graph);
+    if (!materializedGraph || !Array.isArray(materializedGraph.nodes)) {
+      throw new Error("The native graph could not be materialized for the server compatibility surface.");
+    }
     if (reason && result.outcome.status === "complete") await broadcastGraphUpdate(reason, refreshStartedAt);
-    return graph;
+    return materializedGraph;
   };
   const scanFailureMessage = (currentOutcome) => {
     const detail = currentOutcome.failure?.message || currentOutcome.reason || "The current source was not promoted.";
@@ -276,13 +282,17 @@ async function startServer(options) {
   };
   const currentGraph = () => {
     if (!graph) throw new Error("No complete Flopeek graph is available.");
+    return materializedGraph || graph;
+  };
+  const currentGraphHandle = () => {
+    if (!graph) throw new Error("No complete Flopeek graph is available.");
     return graph;
   };
   const explicitMaterializedGraph = async () => {
-    const current = currentGraph();
+    const current = currentGraphHandle();
     if (Array.isArray(current.nodes)) return current;
     if (!materializedGraph) {
-      materializedGraph = await core.getLastCompleteGraph(root);
+      materializedGraph = await core.materializeGraph(current);
       if (!materializedGraph || !Array.isArray(materializedGraph.nodes)) {
         throw new Error("The native graph could not be materialized for this explicit compatibility surface.");
       }
@@ -356,11 +366,17 @@ async function startServer(options) {
       if (request.method === "GET" && url.pathname === "/api/scan-status") return send(response, 200, coordinator.currentOutcome());
       if (request.method === "GET" && url.pathname === "/api/graph") return send(response, 200, await explicitMaterializedGraph());
       if (request.method === "GET" && url.pathname === "/api/capabilities") {
-        const current = currentGraph();
-        return send(response, 200, { ...current.analysis, cacheState: summarizeCacheResult(readGraphCacheResult(root, { expectedProjectId: current.project.projectId })) });
+        const current = currentGraphHandle();
+        const cacheState = core.sourceAuthority === "rust"
+          ? current.analysis.cacheState
+          : summarizeCacheResult(readGraphCacheResult(root, { expectedProjectId: current.project.projectId }));
+        return send(response, 200, { ...current.analysis, cacheState });
       }
       if (request.method === "GET" && url.pathname === "/api/cache") {
-        return send(response, 200, summarizeCacheResult(readGraphCacheResult(root, { expectedProjectId: currentGraph().project.projectId })));
+        const current = currentGraphHandle();
+        return send(response, 200, core.sourceAuthority === "rust"
+          ? current.analysis.cacheState
+          : summarizeCacheResult(readGraphCacheResult(root, { expectedProjectId: current.project.projectId })));
       }
       if (request.method === "GET" && url.pathname === "/api/cache-artifacts") return send(response, 200, getArtifactCacheAudit(currentGraph()));
       if (request.method === "GET" && url.pathname === "/api/cache-hygiene") return send(response, 200, getCacheHygiene(currentGraph()));
@@ -370,10 +386,10 @@ async function startServer(options) {
       if (request.method === "GET" && url.pathname === "/api/delta") {
         const from = url.searchParams.get("fromVersion");
         const to = url.searchParams.get("toVersion");
-        const current = currentGraph();
-        const delta = from !== null && to !== null
-          ? availableGraphDelta(current, Number(from), Number(to))
-          : latestAvailableGraphDelta(current);
+        const current = currentGraphHandle();
+        const delta = await core.getGraphDelta(current, from !== null && to !== null
+          ? { fromVersion: Number(from), toVersion: Number(to) }
+          : {});
         return delta ? send(response, 200, delta) : send(response, 404, { error: "No matching graph delta was found." });
       }
       if (request.method === "GET" && url.pathname === "/api/changed-contexts") {
@@ -389,9 +405,9 @@ async function startServer(options) {
         if (!flowId) throw requestError(400, "A flow query parameter is required.");
         return send(response, 200, getFlowComparison(currentGraph(), flowId, { fromVersion: url.searchParams.get("fromVersion"), toVersion: url.searchParams.get("toVersion") }));
       }
-      if (request.method === "GET" && url.pathname === "/api/view") return send(response, 200, await core.getProjectOverview(currentGraph(), url.searchParams));
-      if (request.method === "GET" && url.pathname === "/api/agent-bootstrap") return send(response, 200, await core.getScanStatus(currentGraph()));
-      if (request.method === "GET" && url.pathname === "/api/agent-context") return send(response, 200, (await core.getProjectOverview(currentGraph(), url.searchParams)).aiContext);
+      if (request.method === "GET" && url.pathname === "/api/view") return send(response, 200, await core.getProjectOverview(currentGraphHandle(), url.searchParams));
+      if (request.method === "GET" && url.pathname === "/api/agent-bootstrap") return send(response, 200, await core.getScanStatus(currentGraphHandle()));
+      if (request.method === "GET" && url.pathname === "/api/agent-context") return send(response, 200, (await core.getProjectOverview(currentGraphHandle(), url.searchParams)).aiContext);
       if (request.method === "POST" && url.pathname === "/api/handoff-context") {
         const body = await readBody(request);
         return send(response, 200, getHandoffContext(currentGraph(), body));
@@ -553,13 +569,13 @@ async function startServer(options) {
       if (request.method === "GET" && url.pathname === "/api/semantic-review-queue") return send(response, 200, getSemanticReviewQueue(currentGraph(), { status: url.searchParams.get("status") || "suggested" }));
       if (request.method === "GET" && url.pathname === "/api/brief") return send(response, 200, getDurableBrief(currentGraph(), url.searchParams.get("kind") || "project", url.searchParams.get("id"), url.searchParams.get("format") || "json"));
       if (request.method === "GET" && url.pathname === "/api/brief-manifests") return send(response, 200, listDurableBriefManifests(currentGraph(), { kind: url.searchParams.get("kind"), contextId: url.searchParams.get("contextId") }));
-      if (request.method === "GET" && url.pathname === "/api/search") return send(response, 200, await core.findNodes(currentGraph(), url.searchParams));
+      if (request.method === "GET" && url.pathname === "/api/search") return send(response, 200, await core.findNodes(currentGraphHandle(), url.searchParams));
       if (request.method === "GET" && url.pathname === "/api/project") return send(response, 200, currentGraph().project);
       if (request.method === "GET" && url.pathname === "/api/flows") return send(response, 200, (await explicitMaterializedGraph()).flows);
-      if (request.method === "GET" && url.pathname === "/api/entry-flows") return send(response, 200, await core.getEntryFlows(currentGraph(), url.searchParams.get("query") || "", url.searchParams.get("scope") || "application"));
+      if (request.method === "GET" && url.pathname === "/api/entry-flows") return send(response, 200, await core.getEntryFlows(currentGraphHandle(), url.searchParams.get("query") || "", url.searchParams.get("scope") || "application"));
       if (request.method === "GET" && url.pathname === "/api/flow-lens") {
         const requestedMaxSteps = parseFlowLensMaxStepsQuery(url.searchParams.get("maxSteps"));
-        const lens = await core.getFlowProjection(currentGraph(), url.searchParams.get("flow"), url.searchParams.get("scope") || "application", { maxSteps: requestedMaxSteps });
+        const lens = await core.getFlowProjection(currentGraphHandle(), url.searchParams.get("flow"), url.searchParams.get("scope") || "application", { maxSteps: requestedMaxSteps });
         return lens ? send(response, 200, lens) : send(response, 404, { error: "Detected flow not found in the selected scope." });
       }
       if (request.method === "GET" && url.pathname === "/api/flow-suggestion") {
@@ -568,7 +584,7 @@ async function startServer(options) {
       }
       if (request.method === "GET" && url.pathname === "/api/flow-context-card") {
         const requestedMaxSteps = parseFlowLensMaxStepsQuery(url.searchParams.get("maxSteps"));
-        const card = await core.getFlowContextCard(currentGraph(), url.searchParams.get("flow"), url.searchParams.get("format") || "json", url.searchParams.get("scope") || "application", { maxSteps: requestedMaxSteps });
+        const card = await core.getFlowContextCard(currentGraphHandle(), url.searchParams.get("flow"), url.searchParams.get("format") || "json", url.searchParams.get("scope") || "application", { maxSteps: requestedMaxSteps });
         return card ? send(response, 200, card) : send(response, 404, { error: "Detected flow not found in the selected scope." });
       }
       if (request.method === "GET" && url.pathname === "/api/flow-verification") {
@@ -606,17 +622,17 @@ async function startServer(options) {
         if (!contextRef) throw requestError(400, "A contextRef query parameter is required.");
         return send(response, 200, getGitContextContinuity(currentGraph(), contextRef, { from: url.searchParams.get("from") || "HEAD~1", to: url.searchParams.get("to") || "HEAD" }));
       }
-      if (request.method === "GET" && url.pathname === "/api/impact") return send(response, 200, await core.getChangeImpact(currentGraph(), url.searchParams.getAll("path"), { maxDepth: url.searchParams.get("maxDepth"), previousGraph }));
+      if (request.method === "GET" && url.pathname === "/api/impact") return send(response, 200, await core.getChangeImpact(currentGraphHandle(), url.searchParams.getAll("path"), { maxDepth: url.searchParams.get("maxDepth"), previousGraph }));
       if (request.method === "GET" && url.pathname === "/api/export/mermaid") return send(response, 200, { mermaid: graphToMermaid(await explicitMaterializedGraph()) });
       if (request.method === "GET" && url.pathname === "/api/context-card") {
-        const card = await core.getContextCard(currentGraph(), url.searchParams.get("id"), url.searchParams.get("format") || "json");
+        const card = await core.getContextCard(currentGraphHandle(), url.searchParams.get("id"), url.searchParams.get("format") || "json");
         return card ? send(response, 200, card) : send(response, 404, { error: "Node not found." });
       }
       if (request.method === "GET" && url.pathname === "/api/context/resolve") {
-        return send(response, 200, await core.resolveContextRef(currentGraph(), url.searchParams.get("ref")));
+        return send(response, 200, await core.resolveContextRef(currentGraphHandle(), url.searchParams.get("ref")));
       }
       if (request.method === "GET" && url.pathname === "/api/node") {
-        const detail = await core.getNode(currentGraph(), url.searchParams.get("id"));
+        const detail = await core.getNode(currentGraphHandle(), url.searchParams.get("id"));
         return detail ? send(response, 200, detail) : send(response, 404, { error: "Node not found." });
       }
       if (request.method === "POST" && url.pathname === "/api/scan") {
@@ -799,6 +815,7 @@ async function startServer(options) {
     root,
     port: server.address().port,
     getGraph: () => currentGraph(),
+    getGraphHandle: () => currentGraphHandle(),
     getScanOutcome: () => coordinator.currentOutcome(),
     cancelScan: () => coordinator.cancel(),
     portBinding,

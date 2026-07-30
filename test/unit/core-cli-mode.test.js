@@ -70,7 +70,7 @@ test("CLI records the strict Rust source authority for an unbounded native exper
   assert.deepEqual(graph.analysis.coreRuntime.execution, {
     selectedImplementation: "native",
     sourceAuthority: "rust",
-    parserHost: "rust-tree-sitter-source/v17",
+    parserHost: "rust-tree-sitter-source/v18",
     factEnvelopeHost: "rust-native-structural-batch/v1",
     fallback: { active: false, reason: null },
   });

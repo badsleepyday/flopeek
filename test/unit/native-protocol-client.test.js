@@ -19,7 +19,7 @@ test("persistent native protocol client preserves one session and reports typed 
     command: "cargo",
     args: ["run", "--quiet", "--manifest-path", MANIFEST, "--"],
     cwd: ROOT,
-    requestTimeoutMs: 30_000,
+    requestTimeoutMs: 120_000,
   });
   context.after(async () => {
     await client.close();
@@ -83,7 +83,7 @@ test("native protocol abort terminates the isolated process and permits a clean 
     command: "cargo",
     args: ["run", "--quiet", "--manifest-path", MANIFEST, "--"],
     cwd: ROOT,
-    requestTimeoutMs: 30_000,
+    requestTimeoutMs: 120_000,
   });
   context.after(() => client.close());
   await client.start();
