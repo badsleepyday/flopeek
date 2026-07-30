@@ -50,6 +50,9 @@ test("candidate workflow builds each platform once and produces one immutable co
   assert.match(workflow, /npm pack --json --pack-destination \$env:CANDIDATE_BUNDLE/);
   assert.match(workflow, /--output "\$CANDIDATE_EVIDENCE\/native-rollout-evidence\.json"/);
   assert.match(workflow, /build-native-release-manifest\.js/);
+  assert.match(workflow, /name: Clean install \$\{\{ matrix\.package \}\}/);
+  assert.match(workflow, /--require-platform-install-evidence/);
+  assert.match(workflow, /pattern: native-candidate-install-\*/);
   assert.match(workflow, /name: native-candidate-bundle/);
   assert.doesNotMatch(workflow, /npm publish|gh release create|git push/);
   assert.doesNotMatch(workflow, /continue-on-error|\|\|\s*true/);

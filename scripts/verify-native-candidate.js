@@ -27,6 +27,7 @@ function main(argv = process.argv.slice(2)) {
   const workflowRunId = argument(argv, "--workflow-run-id");
   const expectedManifestSha256 = argument(argv, "--expected-manifest-sha256");
   const finalize = argv.includes("--finalize");
+  const requirePlatformInstallEvidence = argv.includes("--require-platform-install-evidence");
   if (!bundle) {
     if (![sourceSha, packageVersion, releaseChannel].every(Boolean)) {
       throw new Error("Usage: verify-native-candidate --source-sha <sha> --package-version <version> --release-channel <channel>, or --bundle <directory> [--finalize --workflow-run-id <id>].");
@@ -61,6 +62,7 @@ function main(argv = process.argv.slice(2)) {
   const result = validateCandidateBundle(bundleRoot, {
     expectedManifestSha256,
     expectedChannel: releaseChannel || undefined,
+    requirePlatformInstallEvidence,
   });
   process.stdout.write(`${JSON.stringify({
     schemaVersion: "flopeek-native-candidate-verification/v1",

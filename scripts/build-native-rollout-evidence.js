@@ -202,6 +202,125 @@ function validateProfiles(directory, benchmarkRepositories, binaryBindings) {
   };
 }
 
+function validateSoakEvidence(file, binaryBindings) {
+  const evidence = readJson(file);
+  const linux = binaryBindings["@flopeek/native-linux-x64-gnu"];
+  const expectedEventCounts = {
+    "content-only-edit": 500,
+    "symbol-addition": 150,
+    "symbol-removal": 100,
+    "file-add-delete": 100,
+    rename: 50,
+    "manifest-config-reconciliation": 50,
+    "no-op": 50,
+  };
+  if (evidence?.schemaVersion !== "flopeek-native-soak-evidence/v1"
+    || evidence.binarySha256 !== linux?.binarySha256
+    || evidence.summary?.modes !== 2
+    || evidence.summary?.totalRefreshEvents !== 2000
+    || evidence.summary?.status !== "passed"
+    || !Array.isArray(evidence.modes)
+    || evidence.modes.length !== 2) {
+    throw new Error("Rollout evidence requires a complete exact-binary 2000-event native soak.");
+  }
+  const modes = new Map(evidence.modes.map((mode) => [mode.mode, mode]));
+  for (const modeName of ["persistent", "cache-disabled"]) {
+    const mode = modes.get(modeName);
+    if (mode?.events !== 1000 || !Array.isArray(mode.raw) || mode.raw.length !== 1000
+      || JSON.stringify(mode.eventCounts) !== JSON.stringify(expectedEventCounts)
+      || mode.assertions?.exactParityEveryEvent !== true
+      || mode.assertions?.staleEdgesObserved !== false
+      || mode.assertions?.dualAuthorityObserved !== false
+      || mode.assertions?.unhandledProcessDeath !== false
+      || mode.assertions?.boundedSessionHistory !== true
+      || mode.rssPlateau?.combined?.plateau !== true
+      || mode.rssPlateau?.node?.plateau !== true
+      || mode.rssPlateau?.rust?.plateau !== true) {
+      throw new Error(`Native soak mode is incomplete: ${modeName}.`);
+    }
+    const rawEventCounts = Object.fromEntries(Object.keys(expectedEventCounts)
+      .map((event) => [event, mode.raw.filter((entry) => entry.event === event).length]));
+    if (JSON.stringify(rawEventCounts) !== JSON.stringify(expectedEventCounts)
+      || !mode.raw.every((event, index) => {
+        const previous = mode.raw[index - 1];
+        const changed = event.event !== "no-op";
+        const sqliteValid = modeName === "persistent"
+          ? event.sqlite?.databaseBytes > 0
+          : event.sqlite?.databaseBytes === 0 && event.sqlite?.walBytes === 0;
+        const historyValid = modeName === "cache-disabled"
+          ? Number.isSafeInteger(event.sessionHistory?.limit)
+            && Number.isSafeInteger(event.sessionHistory?.retained)
+            && event.sessionHistory.retained <= event.sessionHistory.limit
+          : event.sessionHistory === null;
+        return event.sequence === index + 1
+          && Number.isSafeInteger(event.graphVersion)
+          && (!previous
+            || (changed
+              ? event.graphVersion === previous.graphVersion + 1
+              : event.graphVersion === previous.graphVersion))
+          && Array.isArray(event.changedPaths)
+          && (changed ? event.changedPaths.length > 0 : event.changedPaths.length === 0)
+          && /^sha256:[a-f0-9]{64}$/u.test(event.compatibilityDigest || "")
+          && Number.isFinite(event.nodeRssBytes)
+          && Number.isFinite(event.rustRssBytes)
+          && event.combinedRssBytes === event.nodeRssBytes + event.rustRssBytes
+          && sqliteValid
+          && historyValid;
+      })) {
+      throw new Error(`Native soak raw series is invalid: ${modeName}.`);
+    }
+  }
+  return {
+    sha256: crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex"),
+    schemaVersion: evidence.schemaVersion,
+    totalRefreshEvents: evidence.summary.totalRefreshEvents,
+    modes: [...modes.keys()].sort(),
+  };
+}
+
+function validateSurfaceEvidence(file, binaryBindings) {
+  const evidence = readJson(file);
+  const linux = binaryBindings["@flopeek/native-linux-x64-gnu"];
+  const allowed = new Set([
+    "native-handle-safe",
+    "bounded-native-projection",
+    "requires-materialized-graph",
+    "unsupported-in-handle-mode",
+  ]);
+  const expectedCli = ["scan", "view", "impact", "delta", "bootstrap", "mcp", "serve"].sort();
+  const actualCli = Array.isArray(evidence?.cli)
+    ? evidence.cli.map((entry) => entry.command).sort()
+    : [];
+  if (evidence?.schemaVersion !== "flopeek-native-surface-matrix/v1"
+    || evidence.binarySha256 !== linux?.binarySha256
+    || !Array.isArray(evidence.cli)
+    || !Array.isArray(evidence.mcp)
+    || !Array.isArray(evidence.http)
+    || evidence.summary?.cliCommands !== 7
+    || evidence.summary?.mcpTools !== evidence.mcp?.length
+    || evidence.summary?.httpRoutes !== evidence.http?.length
+    || evidence.summary?.unclassified !== 0
+    || JSON.stringify(actualCli) !== JSON.stringify(expectedCli)
+    || ![...evidence.cli, ...evidence.mcp, ...evidence.http]
+      .every((entry) => allowed.has(entry.classification))
+    || evidence.invariants?.handleSafeDoesNotMaterialize !== true
+    || evidence.invariants?.materializedSharesOneMaterializationPerHandle !== true
+    || evidence.invariants?.refreshUsesNewMaterialization !== true
+    || evidence.invariants?.cacheDisabledUsesOwningSession !== true
+    || evidence.invariants?.staleAndExpiredHandlesFailClosed !== true
+    || evidence.invariants?.nativeAuthorityReadsGraphJson !== false
+    || evidence.verification?.exitCode !== 0) {
+    throw new Error("Rollout evidence requires a complete exact-binary native surface matrix.");
+  }
+  return {
+    sha256: crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex"),
+    schemaVersion: evidence.schemaVersion,
+    cliCommands: evidence.summary.cliCommands,
+    mcpTools: evidence.summary.mcpTools,
+    httpRoutes: evidence.summary.httpRoutes,
+  };
+}
+
 function platformBinaryBindings(assets, manifest, execFileSync = childProcess.execFileSync) {
   const expected = Object.keys(manifest.optionalDependencies || {}).sort();
   const bindings = {};
@@ -265,6 +384,8 @@ function buildPacket({
   profiles,
   assets,
   databaseOpenEvidence,
+  soakEvidence,
+  surfaceEvidence,
   execFileSync,
 }) {
   const manifest = readJson(path.join(root, "package.json"));
@@ -280,6 +401,8 @@ function buildPacket({
   const benchmarkRepositories = validateBenchmark(verifiedBenchmark, binaries);
   const performance = validateProfiles(profiles, benchmarkRepositories, binaries);
   const databaseOpen = loadDatabaseOpenEvidence(databaseOpenEvidence, binaries);
+  const soak = validateSoakEvidence(soakEvidence, binaries);
+  const surfaces = validateSurfaceEvidence(surfaceEvidence, binaries);
   if (candidate?.performanceAssertions?.databaseOpenEvidenceSha256 !== databaseOpen.sha256) {
     throw new Error("Candidate database-open evidence SHA-256 does not match the validated evidence file.");
   }
@@ -294,6 +417,8 @@ function buildPacket({
         sha256: databaseOpen.sha256,
         evidence: databaseOpen.evidence,
       },
+      stabilitySoak: soak,
+      surfaceMatrix: surfaces,
     },
   };
   const decision = evaluateNativeDefaultRollout(evidence);
@@ -326,9 +451,11 @@ if (require.main === module) {
   const profiles = argument(argv, "--profiles");
   const assets = argument(argv, "--assets");
   const databaseOpenEvidence = argument(argv, "--database-open-evidence");
+  const soakEvidence = argument(argv, "--soak");
+  const surfaceEvidence = argument(argv, "--surface-matrix");
   const output = argument(argv, "--output");
-  if (![candidateFile, adapterParityFile, benchmarkFile, profiles, assets, databaseOpenEvidence, output].every(Boolean)) {
-    throw new Error("Usage: build-native-rollout-evidence --candidate <json> --adapter-parity <json> --benchmark <json> --profiles <directory> --assets <directory> --database-open-evidence <json> --output <json>.");
+  if (![candidateFile, adapterParityFile, benchmarkFile, profiles, assets, databaseOpenEvidence, soakEvidence, surfaceEvidence, output].every(Boolean)) {
+    throw new Error("Usage: build-native-rollout-evidence --candidate <json> --adapter-parity <json> --benchmark <json> --profiles <directory> --assets <directory> --database-open-evidence <json> --soak <json> --surface-matrix <json> --output <json>.");
   }
   const packet = buildPacket({
     root,
@@ -338,6 +465,8 @@ if (require.main === module) {
     profiles: path.resolve(profiles),
     assets: path.resolve(assets),
     databaseOpenEvidence: path.resolve(databaseOpenEvidence),
+    soakEvidence: path.resolve(soakEvidence),
+    surfaceEvidence: path.resolve(surfaceEvidence),
   });
   fs.writeFileSync(path.resolve(output), `${JSON.stringify(packet, null, 2)}\n`);
   process.stdout.write(`Wrote complete native rollout evidence to ${path.resolve(output)}.\n`);
@@ -349,4 +478,6 @@ module.exports = {
   REQUIRED_QUERY_OPERATIONS,
   validateBenchmark,
   validateProfiles,
+  validateSoakEvidence,
+  validateSurfaceEvidence,
 };

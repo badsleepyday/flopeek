@@ -11,7 +11,10 @@ const {
   buildPromotionAttestation,
   validateCandidateInputs,
   validateChecksums,
+  validatePlatformInstallEvidence,
 } = require("../../scripts/native-candidate-bundle");
+const { adapterContractDigest } = require("../../src/adapter-registry");
+const { NATIVE_PLATFORM_TARGETS } = require("../../src/native-platform-targets");
 
 test("candidate inputs bind an exact commit, semantic version, and matching channel", () => {
   const sourceSha = "a".repeat(40);
@@ -72,4 +75,50 @@ test("promotion attestation is generated from exact approved candidate identity"
     ...value,
     candidateRunId: "0",
   }), /GitHub Actions run/);
+});
+
+test("platform install evidence must cover every exact artifact and fail closed on tampering", (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-platform-installs-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const manifest = {
+    release: {
+      version: "1.2.3",
+      repositoryRevision: "a".repeat(40),
+    },
+    artifacts: {
+      native: Object.fromEntries(NATIVE_PLATFORM_TARGETS.map((target, index) => [
+        target.packageName,
+        { binarySha256: String(index).padStart(64, "0") },
+      ])),
+    },
+  };
+  for (const [index, target] of NATIVE_PLATFORM_TARGETS.entries()) {
+    fs.writeFileSync(path.join(root, `${target.platform}-${target.arch}.json`), JSON.stringify({
+      schemaVersion: "flopeek-native-candidate-install/v1",
+      status: "verified",
+      packageVersion: "1.2.3",
+      sourceSha: "a".repeat(40),
+      platformPackage: target.packageName,
+      binarySha256: String(index).padStart(64, "0"),
+      selectedImplementation: "native",
+      sourceAuthority: "rust",
+      fallback: { active: false, reason: null },
+      protocolVersion: "flopeek-native-protocol/v1",
+      adapterContractDigest: adapterContractDigest(),
+      healthImplementation: "rust",
+      binaryVersion: "1.2.3",
+      store: { journalMode: "wal", quickCheck: "ok" },
+      contextRef: "fp://local/project/node/file%3Asrc%2Findex.ts@1",
+      contextRefResolution: "current",
+      sqliteAuthority: true,
+      graphJsonAuthority: false,
+      uninstallClean: true,
+    }));
+  }
+  assert.equal(validatePlatformInstallEvidence(root, manifest).length, 6);
+  const first = path.join(root, `${NATIVE_PLATFORM_TARGETS[0].platform}-${NATIVE_PLATFORM_TARGETS[0].arch}.json`);
+  const tampered = JSON.parse(fs.readFileSync(first, "utf8"));
+  tampered.binarySha256 = "f".repeat(64);
+  fs.writeFileSync(first, JSON.stringify(tampered));
+  assert.throws(() => validatePlatformInstallEvidence(root, manifest), /invalid/);
 });

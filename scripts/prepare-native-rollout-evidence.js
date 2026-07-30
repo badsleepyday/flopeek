@@ -43,7 +43,9 @@ function preparePacket({ root, inputs, assets }) {
   const benchmark = path.join(inputs, "benchmark.json");
   const profiles = path.join(inputs, "profiles");
   const databaseOpenEvidence = path.join(inputs, "database-open-evidence.json");
-  const missing = [candidate, adapterParity, benchmark, profiles, databaseOpenEvidence]
+  const soakEvidence = path.join(inputs, "native-soak.json");
+  const surfaceEvidence = path.join(inputs, "native-surface-matrix.json");
+  const missing = [candidate, adapterParity, benchmark, profiles, databaseOpenEvidence, soakEvidence, surfaceEvidence]
     .filter((entry) => !fs.existsSync(entry));
   if (missing.length) {
     throw new Error(`Native rollout inputs are partial; missing: ${missing.map((entry) => path.relative(inputs, entry)).join(", ")}.`);
@@ -56,6 +58,8 @@ function preparePacket({ root, inputs, assets }) {
     profiles,
     assets,
     databaseOpenEvidence,
+    soakEvidence,
+    surfaceEvidence,
   });
 }
 

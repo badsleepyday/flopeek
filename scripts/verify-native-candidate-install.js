@@ -8,6 +8,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { loadNativeReleaseManifest } = require("./native-release-manifest");
+const { NATIVE_PROTOCOL_VERSION, NativeProtocolClient } = require("../src/native-protocol-client");
 
 function argument(argv, name) {
   const index = argv.indexOf(name);
@@ -30,7 +31,31 @@ function platformPackage() {
   }[key] || null;
 }
 
-function main(argv = process.argv.slice(2)) {
+async function verifyInstalledContextRef(packageRoot, projectRoot, options = {}) {
+  const { createSurfaceCoreRuntime } = require(path.join(packageRoot, "src", "core-runtime.js"));
+  const runtime = createSurfaceCoreRuntime({
+    coreMode: options.coreMode || "native",
+    packageRoot,
+  });
+  try {
+    const graph = await runtime.core.scan(projectRoot, { persistIdentity: true });
+    const packet = await runtime.core.getContextCard(graph, "file:index.ts");
+    const contextRef = packet?.card?.contextRef || null;
+    if (!/^fp:\/\//u.test(contextRef || "")) {
+      const error = new Error("Installed native Context Ref proof did not return file:index.ts.");
+      error.code = "candidate-context-ref-missing";
+      throw error;
+    }
+    const resolution = await runtime.core.resolveContextRef(graph, contextRef);
+    assert.equal(resolution.status, "current");
+    assert.equal(resolution.resolvedRef, contextRef);
+    return { contextRef, resolutionStatus: resolution.status };
+  } finally {
+    await runtime.core.close();
+  }
+}
+
+async function main(argv = process.argv.slice(2)) {
   const mainTarball = path.resolve(argument(argv, "--main") || "");
   const nativeTarball = path.resolve(argument(argv, "--native") || "");
   const manifestFile = path.resolve(argument(argv, "--manifest") || "");
@@ -66,11 +91,28 @@ function main(argv = process.argv.slice(2)) {
     fs.mkdirSync(fixture);
     fs.writeFileSync(path.join(fixture, "index.ts"), "export function candidateInstall() { return true; }\n");
     const cli = path.join(sandbox, "node_modules", "flopeek", "src", "cli.js");
+    const protocol = new NativeProtocolClient({
+      command: binary,
+      args: [],
+      cwd: sandbox,
+      requestTimeoutMs: 30_000,
+    });
+    await protocol.start();
+    const health = await protocol.request("health");
+    assert.equal(health.implementation, "rust");
+    const initialized = await protocol.request("initialize", { projectRoot: fixture });
+    assert.equal(initialized.store.quickCheck.toLowerCase(), "ok");
+    assert.equal(initialized.store.journalMode.toLowerCase(), "wal");
+    await protocol.close();
+    const version = execFileSync(process.execPath, [
+      cli,
+      "--version",
+    ], { cwd: sandbox, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 }).trim();
+    assert.equal(version, manifest.release.version);
     const stdout = execFileSync(process.execPath, [
       cli,
       "scan",
       fixture,
-      "--no-cache",
       "--format",
       "json",
       "--core-mode",
@@ -81,7 +123,21 @@ function main(argv = process.argv.slice(2)) {
     assert.equal(execution?.selectedImplementation, "native");
     assert.equal(execution?.sourceAuthority, "rust");
     assert.equal(execution?.fallback?.active, false);
-    assert.equal(fs.existsSync(path.join(fixture, ".flopeek")), false, "cache-disabled install smoke wrote repository metadata");
+    assert.equal(fs.existsSync(path.join(fixture, ".flopeek", "native-core.sqlite3")), true);
+    assert.equal(fs.existsSync(path.join(fixture, ".flopeek", "graph.json")), false);
+    const installedRoot = path.join(sandbox, "node_modules", "flopeek");
+    const contextProof = await verifyInstalledContextRef(installedRoot, fixture);
+    const installedRegistry = require(path.join(sandbox, "node_modules", "flopeek", "src", "adapter-registry.js"));
+    assert.equal(
+      installedRegistry.adapterContractDigest(),
+      JSON.parse(fs.readFileSync(path.join(sandbox, "node_modules", "flopeek", "packaging", "native-rollout-evidence.json"), "utf8")).binding.adapterContractDigest,
+    );
+    execFileSync("npm", ["uninstall", "--no-audit", "--no-fund", "flopeek", packageName], {
+      cwd: sandbox,
+      stdio: "inherit",
+    });
+    assert.equal(fs.existsSync(path.join(sandbox, "node_modules", "flopeek")), false);
+    assert.equal(fs.existsSync(path.join(sandbox, "node_modules", ...packageName.split("/"))), false);
     const report = {
       schemaVersion: "flopeek-native-candidate-install/v1",
       status: "verified",
@@ -92,7 +148,16 @@ function main(argv = process.argv.slice(2)) {
       selectedImplementation: execution.selectedImplementation,
       sourceAuthority: execution.sourceAuthority,
       fallback: execution.fallback,
-      targetRepositoryWrites: false,
+      protocolVersion: NATIVE_PROTOCOL_VERSION,
+      adapterContractDigest: installedRegistry.adapterContractDigest(),
+      binaryVersion: version,
+      healthImplementation: health.implementation,
+      store: initialized.store,
+      contextRef: contextProof.contextRef,
+      contextRefResolution: contextProof.resolutionStatus,
+      sqliteAuthority: true,
+      graphJsonAuthority: false,
+      uninstallClean: true,
     };
     if (output) fs.writeFileSync(path.resolve(output), `${JSON.stringify(report, null, 2)}\n`);
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
@@ -103,12 +168,10 @@ function main(argv = process.argv.slice(2)) {
 }
 
 if (require.main === module) {
-  try {
-    main();
-  } catch (error) {
+  main().catch((error) => {
     process.stderr.write(`Candidate install blocked: ${error.stack || error.message}\n`);
     process.exitCode = 1;
-  }
+  });
 }
 
-module.exports = { main, platformPackage };
+module.exports = { main, platformPackage, verifyInstalledContextRef };

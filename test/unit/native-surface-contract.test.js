@@ -10,7 +10,9 @@ const {
   MATERIALIZED,
   MCP_BOUNDED,
   MCP_HANDLE_SAFE,
+  MCP_MATERIALIZED,
   SERVER_HANDLE_SAFE,
+  SERVER_MATERIALIZED,
   mcpSurfaceCategory,
   serverSurfaceCategory,
 } = require("../../src/native-surface-contract");
@@ -25,6 +27,8 @@ test("every registered MCP tool has an explicit native handle category", () => {
   for (const name of names) assert.ok([BOUNDED, HANDLE_SAFE, MATERIALIZED].includes(mcpSurfaceCategory(name)), name);
   for (const name of MCP_HANDLE_SAFE) assert.ok(names.includes(name), `stale MCP handle-safe contract entry: ${name}`);
   for (const name of MCP_BOUNDED) assert.ok(names.includes(name), `stale MCP bounded contract entry: ${name}`);
+  for (const name of MCP_MATERIALIZED) assert.ok(names.includes(name), `stale MCP materialized contract entry: ${name}`);
+  assert.equal(mcpSurfaceCategory("future_unclassified_tool"), null);
 });
 
 test("every HTTP endpoint is classified and the broad server surface remains materialized", () => {
@@ -37,6 +41,8 @@ test("every HTTP endpoint is classified and the broad server surface remains mat
     assert.ok([HANDLE_SAFE, MATERIALIZED].includes(serverSurfaceCategory(method, pathname)), route);
   }
   for (const route of SERVER_HANDLE_SAFE) assert.ok(routes.includes(route), `stale server handle-safe contract entry: ${route}`);
+  for (const route of SERVER_MATERIALIZED) assert.ok(routes.includes(route), `stale server materialized contract entry: ${route}`);
+  assert.equal(serverSurfaceCategory("GET", "/api/future-unclassified"), null);
   assert.match(source, /nativeGraphHandle:\s*true/);
   assert.match(source, /core\.materializeGraph\(current\)/);
 });

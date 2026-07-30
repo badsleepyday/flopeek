@@ -13,7 +13,10 @@ const {
   tarballIdentity,
   verifyExisting,
 } = require("./publish-npm-release-set");
-const { platformPackage } = require("./verify-native-candidate-install");
+const {
+  platformPackage,
+  verifyInstalledContextRef,
+} = require("./verify-native-candidate-install");
 
 function argument(argv, name) {
   const index = argv.indexOf(name);
@@ -43,10 +46,11 @@ function verifyRegistryArtifact(tarball) {
   return identity;
 }
 
-function main(argv = process.argv.slice(2)) {
+async function main(argv = process.argv.slice(2)) {
   const bundle = path.resolve(argument(argv, "--bundle") || "");
   const manifestFile = path.resolve(argument(argv, "--manifest") || "");
   const channel = argument(argv, "--channel");
+  const output = argument(argv, "--output");
   if (!fs.existsSync(bundle) || !fs.statSync(bundle).isDirectory()
     || !fs.existsSync(manifestFile) || !channel) {
     throw new Error("Usage: verify-native-registry-release --bundle <directory> --manifest <json> --channel <tag>.");
@@ -84,19 +88,70 @@ function main(argv = process.argv.slice(2)) {
     fs.mkdirSync(fixture);
     fs.writeFileSync(path.join(fixture, "index.ts"), "export const registryRelease = true;\n");
     const cli = path.join(sandbox, "node_modules", "flopeek", "src", "cli.js");
-    const graph = JSON.parse(execFileSync(process.execPath, [
+    const scan = (root, extra = []) => JSON.parse(execFileSync(process.execPath, [
       cli,
       "scan",
-      fixture,
-      "--no-cache",
+      root,
+      ...extra,
       "--format",
       "json",
       "--core-mode",
       "native",
     ], { cwd: sandbox, encoding: "utf8", env: environment, maxBuffer: 32 * 1024 * 1024 }));
+    const graph = scan(fixture);
     assert.equal(graph.analysis?.coreRuntime?.execution?.selectedImplementation, "native");
     assert.equal(graph.analysis?.coreRuntime?.execution?.fallback?.active, false);
-    assert.equal(fs.existsSync(path.join(fixture, ".flopeek")), false);
+    assert.equal(graph.analysis?.coreRuntime?.execution?.sourceAuthority, "rust");
+    assert.equal(fs.existsSync(path.join(fixture, ".flopeek", "native-core.sqlite3")), true);
+    assert.equal(fs.existsSync(path.join(fixture, ".flopeek", "graph.json")), false);
+    fs.appendFileSync(path.join(fixture, "index.ts"), "export const refreshed = true;\n");
+    const refreshed = scan(fixture);
+    assert.ok(refreshed.state.graphVersion > graph.state.graphVersion);
+    const contextProof = await verifyInstalledContextRef(
+      path.join(sandbox, "node_modules", "flopeek"),
+      fixture,
+    );
+    const delta = JSON.parse(execFileSync(process.execPath, [
+      cli,
+      "delta",
+      fixture,
+      "--from-version",
+      String(graph.state.graphVersion),
+      "--to-version",
+      String(refreshed.state.graphVersion),
+      "--format",
+      "json",
+      "--core-mode",
+      "native",
+    ], { cwd: sandbox, encoding: "utf8", env: environment, maxBuffer: 32 * 1024 * 1024 }));
+    assert.equal(delta.fromGraphVersion, graph.state.graphVersion);
+    assert.equal(delta.toGraphVersion, refreshed.state.graphVersion);
+
+    const fallbackFixture = path.join(sandbox, "fallback-fixture");
+    fs.mkdirSync(fallbackFixture);
+    fs.writeFileSync(path.join(fallbackFixture, "index.ts"), "export const fallback = true;\n");
+    const missingBinary = `${binary}.missing`;
+    fs.renameSync(binary, missingBinary);
+    let missing;
+    try {
+      missing = scan(fallbackFixture, ["--no-cache"]);
+    } finally {
+      fs.renameSync(missingBinary, binary);
+    }
+    assert.equal(missing.analysis?.coreRuntime?.selectedImplementation, "javascript");
+    assert.equal(missing.analysis?.coreRuntime?.fallback?.active, true);
+    const exactBinary = fs.readFileSync(binary);
+    fs.appendFileSync(binary, "tampered");
+    let tampered;
+    try {
+      tampered = scan(fallbackFixture, ["--no-cache"]);
+    } finally {
+      fs.writeFileSync(binary, exactBinary);
+    }
+    assert.equal(tampered.analysis?.coreRuntime?.selectedImplementation, "javascript");
+    assert.equal(tampered.analysis?.coreRuntime?.fallback?.active, true);
+    assert.equal(hash(binary), expectedNative.binarySha256);
+    assert.equal(fs.existsSync(path.join(fallbackFixture, ".flopeek")), false);
     const report = {
       schemaVersion: "flopeek-native-registry-release-verification/v1",
       status: "verified",
@@ -107,7 +162,26 @@ function main(argv = process.argv.slice(2)) {
       binarySha256: expectedNative.binarySha256,
       anonymousInstall: true,
       selectedImplementation: "native",
+      sourceAuthority: "rust",
+      sqliteAuthority: true,
+      graphJsonAuthority: false,
+      contextRef: contextProof.contextRef,
+      contextRefResolution: contextProof.resolutionStatus,
+      refresh: {
+        fromVersion: graph.state.graphVersion,
+        toVersion: refreshed.state.graphVersion,
+        deltaSchemaVersion: delta.schemaVersion,
+      },
+      fallbackProofs: {
+        missingBinary: missing.analysis.coreRuntime.fallback,
+        tamperedBinary: tampered.analysis.coreRuntime.fallback,
+      },
     };
+    if (output) {
+      const resolved = path.resolve(output);
+      fs.mkdirSync(path.dirname(resolved), { recursive: true });
+      fs.writeFileSync(resolved, `${JSON.stringify(report, null, 2)}\n`);
+    }
     process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     return report;
   } finally {
@@ -116,12 +190,10 @@ function main(argv = process.argv.slice(2)) {
 }
 
 if (require.main === module) {
-  try {
-    main();
-  } catch (error) {
+  main().catch((error) => {
     process.stderr.write(`Registry release blocked: ${error.stack || error.message}\n`);
     process.exitCode = 1;
-  }
+  });
 }
 
 module.exports = { main, registryVersion, verifyRegistryArtifact };

@@ -215,6 +215,8 @@ jobs:
           --profiles "$CANDIDATE_EVIDENCE/profiles"
           --assets "$CANDIDATE_ASSETS"
           --database-open-evidence "$CANDIDATE_EVIDENCE/database-open-evidence.json"
+          --soak "$CANDIDATE_EVIDENCE/native-soak.json"
+          --surface-matrix "$CANDIDATE_EVIDENCE/native-surface-matrix.json"
           --output "$CANDIDATE_EVIDENCE/native-rollout-evidence.json"
       - name: Pack main package once with exact complete rollout evidence
         shell: pwsh
@@ -229,6 +231,8 @@ jobs:
           Copy-Item "$env:CANDIDATE_EVIDENCE/benchmark.json" $env:CANDIDATE_BUNDLE
           Copy-Item "$env:CANDIDATE_EVIDENCE/database-open-evidence.json" $env:CANDIDATE_BUNDLE
           Copy-Item "$env:CANDIDATE_EVIDENCE/real-corpus.json" $env:CANDIDATE_BUNDLE
+          Copy-Item "$env:CANDIDATE_EVIDENCE/native-surface-matrix.json" $env:CANDIDATE_BUNDLE
+          Copy-Item "$env:CANDIDATE_EVIDENCE/native-soak.json" $env:CANDIDATE_BUNDLE
           Copy-Item "$env:CANDIDATE_EVIDENCE/test-summary.json" $env:CANDIDATE_BUNDLE
           Copy-Item -Recurse "$env:CANDIDATE_EVIDENCE/profiles" (Join-Path $env:CANDIDATE_BUNDLE 'profiles')
       - name: Build exact release manifest
@@ -239,7 +243,7 @@ jobs:
           --rollout-evidence "$CANDIDATE_BUNDLE/native-rollout-evidence.json"
           --assets "$CANDIDATE_BUNDLE"
           --output "$CANDIDATE_BUNDLE/native-release-manifest.json"
-      - name: Finalize and verify immutable candidate bundle
+      - name: Bind preliminary bundle to this workflow run
         run: >-
           node scripts/verify-native-candidate.js
           --bundle "$CANDIDATE_BUNDLE"
@@ -248,22 +252,105 @@ jobs:
           --package-version "${{ needs.preflight.outputs.package_version }}"
           --release-channel "${{ needs.preflight.outputs.release_channel }}"
           --workflow-run-id "${{ github.run_id }}"
-      - name: Clean-room install exact candidate
-        run: >-
-          node scripts/verify-native-candidate-install.js
-          --main "$CANDIDATE_BUNDLE/flopeek-main.tgz"
-          --native "$CANDIDATE_BUNDLE/flopeek-native-linux-x64-gnu-${{ needs.preflight.outputs.package_version }}.tgz"
-          --manifest "$CANDIDATE_BUNDLE/native-release-manifest.json"
-          --output "$CANDIDATE_BUNDLE/candidate-install-verification.json"
-      - name: Re-finalize after install evidence and verify all checksums
-        run: >-
-          node scripts/verify-native-candidate.js
-          --bundle "$CANDIDATE_BUNDLE"
-          --finalize
-          --source-sha "${{ needs.preflight.outputs.source_sha }}"
-          --package-version "${{ needs.preflight.outputs.package_version }}"
-          --release-channel "${{ needs.preflight.outputs.release_channel }}"
-          --workflow-run-id "${{ github.run_id }}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-candidate-bundle-preliminary
+          path: ${{ runner.temp }}/flopeek-native-bundle/
+          if-no-files-found: error
+          retention-days: 30
+
+  candidate-installs:
+    name: Clean install ${{ matrix.package }}
+    needs: [preflight, assemble]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            package: '@flopeek/native-win32-x64'
+            artifact: flopeek-native-win32-x64
+            os: win32
+            cpu: x64
+          - runner: windows-11-arm
+            package: '@flopeek/native-win32-arm64'
+            artifact: flopeek-native-win32-arm64
+            os: win32
+            cpu: arm64
+          - runner: ubuntu-latest
+            package: '@flopeek/native-linux-x64-gnu'
+            artifact: flopeek-native-linux-x64-gnu
+            os: linux
+            cpu: x64
+          - runner: ubuntu-24.04-arm
+            package: '@flopeek/native-linux-arm64-gnu'
+            artifact: flopeek-native-linux-arm64-gnu
+            os: linux
+            cpu: arm64
+          - runner: macos-15-intel
+            package: '@flopeek/native-darwin-x64'
+            artifact: flopeek-native-darwin-x64
+            os: darwin
+            cpu: x64
+          - runner: macos-14
+            package: '@flopeek/native-darwin-arm64'
+            artifact: flopeek-native-darwin-arm64
+            os: darwin
+            cpu: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-candidate-bundle-preliminary
+          path: ${{ runner.temp }}/flopeek-native-bundle
+      - name: Install, execute, inspect, and uninstall exact local packages
+        shell: pwsh
+        run: |
+          $bundle = "${{ runner.temp }}/flopeek-native-bundle"
+          $output = "${{ runner.temp }}/candidate-install-verification"
+          New-Item -ItemType Directory -Force -Path $output | Out-Null
+          node scripts/verify-native-candidate-install.js --main "$bundle/flopeek-main.tgz" --native "$bundle/${{ matrix.artifact }}-${{ needs.preflight.outputs.package_version }}.tgz" --manifest "$bundle/native-release-manifest.json" --output "$output/candidate-install-${{ matrix.os }}-${{ matrix.cpu }}.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-candidate-install-${{ matrix.os }}-${{ matrix.cpu }}
+          path: ${{ runner.temp }}/candidate-install-verification/
+          if-no-files-found: error
+          retention-days: 30
+
+  finalize:
+    name: Finalize immutable candidate after six clean installs
+    needs: [preflight, candidate-installs]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-candidate-bundle-preliminary
+          path: ${{ runner.temp }}/flopeek-native-bundle
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: native-candidate-install-*
+          path: ${{ runner.temp }}/candidate-install-verification
+          merge-multiple: true
+      - name: Add all six install proofs and finalize checksums
+        shell: pwsh
+        run: |
+          $bundle = "${{ runner.temp }}/flopeek-native-bundle"
+          New-Item -ItemType Directory -Force -Path "$bundle/candidate-install-verification" | Out-Null
+          Copy-Item "${{ runner.temp }}/candidate-install-verification/*.json" "$bundle/candidate-install-verification"
+          node scripts/verify-native-candidate.js --bundle $bundle --finalize --require-platform-install-evidence --source-sha "${{ needs.preflight.outputs.source_sha }}" --package-version "${{ needs.preflight.outputs.package_version }}" --release-channel "${{ needs.preflight.outputs.release_channel }}" --workflow-run-id "${{ github.run_id }}"
       - uses: actions/upload-artifact@v7
         with:
           name: native-candidate-bundle

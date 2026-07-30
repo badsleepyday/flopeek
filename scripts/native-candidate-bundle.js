@@ -7,6 +7,8 @@ const {
   loadNativeReleaseManifest,
   sha256File,
 } = require("./native-release-manifest");
+const { adapterContractDigest } = require("../src/adapter-registry");
+const { NATIVE_PROTOCOL_VERSION } = require("../src/native-protocol-client");
 
 const NATIVE_CANDIDATE_METADATA_SCHEMA = "flopeek-native-candidate/v1";
 const NATIVE_PROMOTION_APPROVAL_SCHEMA = "flopeek-native-release-approval/v1";
@@ -21,6 +23,8 @@ const REQUIRED_BUNDLE_ENTRIES = Object.freeze([
   "flopeek-main.tgz",
   "native-release-manifest.json",
   "native-rollout-evidence.json",
+  "native-surface-matrix.json",
+  "native-soak.json",
   "profiles",
   "real-corpus.json",
   "test-summary.json",
@@ -125,6 +129,45 @@ function validateChecksums(bundleDirectory, checksums) {
   return checksums;
 }
 
+function validatePlatformInstallEvidence(directory, manifest) {
+  const root = path.resolve(directory);
+  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
+    throw new Error("candidate bundle requires a platform install evidence directory.");
+  }
+  const files = fs.readdirSync(root).filter((file) => file.endsWith(".json")).sort();
+  const reports = files.map((file) => JSON.parse(fs.readFileSync(path.join(root, file), "utf8")));
+  const expected = Object.keys(manifest.artifacts.native).sort();
+  const actual = reports.map((report) => report.platformPackage).sort();
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error("candidate install evidence must cover every native platform package exactly once.");
+  }
+  for (const report of reports) {
+    const artifact = manifest.artifacts.native[report.platformPackage];
+    if (report.schemaVersion !== "flopeek-native-candidate-install/v1"
+      || report.status !== "verified"
+      || report.packageVersion !== manifest.release.version
+      || report.sourceSha !== manifest.release.repositoryRevision
+      || report.binarySha256 !== artifact?.binarySha256
+      || report.selectedImplementation !== "native"
+      || report.sourceAuthority !== "rust"
+      || report.fallback?.active !== false
+      || report.protocolVersion !== NATIVE_PROTOCOL_VERSION
+      || report.adapterContractDigest !== adapterContractDigest()
+      || report.healthImplementation !== "rust"
+      || report.binaryVersion !== manifest.release.version
+      || report.store?.journalMode?.toLowerCase() !== "wal"
+      || report.store?.quickCheck?.toLowerCase() !== "ok"
+      || report.sqliteAuthority !== true
+      || report.graphJsonAuthority !== false
+      || !/^fp:\/\//u.test(report.contextRef || "")
+      || report.contextRefResolution !== "current"
+      || report.uninstallClean !== true) {
+      throw new Error(`candidate install evidence is invalid for ${report.platformPackage || "unknown platform"}.`);
+    }
+  }
+  return reports;
+}
+
 function validateCandidateBundle(bundleDirectory, options = {}) {
   const root = path.resolve(bundleDirectory);
   if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
@@ -172,7 +215,10 @@ function validateCandidateBundle(bundleDirectory, options = {}) {
   if (adapterParity.binary?.sourceRevision !== metadata.sourceSha) {
     throw new Error("candidate adapter parity source revision does not match the candidate.");
   }
-  return { metadata, manifest, manifestSha256, checksums };
+  const platformInstalls = options.requirePlatformInstallEvidence
+    ? validatePlatformInstallEvidence(path.join(root, "candidate-install-verification"), manifest)
+    : null;
+  return { metadata, manifest, manifestSha256, checksums, platformInstalls };
 }
 
 function buildPromotionAttestation({
@@ -229,4 +275,5 @@ module.exports = {
   validateCandidateInputs,
   validateCandidateMetadata,
   validateChecksums,
+  validatePlatformInstallEvidence,
 };

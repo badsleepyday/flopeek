@@ -9,6 +9,17 @@ pub const NATIVE_STORE_RELATIVE_PATH: &str = ".flopeek/native-core.sqlite3";
 pub const DEFAULT_NATIVE_DELTA_HISTORY_LIMIT: usize = 8;
 pub const DEFAULT_NATIVE_DELTA_HISTORY_MAX_BYTES: usize = 16 * 1024 * 1024;
 
+// Deliberately process-fatal integration-test hook. Production code cannot
+// recover from an operating-system termination, so the recovery contract must
+// be exercised at the real SQLite transaction boundary rather than mocked.
+// The exact environment value is never inferred or enabled by normal runtime
+// configuration.
+fn crash_at_test_boundary(boundary: &str) {
+    if std::env::var("FLOPEEK_NATIVE_TEST_CRASH_POINT").as_deref() == Ok(boundary) {
+        std::process::abort();
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeStoreStatus {
     pub path: PathBuf,
@@ -761,6 +772,7 @@ pub fn begin_graph_build(
         rusqlite::params![project_pk, graph_version, material_fingerprint, source_fingerprint, now_ms()?],
     )?;
     transaction.commit()?;
+    crash_at_test_boundary("after-begin-build");
     Ok(NativeGraphVersion {
         graph_version,
         public_graph_version: None,
@@ -829,6 +841,7 @@ pub fn promote_graph_build_with_changed_records(
         &public_graph_cache,
         request.reuse_public_components,
     )?;
+    crash_at_test_boundary("after-graph-payload-write");
     let public_cache_write_ms = public_cache_write_started.elapsed().as_millis() as u64;
     let delta_write_started = Instant::now();
     if let (Some(from_graph_version), Some(delta)) =
@@ -873,7 +886,9 @@ pub fn promote_graph_build_with_changed_records(
         )?;
     }
     let structural_fact_cache_ms = structural_fact_cache_started.elapsed().as_millis() as u64;
+    crash_at_test_boundary("after-fact-storage");
     let project_pointer_started = Instant::now();
+    crash_at_test_boundary("before-current-pointer-promotion");
     transaction.execute(
         "UPDATE projects SET current_graph_version = ?1 WHERE project_pk = ?2",
         rusqlite::params![request.graph_version, project_pk],

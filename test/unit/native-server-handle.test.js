@@ -47,6 +47,7 @@ test("native server retains a handle and explicitly materializes the broad HTTP 
     cache: false,
     coreClient: observed,
     registerServeWorkspace: false,
+    watch: false,
   });
   t.after(async () => {
     await app.close();

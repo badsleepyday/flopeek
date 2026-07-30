@@ -51,6 +51,7 @@ jobs:
         run: >-
           node scripts/verify-native-candidate.js
           --bundle candidate-bundle
+          --require-platform-install-evidence
           --expected-manifest-sha256 "${{ inputs.release_manifest_sha256 }}"
           --release-channel "${{ inputs.release_channel }}"
       - id: candidate
@@ -83,7 +84,7 @@ jobs:
       - name: Verify source to tarball to manifest chain
         shell: pwsh
         run: |
-          node candidate-source/scripts/verify-native-candidate.js --bundle candidate-bundle --expected-manifest-sha256 "${{ inputs.release_manifest_sha256 }}" --release-channel "${{ inputs.release_channel }}"
+          node candidate-source/scripts/verify-native-candidate.js --bundle candidate-bundle --require-platform-install-evidence --expected-manifest-sha256 "${{ inputs.release_manifest_sha256 }}" --release-channel "${{ inputs.release_channel }}"
           node candidate-source/scripts/verify-native-release-set.js --assets candidate-bundle --main candidate-bundle/flopeek-main.tgz
       - name: Clean-room install exact candidate tarballs
         run: >-
@@ -115,7 +116,18 @@ jobs:
         run: |
           if (-not $env:NODE_AUTH_TOKEN) { throw 'NPM_TOKEN is required.' }
           node candidate-source/scripts/publish-npm-release-set.js --assets candidate-bundle --staging-tag "native-candidate-${{ inputs.candidate_run_id }}"
-      - name: Move public dist-tags after exact publication
+      - name: Anonymous registry verification under the staging tag
+        if: ${{ !inputs.dry_run }}
+        env:
+          NODE_AUTH_TOKEN: ""
+          NPM_TOKEN: ""
+        run: >-
+          node candidate-source/scripts/verify-native-registry-release.js
+          --bundle candidate-bundle
+          --manifest candidate-bundle/native-release-manifest.json
+          --channel "native-candidate-${{ inputs.candidate_run_id }}"
+          --output registry-release-verification.json
+      - name: Move public dist-tags only after all registry proofs pass
         if: ${{ !inputs.dry_run }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -127,16 +139,6 @@ jobs:
             npm dist-tag add "$packageName@$version" "${{ inputs.release_channel }}"
           }
           npm dist-tag add "flopeek@$version" "${{ inputs.release_channel }}"
-      - name: Anonymous registry verification with normal native mode
-        if: ${{ !inputs.dry_run }}
-        env:
-          NODE_AUTH_TOKEN: ""
-          NPM_TOKEN: ""
-        run: >-
-          node candidate-source/scripts/verify-native-registry-release.js
-          --bundle candidate-bundle
-          --manifest candidate-bundle/native-release-manifest.json
-          --channel "${{ inputs.release_channel }}"
       - name: Create GitHub Release from exact candidate artifacts
         if: ${{ !inputs.dry_run }}
         env:
@@ -145,11 +147,15 @@ jobs:
         run: |
           $tag = "${{ steps.candidate.outputs.tag }}"
           $prerelease = if ("${{ inputs.release_channel }}" -eq "latest") { @() } else { @("--prerelease") }
+          $assets = @(Get-ChildItem -LiteralPath candidate-bundle -Recurse -File)
+          $duplicates = @($assets | Group-Object Name | Where-Object Count -gt 1)
+          if ($duplicates.Count -gt 0) { throw "Candidate bundle contains duplicate release asset names: $($duplicates.Name -join ', ')" }
+          $assetPaths = @($assets | ForEach-Object FullName)
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag candidate-bundle/* --clobber
+            gh release upload $tag @assetPaths --clobber
           } else {
-            gh release create $tag candidate-bundle/* --target "${{ steps.candidate.outputs.source_sha }}" --title "Flopeek $tag" --generate-notes @prerelease
+            gh release create $tag @assetPaths --target "${{ steps.candidate.outputs.source_sha }}" --title "Flopeek $tag" --generate-notes @prerelease
           }
       - name: Generate protected-environment promotion attestation
         shell: pwsh
@@ -167,5 +173,6 @@ jobs:
           path: |
             native-release-approval.json
             candidate-install-verification.json
+            registry-release-verification.json
           if-no-files-found: error
           retention-days: 90

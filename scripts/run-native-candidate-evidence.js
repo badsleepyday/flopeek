@@ -31,12 +31,9 @@ const PROOF_SUITES = Object.freeze({
     "test/unit/core-mode.test.js",
     "test/unit/scan-coordinator.test.js",
     "test/unit/native-activation-surfaces.test.js",
+    "test/unit/native-failure-recovery.test.js",
   ]),
-  nativeSurfaces: Object.freeze([
-    "test/unit/native-mcp-handle.test.js",
-    "test/unit/native-server-handle.test.js",
-    "test/unit/native-surface-contract.test.js",
-  ]),
+  nativeSurfaces: Object.freeze([]),
 });
 
 function argument(argv, name) {
@@ -282,9 +279,17 @@ function main(argv = process.argv.slice(2)) {
 
   for (const [label, files] of Object.entries(PROOF_SUITES)) {
     const commandLabel = label.replace(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
-    runCommand(summary, commandLabel, process.execPath, ["--test", ...files], {
-      env: { FLOPEEK_NATIVE_CORE_BINARY: options.binary },
-    });
+    if (label === "nativeSurfaces") {
+      runCommand(summary, commandLabel, process.execPath, [
+        "scripts/verify-native-surfaces.js",
+        "--binary", options.binary,
+        "--output", path.join(options.output, "native-surface-matrix.json"),
+      ]);
+    } else {
+      runCommand(summary, commandLabel, process.execPath, ["--test", ...files], {
+        env: { FLOPEEK_NATIVE_CORE_BINARY: options.binary },
+      });
+    }
   }
 
   const performance = validatePerformanceCorpus(
@@ -317,6 +322,13 @@ function main(argv = process.argv.slice(2)) {
     "--binary", options.binary,
     "--output", databaseOpenEvidence,
   ]);
+  const soakEvidence = path.join(options.output, "native-soak.json");
+  runCommand(summary, "native-soak", process.execPath, [
+    "--expose-gc",
+    "scripts/verify-native-soak.js",
+    "--binary", options.binary,
+    "--output", soakEvidence,
+  ], { timeout: 120 * 60 * 1000 });
 
   const adapterParity = readJson(adapterParityFile);
   const realCorpus = readJson(realCorpusFile);

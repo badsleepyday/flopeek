@@ -330,7 +330,7 @@ async function startServer(options) {
   };
   const startWatching = () => {
     closeWatcher();
-    closeWatcher = watchRepository(root, scheduleRefresh);
+    closeWatcher = options.watch === false ? () => {} : watchRepository(root, scheduleRefresh);
   };
 
   const server = http.createServer(async (request, response) => {
