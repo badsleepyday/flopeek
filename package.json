@@ -106,6 +106,7 @@
     "verify:native-js-parser-parity": "node scripts/compare-native-js-facts.js --require-exact",
     "verify:native-adapter-parity": "node scripts/verify-native-adapter-parity.js",
     "verify:native-core-parity": "node scripts/verify-native-core-parity.js",
+    "verify:toolchains": "node scripts/verify-toolchains.js",
     "update:core-baseline": "node scripts/verify-core-baseline.js --update",
     "test:docs": "node --test test/unit/documentation-assets.test.js",
     "check:support": "node scripts/generate-support.js --check",

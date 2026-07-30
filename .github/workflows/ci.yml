@@ -24,15 +24,32 @@ jobs:
           cache: npm
       - uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
+      - id: toolchain-contract
+        shell: pwsh
+        run: |
+          $channel = (Select-String -Path rust-toolchain.toml -Pattern '^\s*channel\s*=\s*"([^"]+)"\s*$').Matches.Groups[1].Value
+          if (-not $channel) { throw 'rust-toolchain.toml has no exact channel.' }
+          "rust=$channel" >> $env:GITHUB_OUTPUT
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.toolchain-contract.outputs.rust }}
+          components: rustfmt, clippy
       - uses: actions/setup-go@v7
         with:
           go-version: '1.26.4'
           cache: false
       - run: npm ci
+      - run: npm run verify:toolchains
       - run: npm run check:go-stdlib
       - run: npm run test:native-core
+      - run: npm run verify:native-adapter-parity -- --output native-adapter-parity.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: adapter-parity-${{ matrix.os }}-node-${{ matrix.node }}
+          path: native-adapter-parity.json
+          if-no-files-found: error
+          retention-days: 14
       - run: cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --version
       - run: cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-facts .
       - run: cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-graph .

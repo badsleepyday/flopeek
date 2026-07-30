@@ -16,14 +16,16 @@ test("public Core CI proves package and clean-room behavior on the declared Node
   assert.match(workflow, /runs-on:\s*\$\{\{ matrix\.os \}\}/);
   assert.match(workflow, /uses: actions\/checkout@v7/);
   assert.match(workflow, /uses: actions\/setup-node@v7/);
-  assert.match(workflow, /uses: dtolnay\/rust-toolchain@stable/);
+  assert.match(workflow, /uses: dtolnay\/rust-toolchain@stable[\s\S]*?toolchain:\s*\$\{\{ steps\.toolchain-contract\.outputs\.rust \}\}/);
   assert.match(workflow, /uses: actions\/setup-dotnet@v6/);
-  assert.match(workflow, /dotnet-version:\s*'10\.0\.x'/);
+  assert.match(workflow, /global-json-file:\s*global\.json/);
   assert.match(workflow, /uses: actions\/setup-go@v7/);
   assert.match(workflow, /go-version:\s*'1\.26\.4'/);
   assert.match(workflow, /setup-go@v7[\s\S]*?cache:\s*false/);
+  assert.match(workflow, /npm run verify:native-adapter-parity -- --output native-adapter-parity\.json/);
+  assert.match(workflow, /name: adapter-parity-\$\{\{ matrix\.os \}\}-node-\$\{\{ matrix\.node \}\}/);
   assert.match(publicSourceRunner, /lanes\["public-source"\]\.unshift\("test\/unit\/native-inventory-parity\.test\.js"\)/);
-  for (const command of ["npm run test:native-core", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --version", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-facts .", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-graph .", "node scripts/verify-branch-name.js", "npm run verify:core-baseline", "npm run test:public-source", "npm run test:package", "npm run audit:package", "npm run verify:clean-room"]) {
+  for (const command of ["npm run verify:toolchains", "npm run test:native-core", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --version", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-facts .", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-graph .", "node scripts/verify-branch-name.js", "npm run verify:core-baseline", "npm run test:public-source", "npm run test:package", "npm run audit:package", "npm run verify:clean-room"]) {
     assert.match(workflow, new RegExp(`- run: ${command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   }
   const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
@@ -41,7 +43,7 @@ test("tagged Core releases verify source and package evidence before creating a 
   assert.match(workflow, /prepare-native-rollout-evidence\.js --inputs packaging\/native-rollout-inputs --assets release-assets/);
   assert.match(workflow, /sha256sum main-dist\/native-rollout-evidence\.json > main-dist\/native-rollout-evidence\.sha256/);
   assert.match(workflow, /go-version:\s*'1\.26\.4'/);
-  assert.match(workflow, /dotnet-version:\s*'10\.0\.x'/);
+  assert.match(workflow, /global-json-file:\s*global\.json/);
   assert.match(workflow, /npm run check:go-stdlib/);
   assert.match(workflow, /node scripts\/verify-clean-room-native-platform\.js --platform-tarball/);
   assert.match(workflow, /name: Verify complete release set before publication/);
