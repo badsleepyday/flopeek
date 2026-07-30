@@ -1,31 +1,64 @@
 # Native Core Completion Tracker
 
-This tracker is the machine-verification index for the Native Core final stabilization charter. A gate is marked `passing` only after its listed commands have exited successfully and its raw evidence exists. Source inspection alone is never sufficient.
+This document is the machine-verification index for the Native Core final stabilization charter. A gate is marked `passing` only after its required command has exited successfully and its required raw evidence exists. Source inspection alone is not acceptance evidence.
 
 ## Baseline
 
 - Charter baseline: `a891b964b225cd79673b5a9a76699a0c65ab3a28`
 - Starting implementation SHA: `2af4c4d6e0e19a325ad9667ba0b2ea36dd862243`
+- Current implementation SHA: `5b164d3`
 - Branch: `feature/rust-core-baseline`
 
 ## Gate status
 
-| Gate | Status | Closing commit | Verification commands | Raw evidence / blocker |
+| Gate | Status | Implementing commit(s) | Verification commands | Raw evidence / blocker |
 | --- | --- | --- | --- | --- |
-| 1. Native correctness and incremental matrix | pending | — | `cargo test --locked --manifest-path native/flopeek-core/Cargo.toml`; `node --test test/unit/core-client.test.js`; `node --test test/unit/native-incremental-coordinator.test.js` | Test output and incremental matrix artifact pending |
-| 2. Exact adapter parity | pending | — | `npm run verify:native-adapter-parity` | `packaging/evidence/native-adapter-parity.json` pending |
-| 3. Exact toolchains | pending | — | toolchain contract verification in CI | `rust-toolchain.toml`, `global.json`, and candidate compiler metadata pending |
-| 4. CI, candidate, and promotion separation | pending | — | workflow contract tests; candidate bundle verification; promotion dry-run | Candidate run and immutable bundle pending |
-| 5. External approval without circular source digest | pending | — | promotion dry-run and approval/provenance validation | Protected Environment is an external manual setting; automated dry-run pending |
-| 6. Real-repository correctness corpus | pending | — | pinned-corpus verifier | Raw per-repository results pending |
-| 7. Failure and recovery | pending | — | native failure-injection and recovery tests | Test output pending |
-| 8. Surface contracts | pending | — | `npm run verify:native-surfaces` | Machine-generated surface matrix pending |
-| 9. Performance and resource stability | pending | — | candidate benchmark/profile/database evidence validators; persistent and cache-disabled soak | Candidate-bound raw samples and RSS series pending |
-| 10. Package and clean-room proof | pending | — | six-platform candidate clean-room checks and promotion dry-run | Candidate bundle and registry dry-run evidence pending |
-| 11. Seven-day dogfooding | blocked | — | seven consecutive days, 10 repositories, 500+ refreshes, three OS families | Time-based external evidence does not yet exist; normal/default native remains blocked |
+| 1. Native correctness and incremental matrix | `passing` | `2e2fe76` | `cargo test --locked --manifest-path native/flopeek-core/Cargo.toml`; `node --test test/unit/core-client.test.js`; `node --test test/unit/native-incremental-coordinator.test.js` | Persistent and cache-disabled eight-adapter matrix is asserted by `test/unit/core-client.test.js`; all acceptance commands passed locally and in six-cell CI run `30572677884`. |
+| 2. Exact adapter parity | `passing` | `050bcb1`, `b310137` | `npm run verify:native-adapter-parity` | `flopeek-native-adapter-parity/v1`, 8 adapters and 29/29 exact cases. Raw per-cell artifacts are attached to CI run `30572677884`; final candidate path: `adapter-parity.json`. |
+| 3. Exact toolchains | `passing` | `78b93af` | `npm run verify:toolchains` | `rust-toolchain.toml`, `global.json`, exact Go catalog/toolchain contract, and Node 20/22 CI. Candidate compiler metadata remains bound in the candidate manifest. |
+| 4. CI, candidate, and promotion separation | `pending` | `41d61db`, `5b164d3` | six-cell `Verify`; `.github/workflows/native-candidate.yml`; `.github/workflows/native-promotion.yml` | Source CI is green at run `30572677884`. A successful dispatched candidate bundle and promotion dry-run do not yet exist for `5b164d3`. |
+| 5. External approval without circular source digest | `blocked` | `41d61db`, `5b164d3` | promotion workflow contract tests; protected-environment dry-run | Source-committed approval is no longer authoritative. Repository token returned `403 Must have admin rights to Repository` while creating `native-release-promotion-dry-run` and `native-release-promotion` with required reviewer `badsleepyday`; dry-run must wait for that manual repository setting and a successful candidate. |
+| 6. Real-repository correctness corpus | `pending` | `32a3143` | `npm run verify:native-real-corpus` through candidate evidence runner | Pinned manifest covers TypeScript, Python, PHP, Rust, Java, Svelte, C#, and Go. Final raw candidate path: `real-corpus.json`; it has not yet been generated by a successful candidate run for `5b164d3`. |
+| 7. Failure and recovery | `pending` | `5b164d3` | `node --test test/unit/native-failure-recovery.test.js` | Local result: 7/7 passed across four real abort boundaries, two-process SQLite contention, and near-miss crash injection. Candidate-bound raw command record is pending in `test-summary.json`. |
+| 8. Surface contracts | `pending` | `5b164d3` | `npm run verify:native-surfaces` | Local result: 7 CLI commands, 62 MCP tools, and 94 HTTP routes classified with no implicit default category. Final exact-binary paths: `native-surface-matrix.json` and its digest in `native-rollout-evidence.json`; candidate generation is pending. |
+| 9. Performance and resource stability | `pending` | `5b164d3` | candidate benchmark/profile/database validators; `npm run verify:native-soak -- --binary <candidate> --output <file>` | Local 2,000-event raw soak passed parity, lifecycle, authority, session-history, and unchanged 8/16 MiB plateau thresholds after warm-up. Final exact-candidate paths `benchmark.json`, `profiles/`, `database-open-evidence.json`, and `native-soak.json` are pending. |
+| 10. Package and clean-room proof | `pending` | `39268dc`, `41d61db`, `5b164d3` | six platform install jobs; immutable candidate validation; promotion clean-room and registry proof | Local package, package audit, and clean-room checks pass. Six matching OS/CPU install reports, final candidate checksums, registry proof, and promotion dry-run are pending. |
+| 11. Seven-day dogfooding | `blocked` | — | 7 consecutive days, 10 repositories, 8 adapter families, 500+ refreshes, CLI/MCP/server, Windows/Linux/macOS | Genuine time-based evidence does not exist. Dogfooding cannot begin until Gates 1–10 pass. Normal/default native remains blocked. |
+
+## Current verified commands
+
+- `npm run test:native-core` — passed: Rust 105/105 and Node native suite 160/160.
+- `node --test test/unit/native-incremental-coordinator.test.js` — passed: 5/5.
+- `node scripts/verify-native-adapter-parity.js --allow-dirty` — passed: 8 adapters, 29/29 exact.
+- `node --test --test-concurrency=1 test/unit/native-candidate-bundle.test.js test/unit/native-candidate-evidence.test.js test/unit/native-candidate-install.test.js test/unit/native-failure-recovery.test.js test/unit/native-release-controls.test.js test/unit/native-server-handle.test.js test/unit/native-soak.test.js test/unit/native-surface-contract.test.js test/unit/public-core-ci.test.js test/unit/verify-native-surfaces.test.js` — passed: 37/37.
+- `npm run verify:native-surfaces` — passed.
+- `npm run test:public-source` — passed: 289/289 public-source, 101/101 scanner, 5/5 coordinator.
+- `npm run test:package` — passed: 38/38.
+- `npm run audit:package` — passed; publishing remains unapproved.
+- `npm run verify:clean-room` — passed.
+- `go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12` — passed.
+
+## Expected candidate evidence
+
+The final `native-candidate-bundle` must contain and checksum:
+
+- `adapter-parity.json`
+- `benchmark.json`
+- `profiles/`
+- `database-open-evidence.json`
+- `native-soak.json`
+- `native-surface-matrix.json`
+- `real-corpus.json`
+- `native-rollout-evidence.json`
+- `test-summary.json`
+- `candidate-install-verification/` with six OS/CPU reports
+- `candidate-metadata.json`
+- `native-release-manifest.json`
+- `checksums.json`
+- the exact main tarball and six native platform tarballs
 
 ## Rollout state
 
 `BLOCKED — NATIVE NOT READY`
 
-The rollout remains blocked until every automated gate passes and Gate 11 has genuine time-based dogfood evidence with zero open P0/P1 incidents. No generated or manually edited boolean may override missing evidence.
+The rollout remains blocked until every automated gate passes and Gate 11 has genuine time-based dogfood evidence with zero open P0/P1 incidents. No source edit or self-asserted boolean may override missing evidence.
