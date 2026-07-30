@@ -9,7 +9,7 @@ const {
   NATIVE_ADAPTER_PARITY_SCHEMA,
   nativeAdaptersFromParity,
   validateNativeAdapterParity,
-} = require("../../src/native-adapter-parity");
+} = require("../../src/native-rollout-gate");
 
 function digest(value) {
   return `sha256:${crypto.createHash("sha256").update(value).digest("hex")}`;

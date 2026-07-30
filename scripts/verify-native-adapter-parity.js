@@ -18,7 +18,7 @@ const {
   MINIMUM_ADAPTER_CASES,
   NATIVE_ADAPTER_PARITY_SCHEMA,
   validateNativeAdapterParity,
-} = require("../src/native-adapter-parity");
+} = require("../src/native-rollout-gate");
 const { createScanCoordinator } = require("../src/scan-coordinator");
 
 const ROOT = path.resolve(__dirname, "..");

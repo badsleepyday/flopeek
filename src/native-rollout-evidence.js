@@ -4,7 +4,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { adapterContractDigest } = require("./adapter-registry");
-const { validateNativeAdapterParity } = require("./native-adapter-parity");
+const { validateNativeAdapterParity } = require("./native-rollout-gate");
 const {
   readPlatformNativePackageMetadata,
   resolvePlatformNativeBinary,

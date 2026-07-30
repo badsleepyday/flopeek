@@ -4,7 +4,7 @@ const { adapterContractDigest } = require("../../src/adapter-registry");
 const {
   MINIMUM_ADAPTER_CASES,
   NATIVE_ADAPTER_PARITY_SCHEMA,
-} = require("../../src/native-adapter-parity");
+} = require("../../src/native-rollout-gate");
 
 function machineAdapterParityEvidence() {
   const binary = { sha256: "a".repeat(64), sourceRevision: "b".repeat(40) };
