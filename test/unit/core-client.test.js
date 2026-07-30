@@ -33,6 +33,114 @@ function nativeClient() {
   });
 }
 
+const NATIVE_INCREMENTAL_MATRIX_CASES = [
+  {
+    id: "typescript",
+    main: "src/main.ts",
+    helper: "src/helper.ts",
+    renamed: "src/renamed.ts",
+    alternate: "src/alternate.ts",
+    mainSource: (target = "helper", name = "ping") => `import { ${name} } from "./${target}";\nexport function run() { ${name}(); }\n`,
+    helperSource: (extra = "") => `export function ping() {}\n${extra}`,
+    alternateSource: "export function alternate() {}\n",
+    extraSource: "export function added() {}\n",
+    symbolAddition: "export function extra() {}\n",
+    contentComment: "// content-only\n",
+  },
+  {
+    id: "python",
+    main: "src/main.py",
+    helper: "src/helper.py",
+    renamed: "src/renamed.py",
+    alternate: "src/alternate.py",
+    mainSource: (target = "helper", name = "ping") => `from .${target} import ${name}\n\ndef run():\n    ${name}()\n`,
+    helperSource: (extra = "") => `def ping():\n    pass\n${extra}`,
+    alternateSource: "def alternate():\n    pass\n",
+    extraSource: "def added():\n    pass\n",
+    symbolAddition: "\ndef extra():\n    pass\n",
+    contentComment: "# content-only\n",
+  },
+  {
+    id: "php",
+    main: "src/main.php",
+    helper: "src/helper.php",
+    renamed: "src/renamed.php",
+    alternate: "src/alternate.php",
+    mainSource: (target = "Helper") => `<?php\nuse App\\${target};\nfunction run() {}\n`,
+    helperSource: (extra = "") => `<?php\nclass Helper { public function ping() {} ${extra} }\n`,
+    alternateSource: "<?php\nclass Alternate {}\n",
+    extraSource: "<?php\nfunction added() {}\n",
+    symbolAddition: "public function extra() {}",
+    contentComment: "// content-only\n",
+  },
+  {
+    id: "rust",
+    main: "src/lib.rs",
+    helper: "src/helper.rs",
+    renamed: "src/renamed.rs",
+    alternate: "src/alternate.rs",
+    mainSource: (target = "helper", name = "ping") => `mod ${target};\nmod alternate;\nuse crate::${target}::${name};\npub fn run() { ${name}(); }\n`,
+    helperSource: (extra = "") => `pub fn ping() {}\n${extra}`,
+    alternateSource: "pub fn alternate() {}\n",
+    extraSource: "pub fn added() {}\n",
+    symbolAddition: "pub fn extra() {}\n",
+    contentComment: "// content-only\n",
+  },
+  {
+    id: "java",
+    main: "src/Main.java",
+    helper: "src/Helper.java",
+    renamed: "src/Renamed.java",
+    alternate: "src/Alternate.java",
+    mainSource: (target = "Helper") => `import example.${target};\nclass Main { static void run() { local(); } static void local() {} }\n`,
+    helperSource: (extra = "") => `class Helper { static void ping() {} ${extra} }\n`,
+    alternateSource: "class Alternate {}\n",
+    extraSource: "class Added {}\n",
+    symbolAddition: "static void extra() {}",
+    contentComment: "// content-only\n",
+  },
+  {
+    id: "svelte",
+    main: "src/Main.svelte",
+    helper: "src/Helper.svelte",
+    renamed: "src/Renamed.svelte",
+    alternate: "src/Alternate.svelte",
+    mainSource: (target = "Helper") => `<script>\nimport Component from "./${target}.svelte";\nfunction run() {}\n</script>\n<Component />\n`,
+    helperSource: (extra = "") => `<script>\nfunction ping() {}\n${extra}</script>\n<h1>Helper</h1>\n`,
+    alternateSource: "<h1>Alternate</h1>\n",
+    extraSource: "<h1>Added</h1>\n",
+    symbolAddition: "function extra() {}\n",
+    contentComment: "<!-- content-only -->\n",
+  },
+  {
+    id: "csharp",
+    main: "src/Main.cs",
+    helper: "src/Helper.cs",
+    renamed: "src/Renamed.cs",
+    alternate: "src/Alternate.cs",
+    mainSource: (target = "Helper") => `using App.${target};\nnamespace App;\npublic class Main { public void Run() {} }\n`,
+    helperSource: (extra = "") => `namespace App;\npublic class Helper { public void Ping() {} ${extra} }\n`,
+    alternateSource: "namespace App;\npublic class Alternate {}\n",
+    extraSource: "namespace App;\npublic class Added {}\n",
+    symbolAddition: "public void Extra() {}",
+    contentComment: "// content-only\n",
+  },
+  {
+    id: "go",
+    main: "cmd/main.go",
+    helper: "pkg/helper/helper.go",
+    renamed: "pkg/helper/renamed.go",
+    alternate: "pkg/alternate/alternate.go",
+    mainSource: (target = "helper", name = "Ping") => `package main\nimport "example.test/matrix/pkg/${target}"\nfunc main() { ${target}.${name}() }\n`,
+    helperSource: (extra = "") => `package helper\nfunc Ping() {}\n${extra}`,
+    alternateSource: "package alternate\nfunc Alternate() {}\n",
+    extraSource: "package helper\nfunc Added() {}\n",
+    symbolAddition: "func Extra() {}\n",
+    contentComment: "// content-only\n",
+    manifest: "module example.test/matrix\n\ngo 1.26\n",
+  },
+];
+
 function observedNativeClient(methods) {
   const client = nativeClient();
   return {
@@ -439,6 +547,296 @@ test("strict Rust Go parity survives malformed input and add, rename, and delete
   assertParity(fourth, "deleted Go file");
   assert.equal(fourth.nodes.some((node) => node.id.includes("pkg/helper/renamed.go")), false);
 });
+
+for (const persistIdentity of [true, false]) {
+  test(`strict Rust Go multi-file reverse dependencies stay exact in ${persistIdentity ? "persistent" : "cache-disabled"} mode`, async (context) => {
+    const mode = persistIdentity ? "persistent" : "ephemeral";
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), `flopeek-rust-go-reverse-${mode}-`));
+    fs.mkdirSync(path.join(root, "cmd"), { recursive: true });
+    fs.mkdirSync(path.join(root, "pkg", "helper"), { recursive: true });
+    const mainPath = "cmd/main.go";
+    const helperAPath = "pkg/helper/a.go";
+    const helperBPath = "pkg/helper/b.go";
+    const helperStablePath = "pkg/helper/stable.go";
+    fs.writeFileSync(path.join(root, "go.mod"), "module example.test/reverse\n\ngo 1.26\n");
+    fs.writeFileSync(path.join(root, ...mainPath.split("/")), [
+      "package main",
+      'import "example.test/reverse/pkg/helper"',
+      "func main() { helper.Ping() }",
+      "",
+    ].join("\n"));
+    fs.writeFileSync(path.join(root, ...helperAPath.split("/")), "package helper\nfunc Ping() {}\n");
+    fs.writeFileSync(path.join(root, ...helperStablePath.split("/")), "package helper\nfunc Stable() {}\n");
+
+    const native = createNativeCoreClient({
+      native: nativeClient(),
+      sessionId: `go-reverse-${mode}`,
+      sourceAuthority: "rust",
+    });
+    const javascript = createJsCoreClient();
+    const nativeOptions = persistIdentity ? {} : { persistIdentity: false };
+    let oracleOptions;
+    context.after(async () => {
+      await native.close();
+      fs.rmSync(root, { recursive: true, force: true });
+    });
+
+    const callSource = "symbol:cmd/main.go:function:main";
+    const pingTarget = (file) => `symbol:${file}:function:Ping`;
+    const hasPingCall = (graph, file) => graph.edges.some((edge) => (
+      edge.source === callSource && edge.target === pingTarget(file) && edge.type === "calls"
+    ));
+    const assertParity = (graph, oracle, label) => {
+      assert.deepEqual(
+        createCoreCompatibilityProjection(graph),
+        createCoreCompatibilityProjection(oracle),
+        `${mode}: ${label}`,
+      );
+      assert.deepEqual(graph.stats, oracle.stats, `${mode}: ${label} stats`);
+    };
+    const refresh = async (changedPaths, label) => {
+      const graph = await native.refresh(root, { ...nativeOptions, changedPaths });
+      const oracle = javascript.refresh(root, { ...oracleOptions, changedPaths });
+      assertParity(graph, oracle, label);
+      return graph;
+    };
+
+    let graph = await native.scan(root, nativeOptions);
+    oracleOptions = { persistIdentity: false, sessionProjectId: graph.project.projectId };
+    let oracle = javascript.scan(root, oracleOptions);
+    assertParity(graph, oracle, "cold");
+    assert.equal(hasPingCall(graph, helperAPath), true);
+
+    fs.writeFileSync(path.join(root, ...helperAPath.split("/")), "package helper\nfunc Pong() {}\n");
+    graph = await refresh([helperAPath], "existing target rename");
+    assert.equal(hasPingCall(graph, helperAPath), false);
+    assert.equal(graph.edges.some((edge) => edge.source === callSource && edge.type === "calls"), false);
+    assert.equal(graph.analysis.refresh.analyzedFiles, 1);
+    assert.deepEqual(graph.analysis.refresh.changedPaths, [helperAPath]);
+
+    fs.writeFileSync(path.join(root, ...helperAPath.split("/")), "package helper\nfunc Ping() {}\n");
+    graph = await refresh([helperAPath], "restore exact package function");
+    assert.equal(hasPingCall(graph, helperAPath), true);
+
+    fs.writeFileSync(path.join(root, ...helperBPath.split("/")), "package helper\nfunc Ping() {}\n");
+    graph = await refresh([helperBPath], "ambiguity introduced");
+    assert.equal(hasPingCall(graph, helperAPath), false);
+    assert.equal(hasPingCall(graph, helperBPath), false);
+    assert.equal(graph.analysis.refresh.analyzedFiles, 1);
+
+    const ambiguousVersion = graph.state.graphVersion;
+    fs.rmSync(path.join(root, ...helperBPath.split("/")));
+    graph = await refresh([helperBPath], "ambiguity removed");
+    assert.equal(hasPingCall(graph, helperAPath), true);
+    assert.ok(graph.state.graphVersion > ambiguousVersion);
+    assert.ok(graph.analysis.latestDelta.edges.added.some((edge) => (
+      edge.source === callSource && edge.target === pingTarget(helperAPath) && edge.type === "calls"
+    )));
+
+    const renamedPath = "pkg/helper/renamed.go";
+    fs.renameSync(
+      path.join(root, ...helperAPath.split("/")),
+      path.join(root, ...renamedPath.split("/")),
+    );
+    graph = await refresh([helperAPath, renamedPath], "package member rename");
+    assert.equal(hasPingCall(graph, helperAPath), false);
+    assert.equal(hasPingCall(graph, renamedPath), true);
+    assert.equal(graph.analysis.refresh.analyzedFiles, 1);
+
+    const movedPath = "pkg/moved/renamed.go";
+    fs.mkdirSync(path.join(root, "pkg", "moved"), { recursive: true });
+    fs.renameSync(
+      path.join(root, ...renamedPath.split("/")),
+      path.join(root, ...movedPath.split("/")),
+    );
+    graph = await refresh([renamedPath, movedPath], "package member moved to another directory");
+    assert.equal(graph.edges.some((edge) => edge.source === callSource && edge.type === "calls"), false);
+    assert.equal(graph.analysis.refresh.analyzedFiles, 1);
+
+    fs.writeFileSync(path.join(root, "go.mod"), "module example.test/renamed\n\ngo 1.26\n");
+    graph = await refresh(["go.mod"], "go.mod module path change");
+    assert.equal(graph.edges.some((edge) => edge.source === callSource && edge.type === "calls"), false);
+    assert.equal(graph.analysis.refresh.analyzedFiles, 0);
+    assert.equal(fs.existsSync(path.join(root, ".flopeek", "graph.json")), false);
+    if (!persistIdentity) assert.equal(fs.existsSync(path.join(root, ".flopeek")), false);
+  });
+}
+
+function alternateMatrixMain(adapter) {
+  switch (adapter.id) {
+    case "typescript": return adapter.mainSource("alternate", "alternate");
+    case "python": return adapter.mainSource("alternate", "alternate");
+    case "php": return adapter.mainSource("Alternate");
+    case "rust": return adapter.mainSource("alternate", "alternate");
+    case "java": return adapter.mainSource("Alternate");
+    case "svelte": return adapter.mainSource("Alternate");
+    case "csharp": return adapter.mainSource("Alternate");
+    case "go": return adapter.mainSource("alternate", "Alternate");
+    default: throw new Error(`Unknown matrix adapter: ${adapter.id}`);
+  }
+}
+
+for (const persistIdentity of [true, false]) {
+  for (const adapter of NATIVE_INCREMENTAL_MATRIX_CASES) {
+    test(`strict Rust ${adapter.id} incremental matrix stays exact in ${persistIdentity ? "persistent" : "cache-disabled"} mode`, async (context) => {
+      const mode = persistIdentity ? "persistent" : "ephemeral";
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), `flopeek-${adapter.id}-matrix-${mode}-`));
+      const write = (relativePath, source) => {
+        const absolute = path.join(root, ...relativePath.split("/"));
+        fs.mkdirSync(path.dirname(absolute), { recursive: true });
+        fs.writeFileSync(absolute, source);
+      };
+      write("package.json", `${JSON.stringify({ name: `${adapter.id}-matrix` })}\n`);
+      if (adapter.id === "rust") write("Cargo.toml", "[package]\nname = \"matrix\"\nversion = \"0.1.0\"\n");
+      if (adapter.manifest) write("go.mod", adapter.manifest);
+      write(adapter.main, adapter.mainSource());
+      write(adapter.helper, adapter.helperSource());
+      write(adapter.alternate, adapter.alternateSource);
+
+      const native = createNativeCoreClient({
+        native: nativeClient(),
+        sessionId: `${adapter.id}-matrix-${mode}`,
+        sourceAuthority: "rust",
+      });
+      const javascript = createJsCoreClient();
+      const nativeOptions = persistIdentity ? {} : { persistIdentity: false };
+      let oracleOptions;
+      context.after(async () => {
+        await native.close();
+        fs.rmSync(root, { recursive: true, force: true });
+      });
+
+      const assertParity = (graph, oracle, label) => {
+        assert.deepEqual(
+          createCoreCompatibilityProjection(graph),
+          createCoreCompatibilityProjection(oracle),
+          `${adapter.id}/${mode}: ${label}`,
+        );
+        assert.deepEqual(graph.stats, oracle.stats, `${adapter.id}/${mode}: ${label} stats`);
+        assert.equal(
+          fs.existsSync(path.join(root, ".flopeek", "graph.json")),
+          false,
+          `${adapter.id}/${mode}: native authority must never create graph.json`,
+        );
+      };
+
+      let graph = await native.scan(root, nativeOptions);
+      oracleOptions = { persistIdentity: false, sessionProjectId: graph.project.projectId };
+      let oracle = javascript.scan(root, oracleOptions);
+      assertParity(graph, oracle, "cold scan");
+      assert.equal(graph.analysis.refresh.analyzedFiles, graph.stats.scannedFiles);
+      let contextRef = (await native.getContextCard(graph, `file:${adapter.main}`)).card.contextRef;
+
+      const step = async ({
+        label, changedPaths, mutate, analyzedFiles, removedFiles = 0, versionChanges = true,
+      }) => {
+        const previous = graph;
+        mutate();
+        graph = await native.refresh(root, { ...nativeOptions, changedPaths });
+        oracle = javascript.refresh(root, { ...oracleOptions, changedPaths });
+        assertParity(graph, oracle, label);
+        assert.deepEqual(graph.analysis.refresh.changedPaths, [...changedPaths].sort());
+        assert.equal(graph.analysis.refresh.analyzedFiles, analyzedFiles, `${label}: analyzedFiles`);
+        assert.equal(graph.analysis.refresh.removedFiles, removedFiles, `${label}: removedFiles`);
+        assert.equal(
+          graph.analysis.refresh.analyzedFiles + graph.analysis.refresh.reusedFiles,
+          graph.stats.scannedFiles,
+          `${label}: parsed/reused accounting`,
+        );
+        assert.equal(
+          graph.state.graphVersion > previous.state.graphVersion,
+          versionChanges,
+          `${label}: graph version must move iff material graph state changes`,
+        );
+        const resolution = await native.resolveContextRef(graph, contextRef);
+        assert.equal(
+          resolution.status,
+          versionChanges ? "stale" : "current",
+          `${label}: prior Context Ref status`,
+        );
+        contextRef = (await native.getContextCard(graph, `file:${adapter.main}`)).card.contextRef;
+      };
+
+      await step({
+        label: "unchanged refresh",
+        changedPaths: [],
+        mutate() {},
+        analyzedFiles: 0,
+        versionChanges: false,
+      });
+      await step({
+        label: "content-only edit",
+        changedPaths: [adapter.helper],
+        mutate: () => fs.appendFileSync(path.join(root, ...adapter.helper.split("/")), adapter.contentComment),
+        analyzedFiles: 1,
+      });
+      await step({
+        label: "symbol addition",
+        changedPaths: [adapter.helper],
+        mutate: () => write(adapter.helper, adapter.helperSource(adapter.symbolAddition)),
+        analyzedFiles: 1,
+      });
+      await step({
+        label: "symbol deletion",
+        changedPaths: [adapter.helper],
+        mutate: () => write(adapter.helper, adapter.helperSource()),
+        analyzedFiles: 1,
+      });
+
+      const extension = path.extname(adapter.helper);
+      const addedPath = `${path.posix.dirname(adapter.helper)}/matrix-added${extension}`;
+      await step({
+        label: "file addition",
+        changedPaths: [addedPath],
+        mutate: () => write(addedPath, adapter.extraSource),
+        analyzedFiles: 1,
+      });
+      await step({
+        label: "file deletion",
+        changedPaths: [addedPath],
+        mutate: () => fs.rmSync(path.join(root, ...addedPath.split("/"))),
+        analyzedFiles: 0,
+        removedFiles: 1,
+      });
+      await step({
+        label: "file rename",
+        changedPaths: [adapter.helper, adapter.renamed],
+        mutate: () => {
+          fs.mkdirSync(path.dirname(path.join(root, ...adapter.renamed.split("/"))), { recursive: true });
+          fs.renameSync(
+            path.join(root, ...adapter.helper.split("/")),
+            path.join(root, ...adapter.renamed.split("/")),
+          );
+        },
+        analyzedFiles: 1,
+        removedFiles: 1,
+      });
+      await step({
+        label: "import target change",
+        changedPaths: [adapter.main],
+        mutate: () => write(adapter.main, alternateMatrixMain(adapter)),
+        analyzedFiles: 1,
+      });
+      await step({
+        label: "config/manifest reconciliation",
+        changedPaths: ["package.json"],
+        mutate: () => write("package.json", `${JSON.stringify({
+          name: `${adapter.id}-matrix`,
+          scripts: { verify: `node ${adapter.main}` },
+        })}\n`),
+        analyzedFiles: 0,
+      });
+
+      if (!persistIdentity) {
+        assert.equal(
+          fs.existsSync(path.join(root, ".flopeek")),
+          false,
+          `${adapter.id}: cache-disabled matrix must not create metadata`,
+        );
+      }
+    });
+  }
+}
 
 test("experimental native core owns persistent public graph versions", async (context) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-native-core-client-"));

@@ -181,7 +181,7 @@ fn dev_packages(root: &Path) -> BTreeSet<String> {
 }
 
 fn package_name(specifier: &str) -> String {
-    let parts = specifier.split('/').collect::<Vec<_>>();
+    let parts = specifier.split(['\\', '/', ':']).collect::<Vec<_>>();
     if specifier.starts_with('@') {
         parts.iter().take(2).copied().collect::<Vec<_>>().join("/")
     } else {
@@ -657,6 +657,10 @@ pub fn resolve_native_js_imports(
                 // import (for example a CSS asset outside its resolver
                 // extensions) into an external dependency node.
                 } else if !specifier.starts_with('.')
+                    && !(path.ends_with(".rs")
+                        && ["crate::", "self::", "super::"]
+                            .iter()
+                            .any(|prefix| specifier.starts_with(prefix)))
                     && imported.standard != Some(true)
                     && !is_node_builtin(specifier)
                     && !is_java_standard_library(specifier)
@@ -685,7 +689,7 @@ pub fn resolve_native_js_imports(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_native_js_imports;
+    use super::{package_name, resolve_native_js_imports};
     use crate::js_facts::parse_native_js_facts;
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::Path;
@@ -731,5 +735,28 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["@mui/material", "/src/local"]
         );
+    }
+
+    #[test]
+    fn external_package_names_match_javascript_separator_normalization() {
+        assert_eq!(package_name("App\\Helper"), "App");
+        assert_eq!(package_name("node:fs"), "node");
+        assert_eq!(package_name("@scope/tool/runtime"), "@scope/tool");
+    }
+
+    #[test]
+    fn unresolved_rust_internal_paths_do_not_become_external_packages() {
+        let facts = BTreeMap::from([(
+            "src/lib.rs".to_string(),
+            parse_native_js_facts(
+                "src/lib.rs",
+                "use crate::missing::ping;\npub fn run() { ping(); }\n",
+            )
+            .unwrap(),
+        )]);
+        let known = BTreeSet::from(["src/lib.rs".to_string()]);
+        let resolved = resolve_native_js_imports(Path::new("."), &facts, &known);
+        assert!(resolved["src/lib.rs"].resolved_imports.is_empty());
+        assert!(resolved["src/lib.rs"].external_imports.is_empty());
     }
 }

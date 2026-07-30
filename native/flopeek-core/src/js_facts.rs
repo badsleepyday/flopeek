@@ -231,11 +231,17 @@ fn native_resolution_indexes(
     let mut reverse_importers = BTreeMap::<String, BTreeSet<String>>::new();
     let mut importer_targets = BTreeMap::<String, BTreeSet<String>>::new();
     for (importer, facts) in resolution {
-        let targets = facts
+        let mut targets = facts
             .resolved_imports
             .iter()
             .map(|item| item.target_path.clone())
             .collect::<BTreeSet<_>>();
+        targets.extend(
+            facts
+                .resolved_packages
+                .iter()
+                .flat_map(|package| package.files.iter().cloned()),
+        );
         for target in &targets {
             reverse_importers
                 .entry(target.clone())
@@ -277,7 +283,7 @@ fn update_native_resolution_indexes(
         }
     }
     for importer in refreshed_paths {
-        let targets = status
+        let mut targets = status
             .resolution
             .get(importer)
             .map(|facts| {
@@ -288,6 +294,14 @@ fn update_native_resolution_indexes(
                     .collect::<BTreeSet<_>>()
             })
             .unwrap_or_default();
+        if let Some(facts) = status.resolution.get(importer) {
+            targets.extend(
+                facts
+                    .resolved_packages
+                    .iter()
+                    .flat_map(|package| package.files.iter().cloned()),
+            );
+        }
         for target in &targets {
             status
                 .reverse_importers
@@ -341,6 +355,7 @@ pub fn refresh_native_js_facts_session(
     // projection unless a changed fact can add, remove, or invalidate one.
     let mut entry_facts_affected = false;
     let mut changed = BTreeSet::new();
+    let mut resolution_manifests = BTreeSet::new();
     for path in changed_paths {
         let normalized = path.replace('\\', "/");
         if normalized.is_empty()
@@ -355,6 +370,11 @@ pub fn refresh_native_js_facts_session(
             return Err(format!("native-session-reconcile-required:{normalized}"));
         }
         if native_js_ignored_path(&normalized) {
+            continue;
+        }
+        if native_resolution_manifest_path(&normalized) {
+            entry_facts_affected |= normalized.ends_with("package.json");
+            resolution_manifests.insert(normalized);
             continue;
         }
         // Excluded files are intentionally absent from candidate_paths, so an
@@ -451,10 +471,13 @@ pub fn refresh_native_js_facts_session(
             .cloned(),
     );
     let membership_changed = !added_paths.is_empty() || !removed_paths.is_empty();
-    if membership_changed {
+    if membership_changed || !resolution_manifests.is_empty() {
         // Candidate membership changes recordOrder for subsequent files. Keep
         // the public batch deterministic by rebuilding records from cached
         // facts/hashes, not by reparsing or rereading every source file.
+        // Resolution manifests have the same global effect without changing
+        // source membership, so they also reconcile every cached resolver
+        // record while retaining parsed source facts.
         affected_resolution_paths = next.facts.keys().cloned().collect();
     }
     for path in &removed_paths {
@@ -481,7 +504,11 @@ pub fn refresh_native_js_facts_session(
         Some(&next.source_hashes),
     )?;
     let refreshed_paths = affected_facts.keys().cloned().collect::<BTreeSet<_>>();
-    update_native_resolution_indexes(&mut next, &refreshed_paths, membership_changed);
+    update_native_resolution_indexes(
+        &mut next,
+        &refreshed_paths,
+        membership_changed || !resolution_manifests.is_empty(),
+    );
     next.structural_records.retain(|record| {
         match record
             .get("relativePath")
@@ -509,7 +536,12 @@ pub fn refresh_native_js_facts_session(
         .count();
     next.removed_facts = removed_paths.len();
     next.candidate_files = next.candidate_paths.len();
-    next.changed_paths = changed.into_iter().collect();
+    next.changed_paths = changed
+        .into_iter()
+        .chain(resolution_manifests)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     next.reused_paths = next
         .candidate_paths
         .iter()
@@ -602,6 +634,13 @@ fn native_js_ignored_path(relative_path: &str) -> bool {
                         | "vendor"
                 )
         })
+}
+
+fn native_resolution_manifest_path(relative_path: &str) -> bool {
+    matches!(
+        relative_path.rsplit('/').next().unwrap_or(relative_path),
+        "go.mod" | "package.json" | "tsconfig.json" | "jsconfig.json"
+    )
 }
 
 fn language_for_path(path: &str) -> Option<Language> {
@@ -2657,6 +2696,80 @@ mod tests {
             vec!["src/second.ts"]
         );
         assert_eq!(refreshed.changed_record_paths, vec!["src/importer.ts"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn incremental_session_marks_go_multi_file_package_importers_as_changed_records() {
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-go-package-reverse-importers-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("cmd")).unwrap();
+        fs::create_dir_all(root.join("pkg/helper")).unwrap();
+        fs::write(
+            root.join("go.mod"),
+            "module example.test/reverse\n\ngo 1.26\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("cmd/main.go"),
+            "package main\nimport \"example.test/reverse/pkg/helper\"\nfunc main() { helper.Ping() }\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("pkg/helper/a.go"),
+            "package helper\nfunc Ping() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("pkg/helper/b.go"),
+            "package helper\nfunc Stable() {}\n",
+        )
+        .unwrap();
+
+        let initial =
+            scan_native_js_facts_ephemeral(&root, Some("session:go-package-reverse")).unwrap();
+        for target in ["pkg/helper/a.go", "pkg/helper/b.go"] {
+            assert_eq!(
+                initial.reverse_importers[target]
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                vec!["cmd/main.go"],
+                "{target} must retain the package importer"
+            );
+        }
+
+        fs::write(
+            root.join("pkg/helper/a.go"),
+            "package helper\nfunc Pong() {}\n",
+        )
+        .unwrap();
+        let refreshed =
+            refresh_native_js_facts_session(&initial, &["pkg/helper/a.go".to_string()]).unwrap();
+        assert_eq!(
+            refreshed.changed_record_paths,
+            vec!["cmd/main.go", "pkg/helper/a.go"]
+        );
+        assert_eq!(refreshed.parsed_files, 1);
+        assert_eq!(refreshed.reused_files, 2);
+
+        fs::write(
+            root.join("go.mod"),
+            "module example.test/renamed\n\ngo 1.26\n",
+        )
+        .unwrap();
+        let reconciled =
+            refresh_native_js_facts_session(&refreshed, &["go.mod".to_string()]).unwrap();
+        assert_eq!(reconciled.parsed_files, 0);
+        assert_eq!(reconciled.reused_files, 3);
+        assert_eq!(reconciled.changed_paths, vec!["go.mod"]);
+        assert_eq!(
+            reconciled.changed_record_paths,
+            vec!["cmd/main.go", "pkg/helper/a.go", "pkg/helper/b.go"]
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }
