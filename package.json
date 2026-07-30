@@ -120,6 +120,7 @@
     "capture:native-database-open-evidence": "node scripts/capture-native-database-open-evidence.js",
     "test:real-corpus": "node src/real-repository-corpus.js",
     "verify:native-real-corpus": "node scripts/verify-native-real-corpus.js",
+    "verify:native-candidate": "node scripts/run-native-candidate-evidence.js",
     "qa:viewer-cancellation": "node scripts/viewer-cancellation-fixture.js",
     "prepublishOnly": "npm run verify:npm-publication"
   },

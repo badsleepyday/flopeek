@@ -25,6 +25,7 @@ const os = argument("--os");
 const cpu = argument("--cpu");
 const binary = argument("--binary");
 const output = argument("--output");
+const requestedSourceSha = argument("--source-sha");
 const platformTarget = nativePlatformTarget(os, cpu);
 const expectedPackage = platformTarget?.packageName || null;
 if (!packageName || !os || !cpu || !binary || !output) {
@@ -37,8 +38,9 @@ if (!packageName || !os || !cpu || !binary || !output) {
   const root = path.resolve(__dirname, "..");
   const main = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
   const repositoryRevision = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
-  if (process.env.GITHUB_SHA && process.env.GITHUB_SHA !== repositoryRevision) {
-    throw new Error(`Checked-out revision ${repositoryRevision} does not match GITHUB_SHA ${process.env.GITHUB_SHA}.`);
+  const expectedSourceSha = requestedSourceSha || process.env.GITHUB_SHA || null;
+  if (expectedSourceSha && expectedSourceSha !== repositoryRevision) {
+    throw new Error(`Checked-out revision ${repositoryRevision} does not match candidate source SHA ${expectedSourceSha}.`);
   }
   const sourceDigest = createHash("sha256")
     .update(execFileSync("git", ["ls-tree", "-r", "--full-tree", "HEAD"], { cwd: root }))

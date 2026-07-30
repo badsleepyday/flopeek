@@ -52,6 +52,10 @@ for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/fram
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/public-core-ci.test.js");
 for (const name of ["full", "fast", "unit", "package"]) lanes[name].unshift("test/unit/native-release-controls.test.js");
 for (const name of ["full", "fast", "unit", "package"]) lanes[name].unshift(
+  "test/unit/native-candidate-bundle.test.js",
+  "test/unit/native-candidate-evidence.test.js",
+);
+for (const name of ["full", "fast", "unit", "package"]) lanes[name].unshift(
   "test/unit/native-database-open-evidence.test.js",
   "test/unit/native-release-manifest.test.js",
   "test/unit/github-release-approval.test.js",

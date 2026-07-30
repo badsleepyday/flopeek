@@ -62,3 +62,20 @@ test("platform packager rejects a package name that does not match its OS and CP
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /mismatched native package target/);
 });
+
+test("platform packager rejects a dispatch SHA that differs from checked-out source", (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-native-package-source-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const binary = path.join(root, "source.exe");
+  fs.writeFileSync(binary, "fixture");
+  const result = spawnSync(process.execPath, [PACKAGER,
+    "--package", "@flopeek/native-win32-x64",
+    "--os", "win32",
+    "--cpu", "x64",
+    "--binary", binary,
+    "--output", path.join(root, "output"),
+    "--source-sha", "a".repeat(40),
+  ], { cwd: ROOT, encoding: "utf8", windowsHide: true });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /does not match candidate source SHA/);
+});
