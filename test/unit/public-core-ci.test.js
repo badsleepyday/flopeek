@@ -31,6 +31,10 @@ test("tagged Core releases verify source and package evidence before creating a 
   for (const command of ["npm run test:public-source", "npm run test:package", "npm run audit:package", "npm run verify:clean-room"]) {
     assert.match(workflow, new RegExp(`- run: ${command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   }
+  assert.match(workflow, /prepare-native-rollout-evidence\.js --inputs packaging\/native-rollout-inputs --assets release-assets/);
+  assert.match(workflow, /sha256sum main-dist\/native-rollout-evidence\.json > main-dist\/native-rollout-evidence\.sha256/);
+  assert.match(workflow, /go-version:\s*'1\.26\.4'/);
+  assert.match(workflow, /npm run check:go-stdlib/);
   assert.match(workflow, /node scripts\/verify-clean-room-native-platform\.js --platform-tarball/);
   assert.match(workflow, /name: Verify complete release set before publication/);
   assert.match(workflow, /npm run verify:npm-publication/);

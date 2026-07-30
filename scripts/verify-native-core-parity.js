@@ -51,7 +51,7 @@ async function verifyRoot(root, nativeOptions = releaseNativeOptions()) {
   try {
     assert.equal(native.backendAuthority, "rust-sqlite");
     assert.equal(native.sourceAuthority, "rust");
-    assert.equal(native.parserHost, "rust-tree-sitter-source/v18");
+    assert.equal(native.parserHost, "rust-tree-sitter-source/v19");
     assert.equal(native.factEnvelopeHost, "rust-native-structural-batch/v1");
     const javascriptCoordinator = createScanCoordinator(root, { cache: false, coreClient: javascript });
     const nativeCoordinator = createScanCoordinator(root, { cache: false, coreClient: native });

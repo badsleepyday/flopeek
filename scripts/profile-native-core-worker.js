@@ -12,7 +12,7 @@ const { createNativeCoreClient } = require("../src/native-core-client");
 const { NativeProtocolClient } = require("../src/native-protocol-client");
 const { createScanCoordinator } = require("../src/scan-coordinator");
 const { copyRepository, sourceFiles } = require("./benchmark-native-incremental");
-const { releaseNativeOptions, stateRequest } = require("./benchmark-native-core-client");
+const { releaseNativeOptions, repositoryBinding, stateRequest } = require("./benchmark-native-core-client");
 const { profileState } = require("./profile-native-core-client");
 
 async function main() {
@@ -48,15 +48,15 @@ async function main() {
     const rustVersion = (() => {
       try { return execFileSync("rustc", ["--version"], { encoding: "utf8" }).trim(); } catch { return null; }
     })();
+    const sourceBinding = repositoryBinding(source);
     process.stdout.write(JSON.stringify({
       schemaVersion: "flopeek-native-core-profile-worker/v1",
       implementation,
       state,
       repository: {
         source: path.basename(source),
-        revision: (() => {
-          try { return execFileSync("git", ["-C", source, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(); } catch { return null; }
-        })(),
+        revision: sourceBinding.repositoryRevision,
+        sourceDigest: sourceBinding.sourceDigest,
         files: sourceFiles(source).length,
         bytes: sourceFiles(source).reduce((total, file) => total + fs.statSync(file).size, 0),
       },

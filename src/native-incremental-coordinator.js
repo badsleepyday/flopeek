@@ -5,7 +5,7 @@ const path = require("node:path");
 const { createHash } = require("node:crypto");
 const { NATIVE_PROTOCOL_VERSION, NativeProtocolClient } = require("./native-protocol-client");
 const { createRepositoryScanner } = require("./scanner");
-const { nativePlatformPackageName } = require("./native-platform-targets");
+const { nativePlatformPackageName, nativePlatformTarget } = require("./native-platform-targets");
 
 const NATIVE_MANIFEST_SCHEMA = "flopeek-native-incremental-manifest/v1";
 const NATIVE_RECORD_CACHE_SCHEMA = "flopeek-native-js-record-cache/v1";
@@ -28,6 +28,7 @@ function readPlatformNativePackageMetadata(
   arch = process.arch,
 ) {
   const packageName = nativePlatformPackageName(platform, arch);
+  const platformTarget = nativePlatformTarget(platform, arch);
   if (!packageName) return null;
   try {
     const manifest = JSON.parse(readFile(resolve(`${packageName}/package.json`), "utf8"));
@@ -36,10 +37,22 @@ function readPlatformNativePackageMetadata(
       || !Array.isArray(manifest.os) || !manifest.os.includes(platform)
       || !Array.isArray(manifest.cpu) || !manifest.cpu.includes(arch)
       || !metadata || metadata.protocolVersion !== NATIVE_PROTOCOL_VERSION
-      || typeof metadata.binarySha256 !== "string" || !/^[a-f0-9]{64}$/.test(metadata.binarySha256)) {
+      || typeof metadata.binarySha256 !== "string" || !/^[a-f0-9]{64}$/.test(metadata.binarySha256)
+      || typeof metadata.repositoryRevision !== "string" || !/^[a-f0-9]{40,64}$/.test(metadata.repositoryRevision)
+      || typeof metadata.sourceDigest !== "string" || !/^[a-f0-9]{64}$/.test(metadata.sourceDigest)
+      || metadata.target !== platformTarget?.rustTarget
+      || typeof metadata.compiler?.version !== "string" || !metadata.compiler.version) {
       return null;
     }
-    return Object.freeze({ packageName, version: manifest.version, binarySha256: metadata.binarySha256 });
+    return Object.freeze({
+      packageName,
+      version: manifest.version,
+      binarySha256: metadata.binarySha256,
+      repositoryRevision: metadata.repositoryRevision,
+      sourceDigest: metadata.sourceDigest,
+      compiler: Object.freeze({ ...metadata.compiler }),
+      target: metadata.target,
+    });
   } catch {
     return null;
   }

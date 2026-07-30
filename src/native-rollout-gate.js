@@ -7,6 +7,7 @@ const MAXIMUM_REGRESSION_SPEEDUP = 0.9;
 const REQUIRED_ONE_FILE_SPEEDUP = 2;
 const REQUIRED_ONE_FILE_REPOSITORIES = 4;
 const NATIVE_BACKEND_PARITY_SCHEMA = "flopeek-native-backend-parity/v1";
+const NATIVE_BENCHMARK_SCHEMA = "flopeek-native-core-client-benchmark/v2";
 const REQUIRED_NATIVE_ADAPTERS = Object.freeze(getAdapterRegistry().adapters
   .filter((adapter) => adapter.capabilities.structure !== "inventory-only")
   .map((adapter) => adapter.id)
@@ -53,20 +54,52 @@ function benchmarkRows(report) {
   return Array.isArray(report?.rows) ? report.rows : [];
 }
 
+function hasBoundBenchmarkArtifact(report) {
+  const artifact = report?.nativeArtifact;
+  return report?.schemaVersion === NATIVE_BENCHMARK_SCHEMA
+    && artifact && typeof artifact === "object"
+    && /^[a-f0-9]{64}$/u.test(artifact.binarySha256 || "")
+    && /^[a-f0-9]{40,64}$/u.test(artifact.repositoryRevision || "")
+    && /^[a-f0-9]{64}$/u.test(artifact.sourceDigest || "")
+    && typeof artifact.platformPackage === "string" && artifact.platformPackage.length > 0
+    && typeof artifact.target === "string" && artifact.target.length > 0
+    && typeof artifact.compilerVersion === "string" && artifact.compilerVersion.length > 0;
+}
+
 function distinctBenchmarkRepositories(rows) {
   return new Set(rows
     .map((row) => typeof row?.repository === "string" ? row.repository.trim() : "")
     .filter(Boolean)).size;
 }
 
+function median(values) {
+  const ordered = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(ordered.length / 2);
+  return ordered.length % 2 ? ordered[middle] : (ordered[middle - 1] + ordered[middle]) / 2;
+}
+
+function measuredSpeedup(sample) {
+  const javascript = sample?.jsSamplesMs;
+  const native = sample?.nativeSamplesMs;
+  if (!Array.isArray(javascript) || javascript.length < 3
+    || !Array.isArray(native) || native.length !== javascript.length
+    || !javascript.every((value) => finiteNonNegative(value))
+    || !native.every((value) => finiteNonNegative(value) && value > 0)) return null;
+  const computed = Number((median(javascript) / median(native)).toFixed(3));
+  return sample.speedupNativeVsJavaScript === computed ? computed : null;
+}
+
 function benchmarkSpeedup(rows, state) {
   if (!rows.length) return null;
-  const samples = rows.map((row) => row?.states?.[state]?.speedupNativeVsJavaScript);
+  const samples = rows.map((row) => measuredSpeedup(row?.states?.[state]));
   return samples.every(finiteNonNegative) ? Math.min(...samples) : null;
 }
 
 function rowsAtOrAbove(rows, state, threshold) {
-  return rows.filter((row) => row?.states?.[state]?.speedupNativeVsJavaScript >= threshold).length;
+  return rows.filter((row) => {
+    const speedup = measuredSpeedup(row?.states?.[state]);
+    return speedup !== null && speedup >= threshold;
+  }).length;
 }
 
 /// Decide whether the product may select native as its default core. This gate
@@ -104,6 +137,7 @@ function evaluateNativeDefaultRollout(evidence = {}) {
     });
   }
 
+  if (!hasBoundBenchmarkArtifact(evidence.benchmark)) reasons.push("benchmark-artifact-binding-missing");
   const rows = benchmarkRows(evidence.benchmark);
   const cold = benchmarkSpeedup(rows, "cold");
   const unchanged = benchmarkSpeedup(rows, "unchanged");
@@ -147,6 +181,7 @@ module.exports = {
   REQUIRED_ONE_FILE_REPOSITORIES,
   REQUIRED_ONE_FILE_SPEEDUP,
   NATIVE_BACKEND_PARITY_SCHEMA,
+  NATIVE_BENCHMARK_SCHEMA,
   REQUIRED_NATIVE_ADAPTERS,
   evaluateNativeDefaultRollout,
 };

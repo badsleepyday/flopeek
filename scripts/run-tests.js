@@ -52,6 +52,8 @@ for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/fram
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/public-core-ci.test.js");
 for (const name of ["full", "fast", "unit", "package"]) lanes[name].unshift("test/unit/native-release-controls.test.js");
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/branch-name-policy.test.js");
+for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/native-activation-surfaces.test.js");
+for (const name of ["full", "fast", "unit", "package"]) lanes[name].unshift("test/unit/go-stdlib-catalog.test.js");
 lanes.full.unshift("test/unit/native-mcp-handle.test.js", "test/unit/native-server-handle.test.js", "test/unit/native-surface-contract.test.js");
 for (const name of ["full", "fast", "contracts"]) lanes[name].unshift("test/contracts/flopeek-skill-contract.test.js");
 for (const name of ["full", "fast"]) lanes[name].unshift("test/contracts/core-compatibility-contract.test.js");

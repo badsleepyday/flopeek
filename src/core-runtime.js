@@ -1,5 +1,6 @@
 "use strict";
 
+const path = require("node:path");
 const { selectCoreMode } = require("./core-mode");
 const { CORE_CLIENT_SCHEMA, assertCoreClient } = require("./core-client");
 const { createJsCoreClient } = require("./js-core-client");
@@ -9,6 +10,7 @@ const { createShadowCoreClient } = require("./shadow-core-client");
 const { loadBundledNativeRolloutEvidence, probeVerifiedNativeRuntime } = require("./native-rollout-evidence");
 
 const CORE_MODES = new Set(["js", "shadow", "native", "native-experimental"]);
+const FLOPEEK_PACKAGE_ROOT = path.resolve(__dirname, "..");
 
 // A failed native bootstrap may use JavaScript only before native has promoted
 // any graph for this client. Once SQLite is authoritative, falling back to a
@@ -165,12 +167,13 @@ function createSurfaceCoreRuntime(options = {}) {
     : options.coreMode;
   let bundledEvidence = null;
   let verifiedRuntime = null;
+  const packageRoot = path.resolve(options.packageRoot || FLOPEEK_PACKAGE_ROOT);
   if (mode === "native" && options.rolloutEvidence === undefined) {
-    bundledEvidence = loadBundledNativeRolloutEvidence(options.root);
+    bundledEvidence = loadBundledNativeRolloutEvidence(packageRoot);
   }
   if (mode === "native" && options.enableNativeCore === undefined
     && !options.nativeCore && !options.native) {
-    verifiedRuntime = probeVerifiedNativeRuntime(options.root, {
+    verifiedRuntime = probeVerifiedNativeRuntime(packageRoot, {
       expectedBinaries: bundledEvidence?.complete
         ? bundledEvidence.packet.binding.binaries
         : null,
@@ -204,4 +207,11 @@ function createSurfaceCoreRuntime(options = {}) {
   }) });
 }
 
-module.exports = { createConfiguredCoreClient, createNativeFallbackCoreClient, createSurfaceCoreClient, createSurfaceCoreRuntime, observeCoreRuntime };
+module.exports = {
+  FLOPEEK_PACKAGE_ROOT,
+  createConfiguredCoreClient,
+  createNativeFallbackCoreClient,
+  createSurfaceCoreClient,
+  createSurfaceCoreRuntime,
+  observeCoreRuntime,
+};

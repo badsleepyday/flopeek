@@ -3,7 +3,10 @@
 const path = require("node:path");
 const { CORE_CLIENT_METHODS, CORE_CLIENT_SCHEMA, assertCoreClient } = require("./core-client");
 const { createJsCoreClient } = require("./js-core-client");
-const { submitStructuralFactBatch } = require("./structural-fact-adapter-host");
+const {
+  publicGraphContext,
+  submitStructuralFactBatch,
+} = require("./structural-fact-adapter-host");
 
 const STRUCTURAL_NODE_KINDS = new Set(["file", "symbol", "endpoint", "integration", "external", "command", "schedule"]);
 const STRUCTURAL_EDGE_TYPES = new Set(["contains", "declares", "handles", "imports", "initializes", "calls", "queries", "queues", "requests", "uses", "declares-command-target", "schedules"]);
@@ -142,7 +145,22 @@ function createShadowCoreClient(options = {}) {
     } else {
       lastStoreReceipt = null;
     }
-    batchesByGraph.set(graph, batch);
+    // The structural batch is prepared before the JavaScript oracle assembles
+    // its public graph, so its initial flowContext version is the scanner's
+    // pre-promotion value (normally zero). Native query parity must use the
+    // exact public version returned by that assembly; otherwise a valid
+    // current Context Ref is misclassified as targeting a future graph.
+    //
+    // Replace the pre-assembly publicGraphContext with the exact oracle
+    // envelope as well. Native authoritative lifecycle creates its own
+    // versioned state; shadow mode must instead compare and query the public
+    // JavaScript graph that was actually returned to its caller.
+    const queryBatch = {
+      ...batch,
+      flowContext: { ...batch.flowContext, graphVersion: graph.state.graphVersion },
+      publicGraphContext: publicGraphContext(graph),
+    };
+    batchesByGraph.set(graph, queryBatch);
     rootsByGraph.set(graph, path.resolve(root));
     if (lastStoreReceipt) storeReceiptsByGraph.set(graph, lastStoreReceipt);
     return graph;

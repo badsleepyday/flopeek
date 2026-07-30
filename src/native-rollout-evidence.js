@@ -10,7 +10,21 @@ const {
 } = require("./native-incremental-coordinator");
 const { NATIVE_PROTOCOL_VERSION } = require("./native-protocol-client");
 
-const NATIVE_ROLLOUT_EVIDENCE_SCHEMA = "flopeek-native-rollout-evidence/v1";
+const NATIVE_ROLLOUT_EVIDENCE_SCHEMA = "flopeek-native-rollout-evidence/v2";
+
+function validSha256(value) {
+  return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
+}
+
+function validBinaryBinding(value, repositoryRevision, sourceDigest) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    && validSha256(value.binarySha256)
+    && validSha256(value.tarballSha256)
+    && value.repositoryRevision === repositoryRevision
+    && value.sourceDigest === sourceDigest
+    && typeof value.target === "string" && value.target.length > 0
+    && typeof value.compiler?.version === "string" && value.compiler.version.length > 0;
+}
 
 function loadBundledNativeRolloutEvidence(root = path.resolve(__dirname, ".."), options = {}) {
   const readFile = options.readFile || fs.readFileSync;
@@ -27,16 +41,29 @@ function loadBundledNativeRolloutEvidence(root = path.resolve(__dirname, ".."), 
     && packet.binding.protocolVersion === NATIVE_PROTOCOL_VERSION;
   if (!bindingMatches) throw new Error("Bundled native rollout evidence does not match this package, adapter contract, and protocol.");
   if (packet.status === "incomplete") {
-    if (packet.evidence !== null || packet.binding.binaries !== null) {
+    if (packet.evidence !== null || packet.binding.binaries !== null
+      || packet.binding.repositoryRevision !== null || packet.binding.sourceDigest !== null) {
       throw new Error("Incomplete native rollout evidence must not carry decision evidence or binary bindings.");
     }
     return Object.freeze({ packet, evidence: Object.freeze({}), complete: false });
   }
   const binaries = packet.binding.binaries;
+  const repositoryRevision = packet.binding.repositoryRevision;
+  const sourceDigest = packet.binding.sourceDigest;
+  const benchmarkArtifact = packet.evidence?.benchmark?.nativeArtifact;
+  const benchmarkBinding = binaries?.[benchmarkArtifact?.platformPackage];
   if (!packet.evidence || !binaries || typeof binaries !== "object" || Array.isArray(binaries)
+    || typeof repositoryRevision !== "string" || !/^[a-f0-9]{40,64}$/u.test(repositoryRevision)
+    || !validSha256(sourceDigest)
     || Object.keys(binaries).length !== Object.keys(packageJson.optionalDependencies || {}).length
-    || Object.entries(packageJson.optionalDependencies || {}).some(([name]) => !/^[a-f0-9]{64}$/u.test(binaries[name] || ""))) {
-    throw new Error("Complete native rollout evidence requires an exact SHA-256 for every platform binary and an evidence payload.");
+    || Object.entries(packageJson.optionalDependencies || {})
+      .some(([name]) => !validBinaryBinding(binaries[name], repositoryRevision, sourceDigest))
+    || packet.evidence.benchmark?.schemaVersion !== "flopeek-native-core-client-benchmark/v2"
+    || !benchmarkArtifact || !validBinaryBinding(benchmarkBinding, repositoryRevision, sourceDigest)
+    || benchmarkBinding.binarySha256 !== benchmarkArtifact.binarySha256
+    || benchmarkBinding.target !== benchmarkArtifact.target
+    || benchmarkBinding.compiler.version !== benchmarkArtifact.compilerVersion) {
+    throw new Error("Complete native rollout evidence requires exact revision, source, compiler, target, tarball, and binary bindings for every platform.");
   }
   return Object.freeze({ packet, evidence: Object.freeze(packet.evidence), complete: true });
 }
@@ -52,8 +79,13 @@ function probeVerifiedNativeRuntime(root = path.resolve(__dirname, ".."), option
     && metadata.version === packageJson.version
     && expectedPackageVersion === packageJson.version
     && (options.verifyBinary || verifyPlatformNativeBinary)(binary, metadata));
+  const expected = options.expectedBinaries?.[metadata?.packageName];
   const evidenceVerified = integrityVerified && (!options.expectedBinaries
-    || options.expectedBinaries[metadata.packageName] === metadata.binarySha256);
+    || (expected?.binarySha256 === metadata.binarySha256
+      && expected.repositoryRevision === metadata.repositoryRevision
+      && expected.sourceDigest === metadata.sourceDigest
+      && expected.target === metadata.target
+      && expected.compiler?.version === metadata.compiler?.version));
   return Object.freeze({
     available: evidenceVerified,
     binary: evidenceVerified ? binary : null,

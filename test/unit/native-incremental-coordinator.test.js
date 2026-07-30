@@ -55,22 +55,41 @@ test("native platform packages resolve deterministically and remain optional", (
 test("platform package metadata requires exact protocol, target, and binary checksum", () => {
   const binary = Buffer.from("native binary fixture");
   const binarySha256 = createHash("sha256").update(binary).digest("hex");
+  const nativeBinding = {
+    protocolVersion: "flopeek-native-protocol/v1",
+    binarySha256,
+    repositoryRevision: "a".repeat(40),
+    sourceDigest: "b".repeat(64),
+    compiler: { version: "rustc 1.2.3" },
+    target: "x86_64-pc-windows-msvc",
+  };
   const manifest = JSON.stringify({
     name: "@flopeek/native-win32-x64",
     version: "0.2.1-beta.3",
     os: ["win32"],
     cpu: ["x64"],
-    flopeekNative: { protocolVersion: "flopeek-native-protocol/v1", binarySha256 },
+    flopeekNative: nativeBinding,
   });
   const resolve = (request) => {
     assert.equal(request, "@flopeek/native-win32-x64/package.json");
     return "C:/npm/native/package.json";
   };
   const metadata = readPlatformNativePackageMetadata(resolve, () => manifest, "win32", "x64");
-  assert.deepEqual(metadata, { packageName: "@flopeek/native-win32-x64", version: "0.2.1-beta.3", binarySha256 });
+  assert.deepEqual(metadata, {
+    packageName: "@flopeek/native-win32-x64",
+    version: "0.2.1-beta.3",
+    binarySha256,
+    repositoryRevision: "a".repeat(40),
+    sourceDigest: "b".repeat(64),
+    compiler: { version: "rustc 1.2.3" },
+    target: "x86_64-pc-windows-msvc",
+  });
   assert.equal(verifyPlatformNativeBinary("C:/npm/native/bin/flopeek-native-core.exe", metadata, () => binary), true);
   assert.equal(verifyPlatformNativeBinary("C:/npm/native/bin/flopeek-native-core.exe", metadata, () => Buffer.from("tampered")), false);
-  assert.equal(readPlatformNativePackageMetadata(resolve, () => JSON.stringify({ ...JSON.parse(manifest), flopeekNative: { protocolVersion: "other/v1", binarySha256 } }), "win32", "x64"), null);
+  assert.equal(readPlatformNativePackageMetadata(resolve, () => JSON.stringify({
+    ...JSON.parse(manifest),
+    flopeekNative: { ...nativeBinding, protocolVersion: "other/v1" },
+  }), "win32", "x64"), null);
 });
 
 function copiedFixture(name) {

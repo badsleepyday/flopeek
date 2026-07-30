@@ -5,6 +5,7 @@ use crate::js_facts::{
     NativeJsStructuralSymbol, NativeJsSymbol, NativeJsSymbolReference,
 };
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::OnceLock;
 use tree_sitter::{Node, Parser};
 
 const PARSER: &str = "go-parser";
@@ -37,9 +38,12 @@ fn evidence(path: &str, node: Node<'_>) -> NativeJsEvidence {
     }
 }
 
-fn diagnostics(node: Node<'_>) -> usize {
+fn diagnostic_nodes(node: Node<'_>) -> usize {
     usize::from(node.is_error() || node.is_missing())
-        + children(node).into_iter().map(diagnostics).sum::<usize>()
+        + children(node)
+            .into_iter()
+            .map(diagnostic_nodes)
+            .sum::<usize>()
 }
 
 fn unquote_go_string(value: &str) -> Option<String> {
@@ -54,59 +58,53 @@ fn unquote_go_string(value: &str) -> Option<String> {
 }
 
 fn standard_import(specifier: &str) -> bool {
-    if specifier == "C" {
-        return true;
-    }
-    let root = specifier.split('/').next().unwrap_or(specifier);
-    matches!(
-        root,
-        "archive"
-            | "bufio"
-            | "builtin"
-            | "bytes"
-            | "cmp"
-            | "compress"
-            | "container"
-            | "context"
-            | "crypto"
-            | "database"
-            | "debug"
-            | "embed"
-            | "encoding"
-            | "errors"
-            | "expvar"
-            | "flag"
-            | "fmt"
-            | "go"
-            | "hash"
-            | "html"
-            | "image"
-            | "index"
-            | "io"
-            | "log"
-            | "maps"
-            | "math"
-            | "mime"
-            | "net"
-            | "os"
-            | "path"
-            | "plugin"
-            | "reflect"
-            | "regexp"
-            | "runtime"
-            | "slices"
-            | "sort"
-            | "strconv"
-            | "strings"
-            | "structs"
-            | "sync"
-            | "syscall"
-            | "testing"
-            | "text"
-            | "time"
-            | "unicode"
-            | "unsafe"
-    )
+    static CATALOG: OnceLock<BTreeSet<String>> = OnceLock::new();
+    CATALOG
+        .get_or_init(|| {
+            let catalog: serde_json::Value =
+                serde_json::from_str(include_str!("../../../contracts/go-stdlib-catalog.json"))
+                    .expect("committed Go stdlib catalog must be valid JSON");
+            assert_eq!(
+                catalog["schemaVersion"], "flopeek-go-stdlib-catalog/v1",
+                "committed Go stdlib catalog schema drifted"
+            );
+            assert_eq!(
+                catalog["goVersion"], "go1.26.4",
+                "Go stdlib catalog version must remain bound to the adapter version"
+            );
+            assert_eq!(
+                catalog["targets"],
+                serde_json::json!([
+                    "darwin/amd64",
+                    "darwin/arm64",
+                    "linux/amd64",
+                    "linux/arm64",
+                    "windows/amd64",
+                    "windows/arm64"
+                ]),
+                "Go stdlib catalog targets must match supported native packages"
+            );
+            let packages = catalog["packages"]
+                .as_array()
+                .expect("Go stdlib catalog packages must be an array");
+            let unique = packages
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .expect("Go stdlib catalog entries must be strings")
+                        .to_string()
+                })
+                .collect::<BTreeSet<_>>();
+            assert_eq!(
+                unique.len(),
+                packages.len(),
+                "Go stdlib catalog packages must be unique"
+            );
+            assert!(unique.contains("C"), "Go stdlib catalog must contain cgo C");
+            unique
+        })
+        .contains(specifier)
 }
 
 fn declaration_name(node: Node<'_>, source: &str) -> Option<String> {
@@ -157,16 +155,34 @@ fn import_binding(node: Node<'_>, specifier: &str, source: &str) -> Option<Strin
     }
 }
 
-fn identifier_children(node: Node<'_>, source: &str, names: &mut BTreeSet<String>) {
-    let mut stack = vec![node];
-    while let Some(current) = stack.pop() {
-        if current.kind() == "identifier" {
-            if let Some(name) = text(current, source) {
-                names.insert(name);
-            }
-            continue;
+fn direct_identifier_names(node: Node<'_>, source: &str, names: &mut BTreeSet<String>) {
+    if node.kind() == "identifier" {
+        if let Some(name) = text(node, source) {
+            names.insert(name);
         }
-        stack.extend(children(current));
+        return;
+    }
+    for child in children(node) {
+        if child.kind() == "identifier"
+            && let Some(name) = text(child, source)
+        {
+            names.insert(name);
+        }
+    }
+}
+
+fn parameter_names(node: Node<'_>, source: &str, names: &mut BTreeSet<String>) {
+    if matches!(
+        node.kind(),
+        "parameter_declaration" | "variadic_parameter_declaration"
+    ) {
+        direct_identifier_names(node, source, names);
+        return;
+    }
+    if matches!(node.kind(), "parameter_list" | "receiver") {
+        for child in children(node) {
+            parameter_names(child, source, names);
+        }
     }
 }
 
@@ -174,7 +190,7 @@ fn function_bound_names(node: Node<'_>, source: &str) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     for field in ["receiver", "parameters", "result"] {
         if let Some(value) = node.child_by_field_name(field) {
-            identifier_children(value, source, &mut names);
+            parameter_names(value, source, &mut names);
         }
     }
     let Some(body) = node.child_by_field_name("body") else {
@@ -187,14 +203,22 @@ fn function_bound_names(node: Node<'_>, source: &str) -> BTreeSet<String> {
         }
         if matches!(
             current.kind(),
-            "short_var_declaration" | "var_spec" | "range_clause" | "receive_statement"
+            "assignment_statement"
+                | "short_var_declaration"
+                | "var_spec"
+                | "const_spec"
+                | "range_clause"
+                | "receive_statement"
         ) {
             if let Some(left) = current
                 .child_by_field_name("left")
                 .or_else(|| current.child_by_field_name("name"))
             {
-                identifier_children(left, source, &mut names);
+                direct_identifier_names(left, source, &mut names);
             }
+        }
+        if let Some(alias) = current.child_by_field_name("alias") {
+            direct_identifier_names(alias, source, &mut names);
         }
         stack.extend(children(current));
     }
@@ -280,12 +304,49 @@ fn function_calls(
     calls
 }
 
+fn malformed_facts() -> NativeJsFacts {
+    let analysis = NativeJsAnalysis {
+        parser: PARSER.into(),
+        status: "parsed-with-diagnostics".into(),
+        confidence: "exact".into(),
+        diagnostics: 1,
+        reason: Some("go-parser-reported-syntax-errors".into()),
+    };
+    NativeJsFacts {
+        schema_version: crate::js_facts::NATIVE_JS_FACTS_SCHEMA.into(),
+        parser: PARSER.into(),
+        status: analysis.status.clone(),
+        diagnostics: 1,
+        imports: vec![],
+        symbols: vec![],
+        direct_calls: vec![],
+        structural: NativeJsStructuralFacts {
+            imports: vec![],
+            symbols: vec![],
+            calls: vec![],
+            endpoints: vec![],
+            requests: vec![],
+            integrations: vec![],
+            framework_commands: vec![],
+            unsupported_framework_commands: vec![],
+            runtime_actions: vec![],
+            schedules: vec![],
+            unsupported_schedules: vec![],
+            methods: vec![],
+            analysis,
+        },
+    }
+}
+
 pub fn parse_native_go_facts(path: &str, source: &str) -> Option<NativeJsFacts> {
     let mut parser = Parser::new();
     parser.set_language(&tree_sitter_go::LANGUAGE.into()).ok()?;
     let tree = parser.parse(source, None)?;
     let root = tree.root_node();
-    let diagnostic_count = diagnostics(root);
+    let diagnostic_count = usize::from(diagnostic_nodes(root) > 0);
+    if diagnostic_count > 0 {
+        return Some(malformed_facts());
+    }
     let mut imports = Vec::new();
     let mut import_bindings = BTreeMap::new();
     let mut symbols = Vec::new();
@@ -479,5 +540,54 @@ func (server *Server) Run() { validate(); http.ListenAndServe("", nil) }
                 .count(),
             0
         );
+    }
+
+    #[test]
+    fn type_qualifiers_and_generic_constraints_do_not_shadow_import_bindings() {
+        let facts = parse_native_go_facts(
+            "runner.go",
+            r#"package runner
+import pkg "example.com/project/pkg"
+func Typed(value pkg.Type) { pkg.Do() }
+func Generic[T pkg.Constraint](value T) { pkg.Generic() }
+func Shadowed(pkg pkg.Type) { pkg.Do() }
+"#,
+        )
+        .expect("Go files have a bundled native parser");
+        let calls = facts
+            .structural
+            .calls
+            .iter()
+            .map(|call| {
+                (
+                    call.source.as_ref().map(|source| source.name.as_str()),
+                    call.name.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(calls.contains(&(Some("Typed"), "Do")));
+        assert!(calls.contains(&(Some("Generic"), "Generic")));
+        assert!(!calls.contains(&(Some("Shadowed"), "Do")));
+    }
+
+    #[test]
+    fn diagnostics_are_normalized_and_stdlib_uses_the_versioned_catalog() {
+        let malformed =
+            parse_native_go_facts("broken.go", "package broken\nfunc A( {\nfunc B( {\n")
+                .expect("malformed Go still yields bounded parser facts");
+        assert_eq!(malformed.diagnostics, 1);
+        assert_eq!(malformed.structural.analysis.diagnostics, 1);
+        assert_eq!(
+            malformed.structural.analysis.status,
+            "parsed-with-diagnostics"
+        );
+
+        let imports = parse_native_go_facts(
+            "catalog.go",
+            "package catalog\nimport \"unique\"\nimport \"example.com/unique\"\n",
+        )
+        .expect("catalog fixture parses");
+        assert_eq!(imports.structural.imports[0].standard, Some(true));
+        assert_eq!(imports.structural.imports[1].standard, Some(false));
     }
 }

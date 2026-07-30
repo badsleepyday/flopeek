@@ -26,7 +26,7 @@ use tree_sitter::{Language, Node, Parser};
 
 pub const NATIVE_JS_FACTS_SCHEMA: &str = "flopeek-native-js-facts/v2";
 // This must advance when a cached fact's observable structural semantics change.
-pub const NATIVE_JS_ADAPTER_VERSION: &str = "native-tree-sitter-source/v18";
+pub const NATIVE_JS_ADAPTER_VERSION: &str = "native-tree-sitter-source/v19";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeJsFacts {

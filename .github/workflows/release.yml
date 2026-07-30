@@ -77,11 +77,17 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.4'
       - run: npm ci
+      - run: npm run check:go-stdlib
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
           merge-multiple: true
+      - name: Build rollout evidence from this exact release set
+        run: node scripts/prepare-native-rollout-evidence.js --inputs packaging/native-rollout-inputs --assets release-assets --output packaging/native-rollout-evidence.json
       - name: Verify owner and reviewer approval before any npm publication
         run: |
           npm run verify:npm-publication
@@ -97,11 +103,15 @@ jobs:
         run: |
           mkdir main-dist
           npm pack --pack-destination main-dist
-          node scripts/verify-native-release-set.js --assets release-assets --main "$(find main-dist -maxdepth 1 -name 'flopeek-[0-9]*.tgz' -print -quit)"
+          main_tarball="$(find main-dist -maxdepth 1 -name 'flopeek-[0-9]*.tgz' -print -quit)"
+          node scripts/verify-native-release-set.js --assets release-assets --main "$main_tarball"
+          cp packaging/native-rollout-evidence.json main-dist/native-rollout-evidence.json
+          sha256sum main-dist/native-rollout-evidence.json > main-dist/native-rollout-evidence.sha256
+          sha256sum "$main_tarball" > main-dist/checksums-main.txt
       - uses: actions/upload-artifact@v4
         with:
           name: main-package
-          path: main-dist/flopeek-*.tgz
+          path: main-dist/
           if-no-files-found: error
 
   publish-npm-release:

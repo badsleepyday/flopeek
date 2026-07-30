@@ -802,7 +802,7 @@ function createNativeCoreClient(options = {}) {
     implementation: "native-experimental",
     backendAuthority: "rust-sqlite",
     sourceAuthority,
-    parserHost: sourceAuthority === "rust" ? "rust-tree-sitter-source/v18" : "javascript-structural-fact-batch/v1",
+    parserHost: sourceAuthority === "rust" ? "rust-tree-sitter-source/v19" : "javascript-structural-fact-batch/v1",
     factEnvelopeHost: sourceAuthority === "rust" ? "rust-native-structural-batch/v1" : "javascript-structural-fact-batch/v1",
     extensionAdapterMethods,
     scan,

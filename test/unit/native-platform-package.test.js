@@ -40,6 +40,10 @@ test("platform packager emits a target-locked protocol and checksum manifest", (
   assert.deepEqual(manifest.cpu, ["x64"]);
   assert.equal(manifest.flopeekNative.protocolVersion, "flopeek-native-protocol/v1");
   assert.equal(manifest.flopeekNative.binarySha256, createHash("sha256").update(contents).digest("hex"));
+  assert.match(manifest.flopeekNative.repositoryRevision, /^[a-f0-9]{40,64}$/u);
+  assert.match(manifest.flopeekNative.sourceDigest, /^[a-f0-9]{64}$/u);
+  assert.equal(manifest.flopeekNative.target, "x86_64-pc-windows-msvc");
+  assert.match(manifest.flopeekNative.compiler.version, /^rustc /u);
   assert.deepEqual(fs.readFileSync(path.join(output, "bin", "flopeek-native-core.exe")), contents);
 });
 

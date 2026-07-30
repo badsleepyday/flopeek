@@ -6,8 +6,9 @@
 // npm selects its optional dependency by os/cpu instead.
 const fs = require("node:fs");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
-const { nativePlatformPackageName } = require("../src/native-platform-targets");
+const { nativePlatformTarget } = require("../src/native-platform-targets");
 
 function argument(name) {
   const index = process.argv.indexOf(name);
@@ -24,7 +25,8 @@ const os = argument("--os");
 const cpu = argument("--cpu");
 const binary = argument("--binary");
 const output = argument("--output");
-const expectedPackage = nativePlatformPackageName(os, cpu);
+const platformTarget = nativePlatformTarget(os, cpu);
+const expectedPackage = platformTarget?.packageName || null;
 if (!packageName || !os || !cpu || !binary || !output) {
   fail("Usage: package-native-platform --package @flopeek/native-… --os win32 --cpu x64 --binary path --output directory");
 } else if (packageName !== expectedPackage) {
@@ -34,6 +36,26 @@ if (!packageName || !os || !cpu || !binary || !output) {
 } else {
   const root = path.resolve(__dirname, "..");
   const main = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+  const repositoryRevision = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+  if (process.env.GITHUB_SHA && process.env.GITHUB_SHA !== repositoryRevision) {
+    throw new Error(`Checked-out revision ${repositoryRevision} does not match GITHUB_SHA ${process.env.GITHUB_SHA}.`);
+  }
+  const sourceDigest = createHash("sha256")
+    .update(execFileSync("git", ["ls-tree", "-r", "--full-tree", "HEAD"], { cwd: root }))
+    .digest("hex");
+  const compilerLines = execFileSync("rustc", ["--version", "--verbose"], { cwd: root, encoding: "utf8" })
+    .trim().split(/\r?\n/u);
+  const compilerFields = Object.fromEntries(compilerLines.slice(1)
+    .map((line) => line.split(/:\s+/u, 2))
+    .filter(([key, value]) => key && value));
+  const compiler = {
+    version: compilerLines[0],
+    commitHash: compilerFields["commit-hash"] || null,
+    commitDate: compilerFields["commit-date"] || null,
+    host: compilerFields.host || null,
+    release: compilerFields.release || null,
+    llvmVersion: compilerFields["LLVM version"] || null,
+  };
   const destination = path.resolve(output);
   const bin = path.join(destination, "bin");
   fs.rmSync(destination, { recursive: true, force: true });
@@ -51,6 +73,10 @@ if (!packageName || !os || !cpu || !binary || !output) {
     flopeekNative: {
       protocolVersion: "flopeek-native-protocol/v1",
       binarySha256: createHash("sha256").update(fs.readFileSync(target)).digest("hex"),
+      repositoryRevision,
+      sourceDigest,
+      compiler,
+      target: platformTarget.rustTarget,
     },
     os: [os],
     cpu: [cpu],

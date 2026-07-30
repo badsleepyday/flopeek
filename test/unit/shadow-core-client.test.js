@@ -130,10 +130,20 @@ test("all eleven JavaScript compatibility fixtures match the native structural s
 });
 
 test("native public graph snapshots match the raw JavaScript contract across the compatibility corpus", async (context) => {
+  const temporaryCorpus = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-native-shadow-corpus-"));
   const client = createShadowCoreClient({ native: nativeClient(), persistStructuralGraph: true });
-  context.after(() => client.close());
+  context.after(async () => {
+    await client.close();
+    fs.rmSync(temporaryCorpus, { recursive: true, force: true });
+  });
   for (const fixture of CORE_BASELINE.cases) {
-    const graph = await client.scan(path.join(ROOT, fixture.fixture), { persistIdentity: false });
+    const sourceRoot = path.join(ROOT, fixture.fixture);
+    const fixtureRoot = path.join(temporaryCorpus, fixture.id);
+    fs.cpSync(sourceRoot, fixtureRoot, {
+      recursive: true,
+      filter: (sourcePath) => !path.relative(sourceRoot, sourcePath).split(path.sep).includes(".flopeek"),
+    });
+    const graph = await client.scan(fixtureRoot, { persistIdentity: false });
     const snapshot = await client.getNativePublicGraphSnapshot(graph);
     assert.deepEqual(snapshot.graph, nativePublicSnapshot(graph), fixture.id);
   }

@@ -142,7 +142,6 @@ struct NativePersistentFacts {
     payload: Value,
 }
 
-#[derive(Default)]
 struct NativeProtocolSession {
     graphs: BTreeMap<String, NativeSessionGraph>,
     // Every graph returned by a cache-disabled CoreClient can still be queried
@@ -150,6 +149,11 @@ struct NativeProtocolSession {
     // identify it to Node by a versioned handle, rather than retaining a
     // duplicate StructuralFactBatch in Node for each public graph object.
     session_query_graphs: BTreeMap<String, NativeSessionGraph>,
+    session_history_limit: usize,
+    // One watermark per project distinguishes a deliberately expired handle
+    // from a handle that never belonged to this process without retaining
+    // every historical digest or context-ref payload.
+    expired_session_versions: BTreeMap<String, i64>,
     ephemeral_sources: BTreeMap<String, NativeJsFactsStatus>,
     persistent_sources: BTreeMap<String, NativeJsFactsStatus>,
     // A durable CoreClient owns one JSONL process. Retain its SQLite handle by
@@ -165,6 +169,106 @@ struct NativeProtocolSession {
     // lineage. Reuse this bounded snapshot to avoid spawning `git status` on
     // every changed file; a reconciled source acquisition refreshes it.
     persistent_git_metadata: BTreeMap<String, Value>,
+}
+
+const DEFAULT_NATIVE_SESSION_HISTORY: usize = 2;
+const MAX_NATIVE_SESSION_HISTORY: usize = 1_000;
+
+fn parse_session_history_limit(value: Option<&str>) -> Result<usize, String> {
+    let Some(value) = value else {
+        return Ok(DEFAULT_NATIVE_SESSION_HISTORY);
+    };
+    let limit = value.parse::<usize>().map_err(|_| {
+        "FLOPEEK_NATIVE_SESSION_HISTORY must be an integer from 1 through 1000.".to_string()
+    })?;
+    if !(1..=MAX_NATIVE_SESSION_HISTORY).contains(&limit) {
+        return Err(
+            "FLOPEEK_NATIVE_SESSION_HISTORY must be an integer from 1 through 1000.".to_string(),
+        );
+    }
+    Ok(limit)
+}
+
+impl NativeProtocolSession {
+    fn with_history_limit(session_history_limit: usize) -> Self {
+        Self {
+            graphs: BTreeMap::new(),
+            session_query_graphs: BTreeMap::new(),
+            session_history_limit,
+            expired_session_versions: BTreeMap::new(),
+            ephemeral_sources: BTreeMap::new(),
+            persistent_sources: BTreeMap::new(),
+            persistent_connections: BTreeMap::new(),
+            persistent_graph: None,
+            persistent_facts: None,
+            persistent_git_metadata: BTreeMap::new(),
+        }
+    }
+
+    fn from_env() -> Result<Self, String> {
+        let value = std::env::var_os("FLOPEEK_NATIVE_SESSION_HISTORY")
+            .map(|value| {
+                value.into_string().map_err(|_| {
+                    "FLOPEEK_NATIVE_SESSION_HISTORY must contain valid Unicode.".to_string()
+                })
+            })
+            .transpose()?;
+        let limit = parse_session_history_limit(value.as_deref())?;
+        Ok(Self::with_history_limit(limit))
+    }
+
+    fn expire_session_history(&mut self, project_id: &str, current_version: i64) {
+        let first_retained =
+            current_version.saturating_sub(self.session_history_limit.saturating_sub(1) as i64);
+        let prefix = format!("{project_id}\0");
+        let expired = self
+            .session_query_graphs
+            .iter()
+            .filter(|(key, graph)| {
+                key.starts_with(&prefix) && graph.public_graph_version < first_retained
+            })
+            .map(|(key, graph)| (key.clone(), graph.public_graph_version))
+            .collect::<Vec<_>>();
+        for (key, version) in expired {
+            self.session_query_graphs.remove(&key);
+            self.expired_session_versions
+                .entry(project_id.to_string())
+                .and_modify(|watermark| *watermark = (*watermark).max(version))
+                .or_insert(version);
+        }
+    }
+
+    fn session_graph_error(
+        &self,
+        project_id: &str,
+        public_graph_version: i64,
+    ) -> NativeProtocolError {
+        if self
+            .expired_session_versions
+            .get(project_id)
+            .is_some_and(|watermark| public_graph_version <= *watermark)
+        {
+            NativeProtocolError {
+                code: "native-session-graph-expired",
+                message: format!(
+                    "The requested cache-disabled graph version {public_graph_version} expired from this JSONL session's bounded history."
+                ),
+            }
+        } else {
+            NativeProtocolError {
+                code: "native-session-graph-miss",
+                message:
+                    "The requested cache-disabled native graph is not retained by this JSONL session."
+                        .to_string(),
+            }
+        }
+    }
+}
+
+impl Default for NativeProtocolSession {
+    fn default() -> Self {
+        Self::with_history_limit(DEFAULT_NATIVE_SESSION_HISTORY)
+    }
 }
 
 fn native_session_graph_key(project_id: &str, public_graph_version: i64) -> String {
@@ -383,25 +487,34 @@ fn hydrate_session_query_batch(
             message: "Native session query received an invalid graph handle.".to_string(),
         });
     }
-    let project_id = project_id.expect("validated non-empty project ID");
-    let facts_digest = facts_digest.expect("validated non-empty facts digest");
+    let project_id = project_id
+        .expect("validated non-empty project ID")
+        .to_string();
+    let facts_digest = facts_digest
+        .expect("validated non-empty facts digest")
+        .to_string();
     let public_graph_version = public_graph_version.expect("validated graph version");
-    let key = native_session_graph_key(project_id, public_graph_version);
+    let key = native_session_graph_key(&project_id, public_graph_version);
     let graph = session
         .session_query_graphs
         .get(&key)
         .filter(|graph| graph.facts_digest == facts_digest)
-        .ok_or_else(|| NativeProtocolError {
-            code: "native-session-graph-miss",
-            message: "The requested cache-disabled native graph is no longer retained by this JSONL session."
-                .to_string(),
-        })?;
+        .ok_or_else(|| session.session_graph_error(&project_id, public_graph_version))?;
     let object = params.as_object_mut().ok_or_else(|| NativeProtocolError {
         code: "invalid-params",
         message: "Native session query params must be an object.".to_string(),
     })?;
     object.remove("sessionGraph");
     object.insert("batch".to_string(), (*graph.query_batch).clone());
+    object.insert(
+        "sessionContextHistory".to_string(),
+        json!({
+            "schemaVersion": "flopeek-native-session-context-history/v1",
+            "expiredThroughVersion": session.expired_session_versions.get(&project_id).copied(),
+            "adjacentDelta": graph.latest_delta.clone(),
+            "currentGraphVersion": graph.public_graph_version,
+        }),
+    );
     Ok(())
 }
 
@@ -3401,7 +3514,30 @@ fn native_public_delta_history(
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
     else {
-        return Ok((None, None));
+        let history = params.get("sessionContextHistory");
+        let adjacent_delta = history
+            .and_then(|value| value.get("adjacentDelta"))
+            .filter(|value| {
+                value.get("fromGraphVersion").and_then(Value::as_u64) == Some(from_version)
+                    && value.get("toGraphVersion").and_then(Value::as_u64) == Some(to_version)
+            })
+            .cloned();
+        let expired_through = history
+            .and_then(|value| value.get("expiredThroughVersion"))
+            .and_then(Value::as_i64);
+        let current_version = history
+            .and_then(|value| value.get("currentGraphVersion"))
+            .and_then(Value::as_i64);
+        let range = match (expired_through, current_version) {
+            (Some(expired), Some(current)) => Some((expired.saturating_add(1), current)),
+            _ => adjacent_delta.as_ref().and_then(|delta| {
+                Some((
+                    delta.get("fromGraphVersion")?.as_i64()?,
+                    delta.get("toGraphVersion")?.as_i64()?,
+                ))
+            }),
+        };
+        return Ok((adjacent_delta, range));
     };
     let connection = open_native_store(Path::new(root)).map_err(|error| NativeProtocolError {
         code: "store-read-failed",
@@ -6812,12 +6948,14 @@ fn refresh_native_session_graph(
         "latestDelta": adjacent_delta.clone(),
         "limitation": "This graph is retained only in the native JSONL process for a cache-disabled session. It never creates repository metadata or a SQLite database and cannot resolve after the process closes.",
     });
+    let mut query_batch = params.clone();
+    query_batch["flowContext"]["graphVersion"] = json!(public_graph_version);
     let session_graph = NativeSessionGraph {
         facts_digest: facts_digest.to_string(),
         topology_digest,
         public_graph_version,
         payload: Arc::new(payload),
-        query_batch: Arc::new(params.clone()),
+        query_batch: Arc::new(query_batch),
         public_state: graph["state"].clone(),
         public_graph_state: graph["analysis"]["graphState"].clone(),
         latest_delta: adjacent_delta.clone(),
@@ -6829,6 +6967,13 @@ fn refresh_native_session_graph(
         native_session_graph_key(project_id, public_graph_version),
         session_graph,
     );
+    session.expire_session_history(project_id, public_graph_version);
+    let project_key_prefix = format!("{project_id}\0");
+    let retained_session_graphs = session
+        .session_query_graphs
+        .keys()
+        .filter(|key| key.starts_with(&project_key_prefix))
+        .count();
     let mut response = json!({
         "schemaVersion": "flopeek-native-session-lifecycle/v1",
         "status": if unchanged { "reused" } else { "promoted" },
@@ -6850,6 +6995,9 @@ fn refresh_native_session_graph(
             "snapshotMaterializationMs": snapshot_materialization_ms,
             "deltaMs": delta_ms,
             "totalMs": elapsed_ms(started),
+            "sessionHistoryLimit": session.session_history_limit,
+            "retainedSessionGraphs": retained_session_graphs,
+            "expiredThroughVersion": session.expired_session_versions.get(project_id).copied(),
         },
         "limitation": "Native cache-disabled lifecycle is process-local. JavaScript remains the public default and compatibility oracle until the rollout gate passes.",
     });
@@ -7770,12 +7918,7 @@ fn materialize_native_graph(
             .session_query_graphs
             .get(&key)
             .filter(|graph| graph.facts_digest == facts_digest)
-            .ok_or_else(|| NativeProtocolError {
-                code: "native-session-graph-miss",
-                message:
-                    "The requested cache-disabled graph is not retained by this JSONL session."
-                        .to_string(),
-            })?;
+            .ok_or_else(|| session.session_graph_error(project_id, public_graph_version))?;
         let mut graph = native_public_graph_snapshot(&retained.payload)?;
         graph["state"] = retained.public_state.clone();
         graph["analysis"]["graphState"] = retained.public_graph_state.clone();
@@ -8284,6 +8427,11 @@ fn handle_request(
                     "capabilities": ["health", "initialize", "nativeIncrementalManifest", "nativeBoundedDiscovery", "refreshNativeProject", "refreshNativePersistentProject", "nativeJsRecordCache", "nativeJsStructuralFacts", "submitStructuralFacts", "assembleStructuralGraph", "assembleNativePublicGraph", "assembleNativeFlows", "findNodes", "getNodeDetails", "getEntryFlows", "getRequestFlows", "createContextRef", "resolveNativeContextRef", "getNativeFlowLensCore", "getNativeNodeContextCard", "getNativeFlowContextCard", "getNativeScanStatus", "getNativeProjectOverviewCore", "getRelatedTests", "getChangeImpact", "persistStructuralGraph", "persistNativePublicGraph", "persistNativePublicGraphPatch", "refreshNativeSessionGraph", "refreshNativeJsSessionGraph", "getNativeStructuralDelta", "getNativePublicGraphSnapshot", "getNativeCurrentPublicGraph", "materializeNativeGraph", "getNativePublicGraphDelta", "getNativeChangedContexts", "shutdown"],
                     "storeAuthoritative": false,
                     "publicNodeIdsEnabled": true,
+                    "sessionGraphHistory": {
+                        "limit": session.session_history_limit,
+                        "configuration": "FLOPEEK_NATIVE_SESSION_HISTORY",
+                        "default": DEFAULT_NATIVE_SESSION_HISTORY,
+                    },
                     "adapterCapabilities": native_adapter_registry(),
                 }),
             ),
@@ -8618,7 +8766,7 @@ fn handle_request(
 }
 
 pub fn serve_jsonl<R: BufRead, W: Write>(reader: R, mut writer: W) -> Result<(), String> {
-    let mut session = NativeProtocolSession::default();
+    let mut session = NativeProtocolSession::from_env()?;
     for line in reader.lines() {
         let line =
             line.map_err(|error| format!("Unable to read native protocol request: {error}"))?;
@@ -8667,10 +8815,11 @@ pub fn serve_jsonl<R: BufRead, W: Write>(reader: R, mut writer: W) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::{
-        NATIVE_PROTOCOL_VERSION, NativeProtocolSession, STRUCTURAL_FACT_BATCH_SCHEMA,
-        build_isolated_incremental_graph, hydrate_cached_query_batch, hydrate_session_query_batch,
-        isolated_structural_change_path, native_entry_source_nodes,
-        refresh_native_js_session_graph, refresh_native_persistent_project, same_canonical_json,
+        NATIVE_PROTOCOL_VERSION, NativeProtocolSession, NativeRequest,
+        STRUCTURAL_FACT_BATCH_SCHEMA, build_isolated_incremental_graph, handle_request,
+        hydrate_cached_query_batch, hydrate_session_query_batch, isolated_structural_change_path,
+        native_entry_source_nodes, parse_session_history_limit, refresh_native_js_session_graph,
+        refresh_native_persistent_project, refresh_native_session_graph, same_canonical_json,
         serve_jsonl, structural_facts_canonical_json, structural_facts_digest,
         structural_topology_digest,
     };
@@ -8688,6 +8837,18 @@ mod tests {
             .unwrap()
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    fn responses_with_history(input: &str, history_limit: usize) -> Vec<Value> {
+        let mut session = NativeProtocolSession::with_history_limit(history_limit);
+        input
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                let request = serde_json::from_str::<NativeRequest>(line).unwrap();
+                serde_json::to_value(handle_request(&mut session, request).0).unwrap()
+            })
             .collect()
     }
 
@@ -9328,6 +9489,7 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(result[0]["status"], "ok");
         assert_eq!(result[0]["result"]["publicNodeIdsEnabled"], true);
+        assert_eq!(result[0]["result"]["sessionGraphHistory"]["limit"], 2);
         assert!(
             result[0]["result"]["capabilities"]
                 .as_array()
@@ -9341,6 +9503,19 @@ mod tests {
                 .contains(&json!("refreshNativeJsSessionGraph"))
         );
         assert_eq!(result[1]["result"]["accepted"], true);
+    }
+
+    #[test]
+    fn native_session_history_configuration_is_explicitly_bounded() {
+        assert_eq!(parse_session_history_limit(None).unwrap(), 2);
+        assert_eq!(parse_session_history_limit(Some("1")).unwrap(), 1);
+        assert_eq!(parse_session_history_limit(Some("1000")).unwrap(), 1_000);
+        for invalid in ["", "0", "1001", "-1", "two"] {
+            assert!(
+                parse_session_history_limit(Some(invalid)).is_err(),
+                "{invalid}"
+            );
+        }
     }
 
     #[test]
@@ -9715,6 +9890,185 @@ mod tests {
         assert_eq!(
             result[2]["result"]["graph"]["analysis"]["latestDelta"]["toGraphVersion"],
             2
+        );
+    }
+
+    #[test]
+    fn native_session_history_is_bounded_and_expired_handles_are_explicit() {
+        let session_facts = |hash: char, timestamp: &str, symbol: &str| {
+            let mut params = structural_facts(json!({
+                "symbols": [{ "type": "function", "name": symbol }]
+            }));
+            let fingerprint = format!("sha256:{}", hash.to_string().repeat(64));
+            params["projectId"] = json!("session:bounded-history");
+            params["flowContext"]["projectId"] = json!("session:bounded-history");
+            params["records"][0]["sourceHash"] = json!(hash.to_string().repeat(64));
+            params["lifecycleContext"]["sourceFingerprint"] = json!(fingerprint);
+            params["lifecycleContext"]["updatedAt"] = json!(timestamp);
+            params["publicGraphContext"] = json!({
+                "schemaVersion": 5,
+                "generatedAt": timestamp,
+                "project": { "projectId": "session:bounded-history" },
+                "state": {
+                    "graphVersion": 0,
+                    "materialFingerprint": null,
+                    "sourceFingerprint": fingerprint,
+                    "sourceRevision": null,
+                    "updatedAt": timestamp,
+                    "status": "unpersisted"
+                },
+                "analysis": {
+                    "coverage": null,
+                    "refresh": {
+                        "mode": "incremental",
+                        "analyzedFiles": 1,
+                        "reusedFiles": 0,
+                        "removedFiles": 0,
+                        "changedPaths": ["src/index.js"]
+                    }
+                },
+                "stats": {
+                    "scannedFiles": 1,
+                    "parsedFiles": 1,
+                    "inventoryOnlyFiles": 0,
+                    "parseFailedFiles": 0
+                }
+            });
+            params["factsDigest"] =
+                Value::String(structural_facts_digest(params.as_object().unwrap()).unwrap());
+            params
+        };
+        let first = session_facts('b', "2026-01-01T00:00:00.000Z", "first");
+        let second = session_facts('c', "2026-01-01T00:00:01.000Z", "second");
+        let third = session_facts('d', "2026-01-01T00:00:02.000Z", "third");
+        let first_digest = first["factsDigest"].as_str().unwrap().to_string();
+        let second_digest = second["factsDigest"].as_str().unwrap().to_string();
+        let third_digest = third["factsDigest"].as_str().unwrap().to_string();
+        let session_handle = |version: i64, digest: &str| {
+            json!({
+                "schemaVersion": "flopeek-native-session-graph-handle/v1",
+                "projectId": "session:bounded-history",
+                "factsDigest": digest,
+                "persistence": "session-memory",
+                "publicGraphVersion": version,
+            })
+        };
+        let result = responses_with_history(
+            &format!(
+                "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
+                request("first", "refreshNativeSessionGraph", first),
+                request("second", "refreshNativeSessionGraph", second),
+                request("third", "refreshNativeSessionGraph", third),
+                request(
+                    "expired",
+                    "materializeNativeGraph",
+                    json!({ "sessionGraph": session_handle(1, &first_digest) })
+                ),
+                request(
+                    "retained",
+                    "materializeNativeGraph",
+                    json!({ "sessionGraph": session_handle(2, &second_digest) })
+                ),
+                request(
+                    "missing",
+                    "materializeNativeGraph",
+                    json!({ "sessionGraph": session_handle(99, &second_digest) })
+                ),
+                request(
+                    "expired-context",
+                    "resolveNativeContextRef",
+                    json!({
+                        "sessionGraph": session_handle(3, &third_digest),
+                        "contextRef": "fp://local/session%3Abounded-history/node/symbol%3Asrc%2Findex.js%3Afunction%3Afirst@1"
+                    })
+                ),
+                request(
+                    "adjacent-context",
+                    "resolveNativeContextRef",
+                    json!({
+                        "sessionGraph": session_handle(3, &third_digest),
+                        "contextRef": "fp://local/session%3Abounded-history/node/symbol%3Asrc%2Findex.js%3Afunction%3Asecond@2"
+                    })
+                ),
+            ),
+            2,
+        );
+        assert_eq!(result[0]["result"]["profile"]["retainedSessionGraphs"], 1);
+        assert_eq!(result[1]["result"]["profile"]["retainedSessionGraphs"], 2);
+        assert_eq!(result[2]["result"]["profile"]["retainedSessionGraphs"], 2);
+        assert_eq!(result[2]["result"]["profile"]["expiredThroughVersion"], 1);
+        assert_eq!(result[3]["error"]["code"], "native-session-graph-expired");
+        assert_eq!(result[4]["status"], "ok");
+        assert_eq!(result[4]["result"]["graph"]["state"]["graphVersion"], 2);
+        assert_eq!(result[5]["error"]["code"], "native-session-graph-miss");
+        assert_eq!(
+            result[6]["result"]["status"], "expired",
+            "{}",
+            result[6]["result"]
+        );
+        assert_eq!(result[6]["result"]["code"], "history-pruned");
+        assert_eq!(result[7]["result"]["status"], "successor-candidate");
+        assert_eq!(
+            result[7]["result"]["successorCandidates"][0]["node"]["id"],
+            "symbol:src/index.js:function:third"
+        );
+    }
+
+    #[test]
+    fn native_session_history_stays_constant_across_one_thousand_refreshes() {
+        let mut session = NativeProtocolSession::with_history_limit(2);
+        for index in 1..=1_000 {
+            let hash = format!("{index:064x}");
+            let timestamp = format!("2026-01-01T00:00:{:02}.000Z", index % 60);
+            let mut params = structural_facts(json!({
+                "symbols": [{ "type": "function", "name": format!("version_{index}") }]
+            }));
+            params["projectId"] = json!("session:stress-history");
+            params["flowContext"]["projectId"] = json!("session:stress-history");
+            params["records"][0]["sourceHash"] = json!(hash);
+            params["lifecycleContext"]["sourceFingerprint"] = json!(format!("sha256:{hash}"));
+            params["lifecycleContext"]["updatedAt"] = json!(timestamp);
+            params["publicGraphContext"] = json!({
+                "schemaVersion": 5,
+                "generatedAt": timestamp,
+                "project": { "projectId": "session:stress-history" },
+                "state": {
+                    "graphVersion": 0,
+                    "materialFingerprint": null,
+                    "sourceFingerprint": format!("sha256:{hash}"),
+                    "sourceRevision": null,
+                    "updatedAt": timestamp,
+                    "status": "unpersisted"
+                },
+                "analysis": {
+                    "coverage": null,
+                    "refresh": {
+                        "mode": "incremental",
+                        "analyzedFiles": 1,
+                        "reusedFiles": 0,
+                        "removedFiles": 0,
+                        "changedPaths": ["src/index.js"]
+                    }
+                },
+                "stats": {
+                    "scannedFiles": 1,
+                    "parsedFiles": 1,
+                    "inventoryOnlyFiles": 0,
+                    "parseFailedFiles": 0
+                }
+            });
+            params["factsDigest"] =
+                Value::String(structural_facts_digest(params.as_object().unwrap()).unwrap());
+            let result = refresh_native_session_graph(&mut session, &params).unwrap();
+            assert_eq!(result["profile"]["retainedSessionGraphs"], index.min(2));
+        }
+        assert_eq!(session.graphs.len(), 1);
+        assert_eq!(session.session_query_graphs.len(), 2);
+        assert_eq!(
+            session
+                .expired_session_versions
+                .get("session:stress-history"),
+            Some(&998)
         );
     }
 

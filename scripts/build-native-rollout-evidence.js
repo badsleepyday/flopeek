@@ -2,10 +2,12 @@
 "use strict";
 
 const childProcess = require("node:child_process");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { adapterContractDigest } = require("../src/adapter-registry");
 const { NATIVE_PROTOCOL_VERSION } = require("../src/native-protocol-client");
+const { nativePlatformTarget } = require("../src/native-platform-targets");
 const { evaluateNativeDefaultRollout } = require("../src/native-rollout-gate");
 const { NATIVE_ROLLOUT_EVIDENCE_SCHEMA } = require("../src/native-rollout-evidence");
 
@@ -26,31 +28,71 @@ function percentile(values, p) {
   return ordered[Math.min(ordered.length - 1, Math.max(0, Math.ceil(ordered.length * p / 100) - 1))];
 }
 
-function validateBenchmark(report) {
-  if (report?.schemaVersion !== "flopeek-native-core-client-benchmark/v1"
+function median(values) {
+  const ordered = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(ordered.length / 2);
+  return ordered.length % 2 ? ordered[middle] : (ordered[middle - 1] + ordered[middle]) / 2;
+}
+
+function validateBenchmark(report, binaryBindings = null) {
+  const artifact = report?.nativeArtifact;
+  if (report?.schemaVersion !== "flopeek-native-core-client-benchmark/v2"
+    || !artifact || typeof artifact !== "object"
+    || !/^[a-f0-9]{64}$/u.test(artifact.binarySha256 || "")
+    || !/^[a-f0-9]{40,64}$/u.test(artifact.repositoryRevision || "")
+    || !/^[a-f0-9]{64}$/u.test(artifact.sourceDigest || "")
+    || typeof artifact.platformPackage !== "string" || !artifact.platformPackage
+    || typeof artifact.target !== "string" || !artifact.target
+    || typeof artifact.compilerVersion !== "string" || !artifact.compilerVersion
     || !Array.isArray(report.rows) || report.rows.length < 5) {
-    throw new Error("Rollout evidence requires a native CoreClient benchmark with at least five rows.");
+    throw new Error("Rollout evidence requires a revision-bound native CoreClient benchmark/v2 with at least five rows.");
   }
-  const repositories = new Set();
+  if (binaryBindings) {
+    const releaseArtifact = binaryBindings[artifact.platformPackage];
+    if (!releaseArtifact
+      || releaseArtifact.binarySha256 !== artifact.binarySha256
+      || releaseArtifact.target !== artifact.target
+      || releaseArtifact.compiler.version !== artifact.compilerVersion) {
+      throw new Error("Benchmark timing was not measured with the exact release binary, target, and compiler.");
+    }
+  }
+  const repositories = new Map();
   for (const row of report.rows) {
-    if (typeof row.repository !== "string" || !row.repository || repositories.has(row.repository)) {
+    if (typeof row.repository !== "string" || !row.repository || repositories.has(row.repository)
+      || typeof row.repositoryRevision !== "string" || !/^[a-f0-9]{40,64}$/u.test(row.repositoryRevision)
+      || typeof row.sourceDigest !== "string" || !/^[a-f0-9]{64}$/u.test(row.sourceDigest)) {
       throw new Error("Benchmark rows must identify distinct repositories.");
     }
-    repositories.add(row.repository);
+    repositories.set(row.repository, {
+      revision: row.repositoryRevision,
+      sourceDigest: row.sourceDigest,
+    });
     for (const state of STATES) {
       const sample = row.states?.[state];
       if (!Array.isArray(sample?.jsSamplesMs) || !Array.isArray(sample?.nativeSamplesMs)
         || sample.jsSamplesMs.length < 3 || sample.nativeSamplesMs.length !== sample.jsSamplesMs.length
-        || !sample.jsSamplesMs.every(Number.isFinite) || !sample.nativeSamplesMs.every(Number.isFinite)
+        || !sample.jsSamplesMs.every((value) => Number.isFinite(value) && value >= 0)
+        || !sample.nativeSamplesMs.every((value) => Number.isFinite(value) && value > 0)
         || !Number.isFinite(sample.speedupNativeVsJavaScript)) {
         throw new Error(`Benchmark ${row.repository}/${state} must retain at least three paired raw samples.`);
       }
+      const jsMedianMs = Number(median(sample.jsSamplesMs).toFixed(3));
+      const nativeMedianMs = Number(median(sample.nativeSamplesMs).toFixed(3));
+      const speedup = Number((median(sample.jsSamplesMs) / median(sample.nativeSamplesMs)).toFixed(3));
+      if (sample.speedupNativeVsJavaScript !== speedup
+        || (sample.jsMedianMs != null && sample.jsMedianMs !== jsMedianMs)
+        || (sample.nativeMedianMs != null && sample.nativeMedianMs !== nativeMedianMs)) {
+        throw new Error(`Benchmark ${row.repository}/${state} aggregates do not match its raw samples.`);
+      }
+      sample.jsMedianMs = jsMedianMs;
+      sample.nativeMedianMs = nativeMedianMs;
+      sample.speedupNativeVsJavaScript = speedup;
     }
   }
   return repositories;
 }
 
-function validateProfiles(directory, benchmarkRepositories) {
+function validateProfiles(directory, benchmarkRepositories, binaryBindings) {
   const files = fs.readdirSync(directory)
     .filter((file) => file.endsWith(".json"))
     .map((file) => path.join(directory, file));
@@ -69,15 +111,36 @@ function validateProfiles(directory, benchmarkRepositories) {
     for (const state of STATES) {
       const native = profile.states?.[state]?.native;
       const javascript = profile.states?.[state]?.javascript;
-      if (native?.repository?.revision == null || javascript?.repository?.revision == null
+      if (typeof native?.repository?.revision !== "string"
+        || !/^[a-f0-9]{40,64}$/u.test(native.repository.revision)
+        || typeof javascript?.repository?.revision !== "string"
+        || !/^[a-f0-9]{40,64}$/u.test(javascript.repository.revision)
+        || typeof native.repository.sourceDigest !== "string"
+        || !/^[a-f0-9]{64}$/u.test(native.repository.sourceDigest)
+        || typeof javascript.repository.sourceDigest !== "string"
+        || !/^[a-f0-9]{64}$/u.test(javascript.repository.sourceDigest)
         || native.repository.revision !== javascript.repository.revision
+        || native.repository.source !== profile.repository
+        || javascript.repository.source !== profile.repository
         || typeof native.machine?.binarySha256 !== "string"
         || !/^[a-f0-9]{64}$/u.test(native.machine.binarySha256)) {
         throw new Error(`Profile ${profile.repository}/${state} is not revision- and binary-bound.`);
       }
+      const platform = nativePlatformTarget(native.machine.platform, native.machine.arch);
+      const artifact = platform && binaryBindings[platform.packageName];
+      const benchmarkRepository = benchmarkRepositories.get(profile.repository);
+      if (!artifact || artifact.binarySha256 !== native.machine.binarySha256
+        || artifact.target !== platform.rustTarget
+        || artifact.compiler.version !== native.machine.rustVersion
+        || native.repository.revision !== benchmarkRepository?.revision
+        || native.repository.sourceDigest !== benchmarkRepository?.sourceDigest
+        || javascript.repository.sourceDigest !== benchmarkRepository?.sourceDigest) {
+        throw new Error(`Profile ${profile.repository}/${state} was not measured with the exact release binary and compiler.`);
+      }
       const operations = native.measurement?.queryLatency?.operations || {};
       for (const [name, operation] of Object.entries(operations)) {
-        if (!Array.isArray(operation.rawSamplesMs) || operation.rawSamplesMs.length < 101) {
+        if (!Array.isArray(operation.rawSamplesMs) || operation.rawSamplesMs.length < 101
+          || !operation.rawSamplesMs.every((value) => Number.isFinite(value) && value >= 0)) {
           throw new Error(`Profile ${profile.repository}/${state}/${name} must retain 101 raw query samples.`);
         }
         if (name === "resolveContextRef") contextP95.push(percentile(operation.rawSamplesMs, 95));
@@ -87,6 +150,7 @@ function validateProfiles(directory, benchmarkRepositories) {
       const javascriptPeak = javascript.measurement?.memoryAfter?.node?.peakRssBytes;
       if (!Array.isArray(nativeMemory?.rawCombinedRssBytes)
         || nativeMemory.rawCombinedRssBytes.length < 2
+        || !nativeMemory.rawCombinedRssBytes.every((value) => Number.isFinite(value) && value >= 0)
         || !Number.isFinite(nativeMemory.maximumConcurrentCombinedRssBytes)
         || nativeMemory.maximumConcurrentCombinedRssBytes !== Math.max(...nativeMemory.rawCombinedRssBytes)
         || !Number.isFinite(javascriptPeak)) {
@@ -95,9 +159,9 @@ function validateProfiles(directory, benchmarkRepositories) {
       memoryNoWorse &&= nativeMemory.maximumConcurrentCombinedRssBytes <= javascriptPeak;
     }
   }
-  if (repositories.size < 5
-    || [...benchmarkRepositories].some((repository) => !repositories.has(repository))) {
-    throw new Error("Profiles must cover every repository in the five-repository benchmark.");
+  if (repositories.size < 5 || repositories.size !== benchmarkRepositories.size
+    || [...benchmarkRepositories.keys()].some((repository) => !repositories.has(repository))) {
+    throw new Error("Profiles must exactly cover every repository in the five-repository benchmark.");
   }
   return {
     coreQueryP95Ms: percentile(coreP95, 95),
@@ -117,21 +181,57 @@ function platformBinaryBindings(assets, manifest, execFileSync = childProcess.ex
     if (packed.version !== manifest.version
       || packed.flopeekNative?.protocolVersion !== NATIVE_PROTOCOL_VERSION
       || !/^[a-f0-9]{64}$/u.test(packed.flopeekNative?.binarySha256 || "")
+      || !/^[a-f0-9]{40,64}$/u.test(packed.flopeekNative?.repositoryRevision || "")
+      || !/^[a-f0-9]{64}$/u.test(packed.flopeekNative?.sourceDigest || "")
+      || typeof packed.flopeekNative?.compiler?.version !== "string"
+      || !packed.flopeekNative.compiler.version
+      || typeof packed.flopeekNative?.target !== "string"
       || bindings[packed.name]) {
       throw new Error(`Invalid or duplicate native platform artifact: ${packed.name || file}.`);
     }
-    bindings[packed.name] = packed.flopeekNative.binarySha256;
+    const platform = nativePlatformTarget(packed.os?.[0], packed.cpu?.[0]);
+    if (!platform || platform.packageName !== packed.name || platform.rustTarget !== packed.flopeekNative.target) {
+      throw new Error(`Native artifact target metadata does not match ${packed.name || file}.`);
+    }
+    const executable = packed.os[0] === "win32" ? "flopeek-native-core.exe" : "flopeek-native-core";
+    const binary = execFileSync("tar", ["-xOf", tarball, `package/bin/${executable}`]);
+    const actualBinarySha256 = crypto.createHash("sha256").update(binary).digest("hex");
+    if (actualBinarySha256 !== packed.flopeekNative.binarySha256) {
+      throw new Error(`Native artifact binary checksum does not match its manifest: ${packed.name}.`);
+    }
+    bindings[packed.name] = {
+      binarySha256: actualBinarySha256,
+      tarballSha256: crypto.createHash("sha256").update(fs.readFileSync(tarball)).digest("hex"),
+      repositoryRevision: packed.flopeekNative.repositoryRevision,
+      sourceDigest: packed.flopeekNative.sourceDigest,
+      compiler: packed.flopeekNative.compiler,
+      target: packed.flopeekNative.target,
+    };
   }
   if (expected.some((name) => !bindings[name])) {
     throw new Error("The rollout packet requires one verified artifact for every optional native platform package.");
+  }
+  const revisions = new Set(Object.values(bindings).map((binding) => binding.repositoryRevision));
+  const sourceDigests = new Set(Object.values(bindings).map((binding) => binding.sourceDigest));
+  const compilers = new Set(Object.values(bindings).map((binding) => JSON.stringify({
+    version: binding.compiler.version,
+    commitHash: binding.compiler.commitHash,
+    commitDate: binding.compiler.commitDate,
+    release: binding.compiler.release,
+    llvmVersion: binding.compiler.llvmVersion,
+  })));
+  if (revisions.size !== 1 || sourceDigests.size !== 1 || compilers.size !== 1) {
+    throw new Error("All native platform artifacts must come from the exact same repository revision, source tree, and compiler.");
   }
   return bindings;
 }
 
 function buildPacket({ root, candidate, benchmark, profiles, assets, execFileSync }) {
   const manifest = readJson(path.join(root, "package.json"));
-  const benchmarkRepositories = validateBenchmark(benchmark);
-  const performance = validateProfiles(profiles, benchmarkRepositories);
+  const verifiedBenchmark = JSON.parse(JSON.stringify(benchmark));
+  const binaries = platformBinaryBindings(assets, manifest, execFileSync);
+  const benchmarkRepositories = validateBenchmark(verifiedBenchmark, binaries);
+  const performance = validateProfiles(profiles, benchmarkRepositories, binaries);
   if (candidate?.performanceAssertions?.databaseOpenDoesNotDeserializeFullGraph !== true
     || typeof candidate.performanceAssertions.evidenceReference !== "string"
     || !candidate.performanceAssertions.evidenceReference) {
@@ -139,7 +239,7 @@ function buildPacket({ root, candidate, benchmark, profiles, assets, execFileSyn
   }
   const evidence = {
     ...candidate,
-    benchmark,
+    benchmark: verifiedBenchmark,
     performance: {
       ...performance,
       databaseOpenDoesNotDeserializeFullGraph: true,
@@ -149,6 +249,7 @@ function buildPacket({ root, candidate, benchmark, profiles, assets, execFileSyn
   if (!decision.eligible) {
     throw new Error(`Rollout evidence is not eligible: ${decision.reasons.join(", ")}.`);
   }
+  const artifact = Object.values(binaries)[0];
   return {
     schemaVersion: NATIVE_ROLLOUT_EVIDENCE_SCHEMA,
     status: "complete",
@@ -157,7 +258,9 @@ function buildPacket({ root, candidate, benchmark, profiles, assets, execFileSyn
       packageVersion: manifest.version,
       adapterContractDigest: adapterContractDigest(),
       protocolVersion: NATIVE_PROTOCOL_VERSION,
-      binaries: platformBinaryBindings(assets, manifest, execFileSync),
+      repositoryRevision: artifact.repositoryRevision,
+      sourceDigest: artifact.sourceDigest,
+      binaries,
     },
     evidence,
   };

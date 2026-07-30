@@ -46,7 +46,7 @@ async function createMcpServer(options) {
   ]);
   const root = fs.realpathSync(options.root);
   if (!fs.statSync(root).isDirectory()) throw new Error("MCP repository target must be a directory.");
-  const ownsCoreClient = !options.coreClient;
+  const ownsCoreClient = options.ownsCoreClient === true || !options.coreClient;
   const runtime = options.coreClient ? null : createSurfaceCoreRuntime(options);
   const core = options.coreClient || runtime.core;
   let closeCorePromise = null;

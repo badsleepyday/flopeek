@@ -167,7 +167,7 @@ async function listenOnAvailablePort(server, requestedPort, options = {}) {
 
 async function startServer(options) {
   let root = fs.realpathSync(options.root);
-  const ownsCoreClient = !options.coreClient;
+  const ownsCoreClient = options.ownsCoreClient === true || !options.coreClient;
   const runtime = options.coreClient ? null : createSurfaceCoreRuntime(options);
   const core = options.coreClient || runtime.core;
   let closeCorePromise = null;

@@ -8,10 +8,13 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
+const { createHash } = require("node:crypto");
 const { createCoreCompatibilityDigest } = require("../src/core-compatibility");
 const { createJsCoreClient } = require("../src/js-core-client");
 const { createNativeCoreClient } = require("../src/native-core-client");
 const { createScanCoordinator } = require("../src/scan-coordinator");
+const { nativePlatformTarget } = require("../src/native-platform-targets");
 const { copyRepository, executionOrder, parseArguments, sourceFiles, summarize } = require("./benchmark-native-incremental");
 
 const ROOT = path.resolve(__dirname, "..");
@@ -27,6 +30,44 @@ function releaseNativeOptions() {
     throw new Error(`Native release binary is missing: ${command}. Run cargo build --release --manifest-path native/flopeek-core/Cargo.toml before benchmarking.`);
   }
   return Object.freeze({ command, args: [] });
+}
+
+function nativeArtifactBinding(command) {
+  const platform = nativePlatformTarget();
+  if (!platform) throw new Error(`No release target is registered for ${process.platform}/${process.arch}.`);
+  const repositoryRevision = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: ROOT,
+    encoding: "utf8",
+  }).trim();
+  const sourceDigest = createHash("sha256")
+    .update(execFileSync("git", ["ls-tree", "-r", "--full-tree", "HEAD"], { cwd: ROOT }))
+    .digest("hex");
+  const compilerVersion = execFileSync("rustc", ["--version"], {
+    cwd: ROOT,
+    encoding: "utf8",
+  }).trim();
+  return {
+    binarySha256: createHash("sha256").update(fs.readFileSync(command)).digest("hex"),
+    platformPackage: platform.packageName,
+    target: platform.rustTarget,
+    compilerVersion,
+    repositoryRevision,
+    sourceDigest,
+  };
+}
+
+function repositoryBinding(root) {
+  const status = execFileSync("git", ["-C", root, "status", "--porcelain", "--untracked-files=all"], {
+    encoding: "utf8",
+  }).trim();
+  if (status) throw new Error(`Benchmark repository must be clean and revision-bound: ${root}.`);
+  const repositoryRevision = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], {
+    encoding: "utf8",
+  }).trim();
+  const sourceDigest = createHash("sha256")
+    .update(execFileSync("git", ["-C", root, "ls-tree", "-r", "--full-tree", "HEAD"]))
+    .digest("hex");
+  return { repositoryRevision, sourceDigest };
 }
 
 function elapsed(operation) {
@@ -83,7 +124,7 @@ async function benchmarkCoreRoot(source, iteration, sandbox, nativeOptions = rel
   const native = createNativeCoreClient({ nativeOptions, sourceAuthority: "rust" });
   assert.equal(native.backendAuthority, "rust-sqlite", "Benchmark native side must use Rust+SQLite authority.");
   assert.equal(native.sourceAuthority, "rust", "Benchmark native side must use Rust source authority.");
-  assert.equal(native.parserHost, "rust-tree-sitter-source/v18", "Benchmark must not retain a JavaScript parser host.");
+  assert.equal(native.parserHost, "rust-tree-sitter-source/v19", "Benchmark must not retain a JavaScript parser host.");
   assert.equal(native.factEnvelopeHost, "rust-native-structural-batch/v1", "Benchmark must use the complete StructuralFactBatch envelope constructed by Rust.");
   assert.equal(Object.hasOwn(native, "queryFallbacks"), false, "Benchmark native side must not expose a hidden JavaScript core query fallback.");
   const javascriptCoordinator = createScanCoordinator(jsRoot, { cache: !ephemeral, coreClient: javascript });
@@ -137,12 +178,16 @@ async function main() {
       for (let iteration = 1; iteration <= iterations; iteration += 1) {
         samples.push(await benchmarkCoreRoot(root, iteration, sandbox, nativeOptions, { ephemeral }));
       }
-      rows.push(summarize(path.basename(root), samples));
+      rows.push({
+        ...summarize(path.basename(root), samples),
+        ...repositoryBinding(root),
+      });
     }
     process.stdout.write(`${JSON.stringify({
-      schemaVersion: "flopeek-native-core-client-benchmark/v1",
+      schemaVersion: "flopeek-native-core-client-benchmark/v2",
       mode: ephemeral ? "scan-coordinator-js-session-vs-strict-rust-session-authority" : "scan-coordinator-js-json-vs-strict-rust-sqlite-authority",
       nativeRuntime: "release-binary",
+      nativeArtifact: nativeArtifactBinding(nativeOptions.command),
       iterations,
       rows,
       parity: "Every JS/native pair must complete through ScanCoordinator, have equal flopeek-core-compatibility/v1 SHA-256 digest and graph statistics, and promote only its declared persistence artifact before timing is retained.",
@@ -160,4 +205,10 @@ if (require.main === module) main().catch((error) => {
   process.exitCode = 1;
 });
 
-module.exports = { benchmarkCoreRoot, releaseNativeOptions, stateRequest };
+module.exports = {
+  benchmarkCoreRoot,
+  nativeArtifactBinding,
+  releaseNativeOptions,
+  repositoryBinding,
+  stateRequest,
+};

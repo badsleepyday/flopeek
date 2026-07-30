@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const { adapterContractDigest } = require("../../src/adapter-registry");
-const { REQUIRED_NATIVE_ADAPTERS } = require("../../src/native-rollout-gate");
+const { NATIVE_BENCHMARK_SCHEMA, REQUIRED_NATIVE_ADAPTERS } = require("../../src/native-rollout-gate");
 const { CORE_MODE_SCHEMA, CoreModeError, requestedCoreMode, selectCoreMode } = require("../../src/core-mode");
 const { createConfiguredCoreClient, createSurfaceCoreClient, createSurfaceCoreRuntime, observeCoreRuntime } = require("../../src/core-runtime");
 const { createJsCoreClient } = require("../../src/js-core-client");
@@ -28,11 +28,26 @@ function completeEvidence() {
     structuralParity: { publicIds: true, fixtureCount: 11, exactFixtureCount: 11 },
     queryParity: { flowLens: true, impact: true, relatedTests: true, contextRef: true, changedContexts: true },
     lifecycle: { sqlitePromotion: true, recovery: true, javascriptFallback: true },
-    benchmark: { rows: Array.from({ length: 5 }, (_, index) => ({ repository: `repo-${index + 1}`, states: {
-      cold: { speedupNativeVsJavaScript: 1 },
-      unchanged: { speedupNativeVsJavaScript: 1 },
-      oneFileChange: { speedupNativeVsJavaScript: index < 4 ? 2 : 1 },
-    } })) },
+    benchmark: {
+      schemaVersion: NATIVE_BENCHMARK_SCHEMA,
+      nativeArtifact: {
+        binarySha256: "a".repeat(64),
+        platformPackage: "@flopeek/native-linux-x64-gnu",
+        target: "x86_64-unknown-linux-gnu",
+        compilerVersion: "rustc 1.2.3",
+        repositoryRevision: "b".repeat(40),
+        sourceDigest: "c".repeat(64),
+      },
+      rows: Array.from({ length: 5 }, (_, index) => ({ repository: `repo-${index + 1}`, states: {
+      cold: { jsSamplesMs: [1, 1, 1], nativeSamplesMs: [1, 1, 1], speedupNativeVsJavaScript: 1 },
+      unchanged: { jsSamplesMs: [1, 1, 1], nativeSamplesMs: [1, 1, 1], speedupNativeVsJavaScript: 1 },
+      oneFileChange: {
+        jsSamplesMs: [index < 4 ? 2 : 1, index < 4 ? 2 : 1, index < 4 ? 2 : 1],
+        nativeSamplesMs: [1, 1, 1],
+        speedupNativeVsJavaScript: index < 4 ? 2 : 1,
+      },
+      } })),
+    },
     performance: {
       coreQueryP95Ms: 49,
       contextRefP95Ms: 19,
@@ -196,7 +211,7 @@ test("surface runtime exposes strict Rust source authority in its execution reco
     ...createJsCoreClient(),
     implementation: "native-experimental",
     sourceAuthority: "rust",
-    parserHost: "rust-tree-sitter-source/v18",
+    parserHost: "rust-tree-sitter-source/v19",
     factEnvelopeHost: "rust-native-structural-batch/v1",
   };
   const runtime = createSurfaceCoreRuntime({ coreMode: "native-experimental", nativeCore });
@@ -205,7 +220,7 @@ test("surface runtime exposes strict Rust source authority in its execution reco
   assert.deepEqual(observed.execution, {
     selectedImplementation: "native",
     sourceAuthority: "rust",
-    parserHost: "rust-tree-sitter-source/v18",
+    parserHost: "rust-tree-sitter-source/v19",
     factEnvelopeHost: "rust-native-structural-batch/v1",
     fallback: { active: false, reason: null },
   });

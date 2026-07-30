@@ -419,7 +419,21 @@ async function main() {
   }
   if (options.command === "help" || options.command === "h") return printHelp();
   if (options.command === "version" || options.command === "v") return console.log(packageInfo.version);
-  if (options.command === "mcp") return runMcpServer(options);
+  if (options.command === "mcp") {
+    const ownedCore = core;
+    core = null;
+    try {
+      return await runMcpServer({
+        ...options,
+        coreClient: ownedCore,
+        coreRuntime: coreRuntime.selection,
+        ownsCoreClient: true,
+      });
+    } catch (error) {
+      await ownedCore?.close?.().catch(() => {});
+      throw error;
+    }
+  }
   if (options.packagePath && !["discover", "scan", "serve", "mcp"].includes(options.command)) throw new Error("--package is currently supported only by discover, scan, serve, and mcp.");
   if (options.command === "showcase") {
     if (options.showcaseAction !== "run") {
@@ -802,7 +816,20 @@ async function main() {
     return;
   }
 
-  const app = await startServer(options);
+  const ownedCore = core;
+  core = null;
+  let app;
+  try {
+    app = await startServer({
+      ...options,
+      coreClient: ownedCore,
+      coreRuntime: coreRuntime.selection,
+      ownsCoreClient: true,
+    });
+  } catch (error) {
+    await ownedCore?.close?.().catch(() => {});
+    throw error;
+  }
   const url = `http://127.0.0.1:${app.port}`;
   console.log(`Compact Project Flow Explorer viewer: ${url}`);
   console.log(`Scanning: ${app.root}`);

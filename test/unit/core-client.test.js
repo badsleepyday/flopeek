@@ -11,7 +11,7 @@ const { createNativeCoreClient, materializePatchedPublicGraph } = require("../..
 const { createNativeCoreExtensionAdapter } = require("../../src/native-core-extension-adapter");
 const { NativeProtocolClient } = require("../../src/native-protocol-client");
 const { scanRepository } = require("../../src/scanner");
-const { createCoreCompatibilityDigest } = require("../../src/core-compatibility");
+const { createCoreCompatibilityDigest, createCoreCompatibilityProjection } = require("../../src/core-compatibility");
 const { COLLATION_LOCALE } = require("../../src/collation");
 const { getAgentBootstrap, getChangedContexts, getEntryFlows, getNodeDetails, getRelatedTests, projectView } = require("../../src/graph-service");
 
@@ -300,9 +300,22 @@ test("strict Rust source authority owns Go parsing, module resolution, and direc
     'import helper "example.test/native/internal/helper"',
     "func validate() {}",
     "func main() { validate(); helper.Ping() }",
+    "func Typed(value helper.Type) { helper.Ping() }",
+    "func Generic[T helper.Constraint](value T) { helper.Ping() }",
+    "func Result() helper.Type { helper.Ping(); return helper.Type{} }",
+    "func Shadowed(helper helper.Type) { helper.Ping() }",
+    "func NamedResult() (helper helper.Type) { helper.Ping(); return }",
+    "func Local() { helper := struct{}{}; helper.Ping() }",
+    "func Assigned() { type local struct{}; var helper local; helper = local{}; helper.Ping() }",
     "",
   ].join("\n"));
-  fs.writeFileSync(path.join(root, "internal", "helper", "helper.go"), "package helper\nfunc Ping() {}\n");
+  fs.writeFileSync(path.join(root, "internal", "helper", "helper.go"), [
+    "package helper",
+    "type Type struct{}",
+    "type Constraint interface{ ~int }",
+    "func Ping() {}",
+    "",
+  ].join("\n"));
   fs.writeFileSync(path.join(root, "internal", "helper", "other.go"), "package helper\nfunc Other() {}\n");
   const native = createNativeCoreClient({
     native: nativeClient(),
@@ -328,7 +341,99 @@ test("strict Rust source authority owns Go parsing, module resolution, and direc
   assert.ok(main && validate && ping && packageNode);
   assert.ok(graph.edges.some((edge) => edge.source === main.id && edge.target === validate.id && edge.type === "calls"));
   assert.ok(graph.edges.some((edge) => edge.source === main.id && edge.target === ping.id && edge.type === "calls"));
+  for (const caller of ["Typed", "Generic", "Result"]) {
+    assert.ok(
+      graph.edges.some((edge) => edge.source === `symbol:cmd/main.go:function:${caller}`
+        && edge.target === ping.id && edge.type === "calls"),
+      `${caller} must retain its imported call when helper only occurs in a type expression`,
+    );
+  }
+  for (const caller of ["Shadowed", "NamedResult", "Local", "Assigned"]) {
+    assert.equal(
+      graph.edges.some((edge) => edge.source === `symbol:cmd/main.go:function:${caller}`
+        && edge.target === ping.id && edge.type === "calls"),
+      false,
+      `${caller} must suppress the imported call after helper is bound as a value`,
+    );
+  }
   assert.equal(graph.nodes.some((node) => node.id === "external:example.test"), false);
+});
+
+test("strict Rust Go parity survives malformed input and add, rename, and delete refreshes", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-go-refresh-"));
+  fs.mkdirSync(path.join(root, "cmd"), { recursive: true });
+  fs.mkdirSync(path.join(root, "pkg", "helper"), { recursive: true });
+  fs.writeFileSync(path.join(root, "go.mod"), "module example.test/refresh\n\ngo 1.23\n");
+  const mainPath = path.join(root, "cmd", "main.go");
+  const brokenPath = path.join(root, "cmd", "broken.go");
+  const helperPath = path.join(root, "pkg", "helper", "helper.go");
+  fs.writeFileSync(mainPath, [
+    "package main",
+    'import "example.test/refresh/pkg/helper"',
+    "func main() { helper.Ping() }",
+    "",
+  ].join("\n"));
+  fs.writeFileSync(brokenPath, "package main\nfunc First( {\nfunc Second( {\n");
+  fs.writeFileSync(helperPath, "package helper\nfunc Ping() {}\n");
+
+  const native = createNativeCoreClient({
+    native: nativeClient(),
+    sessionId: "strict-rust-go-refresh",
+    sourceAuthority: "rust",
+  });
+  context.after(async () => {
+    await native.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  const assertParity = (graph, label) => {
+    const oracle = createJsCoreClient().scan(root, {
+      persistIdentity: false,
+      sessionProjectId: graph.project.projectId,
+    });
+    assert.deepEqual(createCoreCompatibilityProjection(graph), createCoreCompatibilityProjection(oracle), label);
+  };
+
+  const first = await native.scan(root, { persistIdentity: false });
+  assertParity(first, "cold malformed scan");
+  const broken = first.nodes.find((node) => node.id === "file:cmd/broken.go");
+  assert.equal(broken.analysis.status, "parsed-with-diagnostics");
+  assert.equal(broken.analysis.diagnostics, 1, "all parser recovery nodes normalize to one diagnostic");
+
+  const extraPath = path.join(root, "pkg", "helper", "extra.go");
+  fs.writeFileSync(extraPath, "package helper\nfunc Extra() {}\n");
+  fs.writeFileSync(mainPath, [
+    "package main",
+    'import "example.test/refresh/pkg/helper"',
+    "func main() { helper.Ping(); helper.Extra() }",
+    "",
+  ].join("\n"));
+  const second = await native.refresh(root, { changedPaths: ["cmd/main.go", "pkg/helper/extra.go"] });
+  assertParity(second, "added Go file");
+  assert.ok(second.edges.some((edge) => edge.source === "symbol:cmd/main.go:function:main"
+    && edge.target === "symbol:pkg/helper/extra.go:function:Extra" && edge.type === "calls"));
+
+  const renamedPath = path.join(root, "pkg", "helper", "renamed.go");
+  fs.renameSync(extraPath, renamedPath);
+  const third = await native.refresh(root, {
+    changedPaths: ["pkg/helper/extra.go", "pkg/helper/renamed.go"],
+  });
+  assertParity(third, "renamed Go file");
+  assert.equal(third.nodes.some((node) => node.id.includes("pkg/helper/extra.go")), false);
+  assert.ok(third.nodes.some((node) => node.id === "symbol:pkg/helper/renamed.go:function:Extra"));
+
+  fs.rmSync(renamedPath);
+  fs.writeFileSync(mainPath, [
+    "package main",
+    'import "example.test/refresh/pkg/helper"',
+    "func main() { helper.Ping() }",
+    "",
+  ].join("\n"));
+  const fourth = await native.refresh(root, {
+    changedPaths: ["cmd/main.go", "pkg/helper/renamed.go"],
+  });
+  assertParity(fourth, "deleted Go file");
+  assert.equal(fourth.nodes.some((node) => node.id.includes("pkg/helper/renamed.go")), false);
 });
 
 test("experimental native core owns persistent public graph versions", async (context) => {
@@ -539,7 +644,7 @@ test("strict Rust source authority parses and resolves a TypeScript graph withou
     fs.rmSync(root, { recursive: true, force: true });
   });
   assert.equal(native.sourceAuthority, "rust");
-  assert.equal(native.parserHost, "rust-tree-sitter-source/v18");
+  assert.equal(native.parserHost, "rust-tree-sitter-source/v19");
   assert.equal(native.factEnvelopeHost, "rust-native-structural-batch/v1");
   const graph = await native.scan(root);
   const oracle = javascript.scan(root);
