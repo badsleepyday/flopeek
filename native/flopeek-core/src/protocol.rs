@@ -1,3 +1,6 @@
+use crate::identity_store::{
+    node_identity_by_external_id, node_identity_by_uid, search_node_identities,
+};
 use crate::inventory::{
     discover_native_bounded_project, scan_native_incremental_manifest,
     scan_native_incremental_manifest_with_source_batch,
@@ -2810,6 +2813,143 @@ fn create_native_context_ref(params: &Value) -> Result<Value, NativeProtocolErro
     )))
 }
 
+fn get_native_node_identity(params: &Value) -> Result<Value, NativeProtocolError> {
+    let root = project_root(params)?;
+    let project_id = params
+        .get("projectId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| NativeProtocolError {
+            code: "invalid-params",
+            message: "getNodeIdentity requires params.projectId.".to_string(),
+        })?;
+    let connection = open_native_store(&root).map_err(|error| NativeProtocolError {
+        code: "store-read-failed",
+        message: error.to_string(),
+    })?;
+    let identity = if let Some(node_uid) = params
+        .get("nodeUid")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        node_identity_by_uid(&connection, project_id, node_uid)
+    } else {
+        let node_id = params
+            .get("nodeId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| NativeProtocolError {
+                code: "invalid-params",
+                message: "getNodeIdentity requires params.nodeId or params.nodeUid.".to_string(),
+            })?;
+        node_identity_by_external_id(&connection, project_id, node_id)
+    }
+    .map_err(|error| NativeProtocolError {
+        code: "store-read-failed",
+        message: error.to_string(),
+    })?;
+    serde_json::to_value(identity).map_err(|error| NativeProtocolError {
+        code: "identity-serialize-failed",
+        message: error.to_string(),
+    })
+}
+
+fn search_native_node_identities(params: &Value) -> Result<Value, NativeProtocolError> {
+    let root = project_root(params)?;
+    let project_id = params
+        .get("projectId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| NativeProtocolError {
+            code: "invalid-params",
+            message: "searchNodeIdentities requires params.projectId.".to_string(),
+        })?;
+    let query = params
+        .get("query")
+        .or_else(|| params.get("q"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| NativeProtocolError {
+            code: "invalid-params",
+            message: "searchNodeIdentities requires params.query.".to_string(),
+        })?;
+    let limit = params
+        .get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(20)
+        .min(50) as usize;
+    let connection = open_native_store(&root).map_err(|error| NativeProtocolError {
+        code: "store-read-failed",
+        message: error.to_string(),
+    })?;
+    let results =
+        search_node_identities(&connection, project_id, query, limit).map_err(|error| {
+            NativeProtocolError {
+                code: "store-read-failed",
+                message: error.to_string(),
+            }
+        })?;
+    serde_json::to_value(json!({ "query": query, "results": results })).map_err(|error| {
+        NativeProtocolError {
+            code: "identity-serialize-failed",
+            message: error.to_string(),
+        }
+    })
+}
+
+fn create_native_context_ref_v2(params: &Value) -> Result<Value, NativeProtocolError> {
+    let batch = structural_batch(params)?;
+    submit_structural_facts(batch)?;
+    let kind = params
+        .get("kind")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| NativeProtocolError {
+            code: "invalid-params",
+            message: "createContextRefV2 requires params.kind.".to_string(),
+        })?;
+    if kind != "node" {
+        return Err(NativeProtocolError {
+            code: "unsupported-context-kind",
+            message: "Context Ref v2 currently supports canonical node identities only."
+                .to_string(),
+        });
+    }
+    let node_id = params
+        .get("contextId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| NativeProtocolError {
+            code: "invalid-params",
+            message: "createContextRefV2 requires params.contextId.".to_string(),
+        })?;
+    let project_id = batch["projectId"].as_str().unwrap_or_default();
+    let version = batch["flowContext"]["graphVersion"]
+        .as_u64()
+        .ok_or_else(|| NativeProtocolError {
+            code: "invalid-flow-context",
+            message:
+                "StructuralFactBatch/v1 flowContext.graphVersion must be a non-negative integer."
+                    .to_string(),
+        })?;
+    let mut identity_params = params.clone();
+    identity_params["projectId"] = Value::String(project_id.to_string());
+    identity_params["nodeId"] = Value::String(node_id.to_string());
+    let identity = get_native_node_identity(&identity_params)?;
+    let node_uid = identity
+        .get("nodeUid")
+        .and_then(Value::as_str)
+        .ok_or_else(|| NativeProtocolError {
+            code: "node-identity-not-found",
+            message: "No canonical node identity exists for the requested legacy node ID."
+                .to_string(),
+        })?;
+    Ok(json!(format!(
+        "fp://local/{}/node/{}@{version}",
+        encode_context_part(project_id),
+        encode_context_part(node_uid)
+    )))
+}
+
 fn flow_step_role(node: &StructuralGraphNode) -> &'static str {
     match (node.kind.as_str(), node.node_type.as_str()) {
         ("endpoint", _) => "entry",
@@ -3628,7 +3768,7 @@ fn resolve_native_context_ref(params: &Value) -> Result<Value, NativeProtocolErr
             code: "invalid-params",
             message: "resolveNativeContextRef requires params.contextRef.".to_string(),
         })?;
-    let parsed = match parse_native_context_ref(requested) {
+    let mut parsed = match parse_native_context_ref(requested) {
         Ok(parsed) => parsed,
         Err(error) => {
             return Ok(native_unresolved_context_ref(
@@ -3653,6 +3793,60 @@ fn resolve_native_context_ref(params: &Value) -> Result<Value, NativeProtocolErr
             "Context Ref belongs to a different Flopeek project.",
             "wrong-project-id",
         ));
+    }
+    let mut canonical_node_ref = None;
+    if parsed.kind == "node" && parsed.context_id.starts_with("n_") {
+        let mut identity_params = params.clone();
+        identity_params["projectId"] = Value::String(project_id.to_string());
+        identity_params["nodeUid"] = Value::String(parsed.context_id.clone());
+        let identity = get_native_node_identity(&identity_params)?;
+        if identity.is_null() {
+            return Ok(native_unresolved_context_ref(
+                requested,
+                "Canonical node UID is not present in this project identity store.",
+                "node-uid-not-found",
+            ));
+        }
+        let status = identity["status"].as_str().unwrap_or("ambiguous");
+        let legacy_id = identity["legacyId"].as_str();
+        if status != "active" || legacy_id.is_none() {
+            return Ok(json!({
+                "status": if status == "ambiguous" { "ambiguous" } else { "historical" },
+                "requestedRef": requested,
+                "resolvedRef": Value::Null,
+                "card": Value::Null,
+                "successorCandidates": [],
+                "identity": identity,
+                "reason": "The canonical node identity is retained, but it has no active public graph placement.",
+            }));
+        }
+        canonical_node_ref = Some(format!(
+            "fp://local/{}/node/{}@{current_version}",
+            encode_context_part(project_id),
+            encode_context_part(&parsed.context_id)
+        ));
+        parsed.context_id = legacy_id.expect("checked").to_string();
+    }
+    if parsed.kind == "node" && canonical_node_ref.is_none() && params.get("projectRoot").is_some()
+    {
+        let mut identity_params = params.clone();
+        identity_params["projectId"] = Value::String(project_id.to_string());
+        identity_params["nodeId"] = Value::String(parsed.context_id.clone());
+        let identity = get_native_node_identity(&identity_params)?;
+        let current_legacy_id = identity.get("legacyId").and_then(Value::as_str);
+        if identity["status"] == "active"
+            && current_legacy_id.is_some_and(|current| current != parsed.context_id)
+        {
+            let node_uid = identity["nodeUid"]
+                .as_str()
+                .expect("stored node identities always include a UID");
+            canonical_node_ref = Some(format!(
+                "fp://local/{}/node/{}@{current_version}",
+                encode_context_part(project_id),
+                encode_context_part(node_uid)
+            ));
+            parsed.context_id = current_legacy_id.expect("checked").to_string();
+        }
     }
     if !matches!(parsed.kind.as_str(), "node" | "flow") {
         return Ok(native_unresolved_context_ref(
@@ -3685,7 +3879,7 @@ fn resolve_native_context_ref(params: &Value) -> Result<Value, NativeProtocolErr
     } else {
         native_flow_context_card(&card_params)
     };
-    let card = match card {
+    let mut card = match card {
         Ok(card) => card,
         Err(error) if error.code == "missing-node" || error.code == "missing-flow" => {
             let (_, retained) = native_public_delta_history(
@@ -3801,6 +3995,9 @@ fn resolve_native_context_ref(params: &Value) -> Result<Value, NativeProtocolErr
         }
         Err(error) => return Err(error),
     };
+    if let Some(context_ref) = canonical_node_ref {
+        card["contextRef"] = Value::String(context_ref);
+    }
     let resolved_ref = card["contextRef"].clone();
     if parsed.graph_version == current_version {
         return Ok(json!({
@@ -8456,6 +8653,9 @@ fn handle_request(
             | "findNodes"
             | "getNodeDetails"
             | "createContextRef"
+            | "createContextRefV2"
+            | "getNodeIdentity"
+            | "searchNodeIdentities"
             | "resolveNativeContextRef"
             | "getNativeFlowLensCore"
             | "getNativeNodeContextCard"
@@ -8484,7 +8684,7 @@ fn handle_request(
                 request.request_id,
                 json!({
                     "implementation": "rust",
-                    "capabilities": ["health", "initialize", "nativeIncrementalManifest", "nativeBoundedDiscovery", "refreshNativeProject", "refreshNativePersistentProject", "nativeJsRecordCache", "nativeJsStructuralFacts", "submitStructuralFacts", "assembleStructuralGraph", "assembleNativePublicGraph", "assembleNativeFlows", "findNodes", "getNodeDetails", "getEntryFlows", "getRequestFlows", "createContextRef", "resolveNativeContextRef", "getNativeFlowLensCore", "getNativeNodeContextCard", "getNativeFlowContextCard", "getNativeScanStatus", "getNativeProjectOverviewCore", "getRelatedTests", "getChangeImpact", "persistStructuralGraph", "persistNativePublicGraph", "persistNativePublicGraphPatch", "refreshNativeSessionGraph", "refreshNativeJsSessionGraph", "getNativeStructuralDelta", "getNativePublicGraphSnapshot", "getNativeCurrentPublicGraph", "getNativeDatabaseOpenEvidence", "materializeNativeGraph", "getNativePublicGraphDelta", "getNativeChangedContexts", "shutdown"],
+                    "capabilities": ["health", "initialize", "nativeIncrementalManifest", "nativeBoundedDiscovery", "refreshNativeProject", "refreshNativePersistentProject", "nativeJsRecordCache", "nativeJsStructuralFacts", "submitStructuralFacts", "assembleStructuralGraph", "assembleNativePublicGraph", "assembleNativeFlows", "findNodes", "getNodeDetails", "getEntryFlows", "getRequestFlows", "createContextRef", "createContextRefV2", "getNodeIdentity", "searchNodeIdentities", "resolveNativeContextRef", "getNativeFlowLensCore", "getNativeNodeContextCard", "getNativeFlowContextCard", "getNativeScanStatus", "getNativeProjectOverviewCore", "getRelatedTests", "getChangeImpact", "persistStructuralGraph", "persistNativePublicGraph", "persistNativePublicGraphPatch", "refreshNativeSessionGraph", "refreshNativeJsSessionGraph", "getNativeStructuralDelta", "getNativePublicGraphSnapshot", "getNativeCurrentPublicGraph", "getNativeDatabaseOpenEvidence", "materializeNativeGraph", "getNativePublicGraphDelta", "getNativeChangedContexts", "shutdown"],
                     "storeAuthoritative": false,
                     "publicNodeIdsEnabled": true,
                     "sessionGraphHistory": {
@@ -8685,6 +8885,27 @@ fn handle_request(
                 false,
             ),
         },
+        "createContextRefV2" => match create_native_context_ref_v2(&request.params) {
+            Ok(result) => (success_response(request.request_id, result), false),
+            Err(error) => (
+                error_response(Some(request.request_id), error.code, error.message),
+                false,
+            ),
+        },
+        "getNodeIdentity" => match get_native_node_identity(&request.params) {
+            Ok(result) => (success_response(request.request_id, result), false),
+            Err(error) => (
+                error_response(Some(request.request_id), error.code, error.message),
+                false,
+            ),
+        },
+        "searchNodeIdentities" => match search_native_node_identities(&request.params) {
+            Ok(result) => (success_response(request.request_id, result), false),
+            Err(error) => (
+                error_response(Some(request.request_id), error.code, error.message),
+                false,
+            ),
+        },
         "resolveNativeContextRef" => match resolve_native_context_ref(&request.params) {
             Ok(result) => (success_response(request.request_id, result), false),
             Err(error) => (
@@ -8828,7 +9049,7 @@ fn handle_request(
             error_response(
                 Some(request.request_id),
                 "unknown-method",
-                "Supported methods are health, initialize, nativeIncrementalManifest, nativeBoundedDiscovery, refreshNativeProject, refreshNativePersistentProject, nativeJsRecordCache, nativeJsStructuralFacts, submitStructuralFacts, assembleStructuralGraph, assembleNativePublicGraph, assembleNativeFlows, findNodes, getNodeDetails, getEntryFlows, getRequestFlows, createContextRef, resolveNativeContextRef, getNativeFlowLensCore, getNativeNodeContextCard, getNativeFlowContextCard, getNativeScanStatus, getNativeProjectOverviewCore, getRelatedTests, getChangeImpact, persistStructuralGraph, persistNativePublicGraph, persistNativePublicGraphPatch, refreshNativeSessionGraph, refreshNativeJsSessionGraph, getNativeStructuralDelta, getNativePublicGraphSnapshot, getNativeCurrentPublicGraph, getNativeDatabaseOpenEvidence, materializeNativeGraph, getNativePublicGraphDelta, getNativeChangedContexts, and shutdown.",
+                "Supported methods are health, initialize, nativeIncrementalManifest, nativeBoundedDiscovery, refreshNativeProject, refreshNativePersistentProject, nativeJsRecordCache, nativeJsStructuralFacts, submitStructuralFacts, assembleStructuralGraph, assembleNativePublicGraph, assembleNativeFlows, findNodes, getNodeDetails, getEntryFlows, getRequestFlows, createContextRef, createContextRefV2, getNodeIdentity, resolveNativeContextRef, getNativeFlowLensCore, getNativeNodeContextCard, getNativeFlowContextCard, getNativeScanStatus, getNativeProjectOverviewCore, getRelatedTests, getChangeImpact, persistStructuralGraph, persistNativePublicGraph, persistNativePublicGraphPatch, refreshNativeSessionGraph, refreshNativeJsSessionGraph, getNativeStructuralDelta, getNativePublicGraphSnapshot, getNativeCurrentPublicGraph, getNativeDatabaseOpenEvidence, materializeNativeGraph, getNativePublicGraphDelta, getNativeChangedContexts, and shutdown.",
             ),
             false,
         ),

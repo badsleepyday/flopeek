@@ -569,7 +569,25 @@ async function startServer(options) {
       if (request.method === "GET" && url.pathname === "/api/semantic-review-queue") return send(response, 200, getSemanticReviewQueue(currentGraph(), { status: url.searchParams.get("status") || "suggested" }));
       if (request.method === "GET" && url.pathname === "/api/brief") return send(response, 200, getDurableBrief(currentGraph(), url.searchParams.get("kind") || "project", url.searchParams.get("id"), url.searchParams.get("format") || "json"));
       if (request.method === "GET" && url.pathname === "/api/brief-manifests") return send(response, 200, listDurableBriefManifests(currentGraph(), { kind: url.searchParams.get("kind"), contextId: url.searchParams.get("contextId") }));
-      if (request.method === "GET" && url.pathname === "/api/search") return send(response, 200, await core.findNodes(currentGraphHandle(), url.searchParams));
+      if (request.method === "GET" && url.pathname === "/api/search") {
+        const payload = await core.findNodes(currentGraphHandle(), url.searchParams);
+        if (typeof core.searchNodeIdentities === "function") {
+          const identities = await core.searchNodeIdentities(currentGraphHandle(), url.searchParams.get("q") || "", 12);
+          const existing = new Set(payload.results.map((item) => item.id));
+          for (const identity of identities.results || []) {
+            if (!identity.legacyId || existing.has(identity.legacyId)) continue;
+            payload.results.push({
+              id: identity.legacyId,
+              label: identity.displayName || identity.qualifiedName || identity.path || identity.nodeUid,
+              type: identity.kind,
+              identity: { nodeUid: identity.nodeUid, semanticHash: identity.semanticHash, revisionHash: identity.revisionHash },
+            });
+            existing.add(identity.legacyId);
+          }
+          payload.results = payload.results.slice(0, 12);
+        }
+        return send(response, 200, payload);
+      }
       if (request.method === "GET" && url.pathname === "/api/project") return send(response, 200, currentGraph().project);
       if (request.method === "GET" && url.pathname === "/api/flows") return send(response, 200, (await explicitMaterializedGraph()).flows);
       if (request.method === "GET" && url.pathname === "/api/entry-flows") return send(response, 200, await core.getEntryFlows(currentGraphHandle(), url.searchParams.get("query") || "", url.searchParams.get("scope") || "application"));
@@ -634,6 +652,19 @@ async function startServer(options) {
       if (request.method === "GET" && url.pathname === "/api/node") {
         const detail = await core.getNode(currentGraphHandle(), url.searchParams.get("id"));
         return detail ? send(response, 200, detail) : send(response, 404, { error: "Node not found." });
+      }
+      if (request.method === "GET" && url.pathname === "/api/node-identity") {
+        if (typeof core.getNodeIdentity !== "function") {
+          return send(response, 501, { error: "Canonical node identity requires the persistent native core." });
+        }
+        const requestedId = url.searchParams.get("id");
+        if (!requestedId) throw requestError(400, "An id query parameter is required.");
+        const identity = await core.getNodeIdentity(currentGraphHandle(), requestedId);
+        if (!identity) return send(response, 404, { error: "Canonical node identity not found." });
+        const contextRef = typeof core.createContextRefV2 === "function" && identity.legacyId
+          ? await core.createContextRefV2(currentGraphHandle(), identity.legacyId)
+          : null;
+        return send(response, 200, { identity, contextRef });
       }
       if (request.method === "POST" && url.pathname === "/api/scan") {
         if (!isTrustedMutation(request)) throw requestError(403, "Mutating requests must come from the local Flopeek viewer.");

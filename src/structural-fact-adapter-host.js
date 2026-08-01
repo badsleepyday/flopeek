@@ -33,6 +33,18 @@ function projectArray(value, fields) {
     .filter(Boolean);
 }
 
+function projectSymbol(symbol) {
+  const projected = pickFields(symbol, ["type", "name", "methods", "evidence", "confidence"]);
+  if (!projected) return null;
+  const identity = pickFields(symbol.identity, ["qualifiedName", "signature", "discriminator"]);
+  const lexicalOwner = pickFields(symbol.identity?.lexicalOwner, ["type", "name"]);
+  if (identity) {
+    if (lexicalOwner) identity.lexicalOwner = lexicalOwner;
+    projected.identity = identity;
+  }
+  return projected;
+}
+
 function projectCall(call) {
   const projected = pickFields(call, ["name", "evidence"]);
   if (!projected) return null;
@@ -56,7 +68,8 @@ function projectStructuralResult(result, importFacts) {
   return {
     // `methods` remains whole because it is public symbol metadata, rather
     // than a graph-assembly-only parser detail.
-    symbols: projectArray(raw.symbols, ["type", "name", "methods", "evidence", "confidence"]),
+    symbols: Array.isArray(raw.symbols) ? raw.symbols.map(projectSymbol).filter(Boolean) : [],
+    identitySymbols: Array.isArray(raw.identitySymbols) ? raw.identitySymbols.map(projectSymbol).filter(Boolean) : [],
     imports: projectArray(raw.imports, ["specifier", "standard", "evidence"]),
     integrations: projectArray(raw.integrations, ["type", "instance", "label", "evidence", "package"]),
     endpoints: projectArray(raw.endpoints, ["method", "route", "handlerName", "handlerType", "detectedResponsibility", "evidence", "confidence", "contract"]),

@@ -460,6 +460,7 @@ fn collect_top_level_declarations(
                     name,
                     methods: vec![],
                     evidence: evidence(path, child),
+                    identity: None,
                 });
             }
             continue;
@@ -471,6 +472,7 @@ fn collect_top_level_declarations(
                     name,
                     methods: declaration_methods(child, source),
                     evidence: evidence(path, child),
+                    identity: None,
                 });
             }
         }
@@ -545,6 +547,7 @@ pub fn parse_native_php_facts(path: &str, source: &str) -> Option<NativeJsFacts>
     let mut structural = NativeJsStructuralFacts {
         imports: vec![],
         symbols: vec![],
+        canonical_symbols: vec![],
         calls: vec![],
         endpoints: vec![],
         requests: vec![],
@@ -598,6 +601,7 @@ pub fn parse_native_php_facts(path: &str, source: &str) -> Option<NativeJsFacts>
                 name: item.name.clone(),
                 methods: item.methods.clone(),
                 evidence: offset_evidence(path, source, item.start, item.end),
+                identity: None,
             });
         }
     }

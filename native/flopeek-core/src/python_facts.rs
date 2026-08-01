@@ -1,8 +1,8 @@
 //! Python parser facts for the strict-native source authority.
 use crate::js_facts::{
-    NativeJsAnalysis, NativeJsCall, NativeJsEndpoint, NativeJsEvidence, NativeJsFacts,
-    NativeJsImport, NativeJsPosition, NativeJsRange, NativeJsStructuralFacts,
-    NativeJsStructuralSymbol, NativeJsSymbol, NativeJsSymbolReference,
+    NativeJsAnalysis, NativeJsCall, NativeJsCanonicalSymbolIdentity, NativeJsEndpoint,
+    NativeJsEvidence, NativeJsFacts, NativeJsImport, NativeJsPosition, NativeJsRange,
+    NativeJsStructuralFacts, NativeJsStructuralSymbol, NativeJsSymbol, NativeJsSymbolReference,
 };
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -107,6 +107,36 @@ fn methods(n: Node<'_>, s: &str) -> Vec<String> {
         .filter(|x| x.kind() == "function_definition")
         .filter_map(|x| name(x, s))
         .collect()
+}
+fn function_signature(n: Node<'_>, s: &str) -> String {
+    let parameters = n
+        .child_by_field_name("parameters")
+        .map(kids)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|parameter| {
+            parameter
+                .child_by_field_name("type")
+                .and_then(|kind| text(kind, s))
+                .map(|kind| {
+                    kind.chars()
+                        .filter(|value| !value.is_whitespace())
+                        .collect()
+                })
+                .unwrap_or_else(|| "unknown".to_string())
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let return_type = n
+        .child_by_field_name("return_type")
+        .and_then(|kind| text(kind, s))
+        .map(|kind| {
+            kind.chars()
+                .filter(|value| !value.is_whitespace())
+                .collect()
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+    format!("({parameters}):{return_type}")
 }
 fn endpoint(n: Node<'_>, p: &str, s: &str) -> Option<NativeJsEndpoint> {
     let v = text(n, s)?;
@@ -381,23 +411,70 @@ fn collect(
             }
         }
         "class_definition" if top(n) => {
-            if let Some(name) = name(n, s) {
-                f.symbols.push(NativeJsStructuralSymbol {
+            if let Some(class_name) = name(n, s) {
+                let symbol = NativeJsStructuralSymbol {
                     symbol_type: "class".into(),
-                    name,
+                    name: class_name.clone(),
                     methods: methods(n, s),
                     evidence: ev(p, s, n),
-                })
+                    identity: Some(NativeJsCanonicalSymbolIdentity {
+                        qualified_name: class_name.clone(),
+                        lexical_owner: None,
+                        signature: None,
+                        discriminator: "type".into(),
+                    }),
+                };
+                f.symbols.push(symbol.clone());
+                f.canonical_symbols.push(symbol);
+                let owner = NativeJsSymbolReference {
+                    symbol_type: "class".into(),
+                    name: class_name.clone(),
+                };
+                for method in n
+                    .child_by_field_name("body")
+                    .map(kids)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|child| child.kind() == "function_definition")
+                {
+                    if let Some(method_name) = name(method, s) {
+                        f.canonical_symbols.push(NativeJsStructuralSymbol {
+                            symbol_type: "method".into(),
+                            name: method_name.clone(),
+                            methods: vec![],
+                            evidence: ev(p, s, method),
+                            identity: Some(NativeJsCanonicalSymbolIdentity {
+                                qualified_name: format!("{class_name}.{method_name}"),
+                                lexical_owner: Some(owner.clone()),
+                                signature: Some(function_signature(method, s)),
+                                discriminator: if method_name == "__init__" {
+                                    "constructor"
+                                } else {
+                                    "instance-method"
+                                }
+                                .into(),
+                            }),
+                        });
+                    }
+                }
             }
         }
         "function_definition" if top(n) => {
             if let Some(name) = name(n, s) {
-                f.symbols.push(NativeJsStructuralSymbol {
+                let symbol = NativeJsStructuralSymbol {
                     symbol_type: "function".into(),
-                    name,
+                    name: name.clone(),
                     methods: vec![],
                     evidence: ev(p, s, n),
-                })
+                    identity: Some(NativeJsCanonicalSymbolIdentity {
+                        qualified_name: name,
+                        lexical_owner: None,
+                        signature: Some(function_signature(n, s)),
+                        discriminator: "top-level-function".into(),
+                    }),
+                };
+                f.symbols.push(symbol.clone());
+                f.canonical_symbols.push(symbol);
             }
         }
         "decorator" => {
@@ -452,6 +529,7 @@ pub fn parse_native_python_facts(path: &str, source: &str) -> Option<NativeJsFac
     let mut f = NativeJsStructuralFacts {
         imports: vec![],
         symbols: vec![],
+        canonical_symbols: vec![],
         calls: vec![],
         endpoints: vec![],
         requests: vec![],

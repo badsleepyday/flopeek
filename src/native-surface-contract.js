@@ -88,6 +88,7 @@ const SERVER_HANDLE_SAFE = new Set([
   "GET /api/flow-lens",
   "GET /api/impact",
   "GET /api/node",
+  "GET /api/node-identity",
   "GET /api/scan-status",
   "GET /api/search",
   "GET /api/view",

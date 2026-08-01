@@ -56,6 +56,7 @@ test("StructuralFactBatch sends only native-consumed record facts after JavaScri
     "endpoints",
     "externalImports",
     "frameworkCommands",
+    "identitySymbols",
     "integrations",
     "imports",
     "requests",

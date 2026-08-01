@@ -413,6 +413,7 @@ fn projected_result(facts: &NativeJsFacts, resolution: &NativeJsResolutionFacts)
         .collect::<Vec<_>>();
     json!({
         "symbols": structural.symbols,
+        "identitySymbols": structural.canonical_symbols,
         "imports": structural.imports,
         "integrations": structural.integrations,
         "endpoints": structural.endpoints,

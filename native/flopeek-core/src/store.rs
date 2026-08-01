@@ -1,10 +1,11 @@
+use crate::identity_store::sync_identity_v2;
 use rusqlite::{Connection, OptionalExtension};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-pub const NATIVE_STORE_SCHEMA_VERSION: i64 = 10;
+pub const NATIVE_STORE_SCHEMA_VERSION: i64 = 11;
 pub const NATIVE_STORE_RELATIVE_PATH: &str = ".flopeek/native-core.sqlite3";
 pub const DEFAULT_NATIVE_DELTA_HISTORY_LIMIT: usize = 8;
 pub const DEFAULT_NATIVE_DELTA_HISTORY_MAX_BYTES: usize = 16 * 1024 * 1024;
@@ -134,7 +135,7 @@ pub fn open_native_store(root: &Path) -> rusqlite::Result<Connection> {
     fs::create_dir_all(&metadata_directory)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
     let database_path = root.join(NATIVE_STORE_RELATIVE_PATH);
-    let connection = Connection::open(&database_path)?;
+    let mut connection = Connection::open(&database_path)?;
     connection.execute_batch(
         "
         PRAGMA foreign_keys = ON;
@@ -371,11 +372,180 @@ pub fn open_native_store(root: &Path) -> rusqlite::Result<Connection> {
         "CREATE INDEX IF NOT EXISTS graph_versions_project_public_version
            ON graph_versions(project_pk, public_graph_version);",
     )?;
-    connection.execute(
+    // v11 is an additive, transactional identity store. Public graph v1 and
+    // its component cache remain authoritative compatibility projections.
+    // Keeping this migration separate from the bootstrap DDL makes an older
+    // database either fully v10 or fully v11 after a crash, never half-created.
+    let migration = connection.transaction()?;
+    migration.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS projects_v2 (
+          project_pk INTEGER PRIMARY KEY REFERENCES projects(project_pk) ON DELETE CASCADE,
+          project_uid BLOB NOT NULL UNIQUE CHECK(length(project_uid) = 16),
+          public_project_id TEXT NOT NULL UNIQUE,
+          identity_status TEXT NOT NULL CHECK(identity_status IN ('local', 'imported', 'ambiguous')),
+          created_at_ms INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS nodes_v2 (
+          node_pk INTEGER PRIMARY KEY,
+          project_pk INTEGER NOT NULL REFERENCES projects_v2(project_pk) ON DELETE CASCADE,
+          node_uid BLOB NOT NULL CHECK(length(node_uid) = 16),
+          kind TEXT NOT NULL,
+          language TEXT,
+          ecosystem TEXT,
+          lexical_owner_pk INTEGER REFERENCES nodes_v2(node_pk),
+          current_semantic_hash BLOB NOT NULL CHECK(length(current_semantic_hash) = 32),
+          current_canonical_identity BLOB NOT NULL,
+          first_seen_graph_version INTEGER NOT NULL CHECK(first_seen_graph_version >= 0),
+          last_seen_graph_version INTEGER CHECK(last_seen_graph_version >= first_seen_graph_version),
+          status TEXT NOT NULL CHECK(status IN ('active', 'tombstone', 'ambiguous')),
+          UNIQUE(project_pk, node_uid)
+        );
+        CREATE TABLE IF NOT EXISTS node_revisions_v2 (
+          node_revision_pk INTEGER PRIMARY KEY,
+          node_pk INTEGER NOT NULL REFERENCES nodes_v2(node_pk) ON DELETE CASCADE,
+          first_graph_version INTEGER NOT NULL CHECK(first_graph_version >= 0),
+          last_graph_version INTEGER CHECK(last_graph_version >= first_graph_version),
+          semantic_hash BLOB NOT NULL CHECK(length(semantic_hash) = 32),
+          canonical_identity BLOB NOT NULL,
+          revision_hash BLOB NOT NULL CHECK(length(revision_hash) = 32),
+          source_sha256 BLOB CHECK(source_sha256 IS NULL OR length(source_sha256) = 32),
+          content_blake3 BLOB CHECK(content_blake3 IS NULL OR length(content_blake3) = 32),
+          path TEXT,
+          qualified_name TEXT,
+          display_name TEXT,
+          signature TEXT,
+          lexical_owner_pk INTEGER REFERENCES nodes_v2(node_pk),
+          start_line INTEGER,
+          start_column INTEGER,
+          end_line INTEGER,
+          end_column INTEGER,
+          metadata_json TEXT,
+          UNIQUE(node_pk, first_graph_version)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS node_revisions_v2_open
+          ON node_revisions_v2(node_pk) WHERE last_graph_version IS NULL;
+        CREATE INDEX IF NOT EXISTS nodes_v2_project_kind
+          ON nodes_v2(project_pk, kind, status);
+        CREATE INDEX IF NOT EXISTS nodes_v2_semantic
+          ON nodes_v2(project_pk, current_semantic_hash);
+        CREATE INDEX IF NOT EXISTS node_revisions_v2_semantic
+          ON node_revisions_v2(semantic_hash);
+        CREATE INDEX IF NOT EXISTS node_revisions_v2_path
+          ON node_revisions_v2(path);
+        CREATE INDEX IF NOT EXISTS node_revisions_v2_revision
+          ON node_revisions_v2(revision_hash);
+        CREATE TABLE IF NOT EXISTS node_placements_v2 (
+          placement_pk INTEGER PRIMARY KEY,
+          project_pk INTEGER NOT NULL REFERENCES projects_v2(project_pk) ON DELETE CASCADE,
+          parent_node_pk INTEGER NOT NULL REFERENCES nodes_v2(node_pk) ON DELETE CASCADE,
+          child_node_pk INTEGER NOT NULL REFERENCES nodes_v2(node_pk) ON DELETE CASCADE,
+          relation TEXT NOT NULL,
+          ordinal INTEGER,
+          placement_hash BLOB NOT NULL CHECK(length(placement_hash) = 32),
+          first_graph_version INTEGER NOT NULL CHECK(first_graph_version >= 0),
+          last_graph_version INTEGER CHECK(last_graph_version >= first_graph_version),
+          UNIQUE(project_pk, placement_hash),
+          CHECK(parent_node_pk != child_node_pk)
+        );
+        CREATE INDEX IF NOT EXISTS node_placements_v2_parent
+          ON node_placements_v2(parent_node_pk, relation, last_graph_version);
+        CREATE INDEX IF NOT EXISTS node_placements_v2_child
+          ON node_placements_v2(child_node_pk, relation, last_graph_version);
+        CREATE TABLE IF NOT EXISTS edges_v2 (
+          edge_pk INTEGER PRIMARY KEY,
+          project_pk INTEGER NOT NULL REFERENCES projects_v2(project_pk) ON DELETE CASCADE,
+          edge_uid BLOB NOT NULL CHECK(length(edge_uid) = 32),
+          source_node_pk INTEGER NOT NULL REFERENCES nodes_v2(node_pk) ON DELETE CASCADE,
+          target_node_pk INTEGER NOT NULL REFERENCES nodes_v2(node_pk) ON DELETE CASCADE,
+          relation TEXT NOT NULL,
+          qualifier_hash BLOB NOT NULL CHECK(length(qualifier_hash) = 32),
+          canonical_qualifier BLOB NOT NULL,
+          first_graph_version INTEGER NOT NULL CHECK(first_graph_version >= 0),
+          last_graph_version INTEGER CHECK(last_graph_version >= first_graph_version),
+          UNIQUE(project_pk, edge_uid)
+        );
+        CREATE INDEX IF NOT EXISTS edges_v2_source_relation
+          ON edges_v2(source_node_pk, relation, last_graph_version);
+        CREATE INDEX IF NOT EXISTS edges_v2_target_relation
+          ON edges_v2(target_node_pk, relation, last_graph_version);
+        CREATE TABLE IF NOT EXISTS edge_evidence_v2 (
+          evidence_pk INTEGER PRIMARY KEY,
+          edge_pk INTEGER NOT NULL REFERENCES edges_v2(edge_pk) ON DELETE CASCADE,
+          evidence_uid BLOB NOT NULL CHECK(length(evidence_uid) = 32),
+          first_graph_version INTEGER NOT NULL CHECK(first_graph_version >= 0),
+          last_graph_version INTEGER CHECK(last_graph_version >= first_graph_version),
+          path TEXT,
+          start_line INTEGER,
+          start_column INTEGER,
+          end_line INTEGER,
+          end_column INTEGER,
+          parser TEXT NOT NULL,
+          parser_version TEXT,
+          confidence TEXT NOT NULL,
+          evidence_json TEXT,
+          UNIQUE(edge_pk, evidence_uid, first_graph_version)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS edge_evidence_v2_open
+          ON edge_evidence_v2(edge_pk, evidence_uid) WHERE last_graph_version IS NULL;
+        CREATE TABLE IF NOT EXISTS node_external_ids_v2 (
+          external_id_pk INTEGER PRIMARY KEY,
+          project_pk INTEGER NOT NULL REFERENCES projects_v2(project_pk) ON DELETE CASCADE,
+          node_pk INTEGER NOT NULL REFERENCES nodes_v2(node_pk) ON DELETE CASCADE,
+          scheme TEXT NOT NULL,
+          external_id TEXT NOT NULL,
+          first_graph_version INTEGER NOT NULL CHECK(first_graph_version >= 0),
+          last_graph_version INTEGER CHECK(last_graph_version >= first_graph_version),
+          UNIQUE(project_pk, scheme, external_id, first_graph_version)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS node_external_ids_v2_open
+          ON node_external_ids_v2(project_pk, scheme, external_id)
+          WHERE last_graph_version IS NULL;
+        CREATE TABLE IF NOT EXISTS node_identity_aliases_v2 (
+          alias_pk INTEGER PRIMARY KEY,
+          project_pk INTEGER NOT NULL REFERENCES projects_v2(project_pk) ON DELETE CASCADE,
+          old_node_uid BLOB NOT NULL CHECK(length(old_node_uid) = 16),
+          current_node_pk INTEGER NOT NULL REFERENCES nodes_v2(node_pk) ON DELETE CASCADE,
+          reason TEXT NOT NULL,
+          confidence TEXT NOT NULL CHECK(confidence IN ('high', 'human-confirmed')),
+          evidence_json TEXT,
+          created_graph_version INTEGER NOT NULL CHECK(created_graph_version >= 0),
+          confirmed_by TEXT,
+          UNIQUE(project_pk, old_node_uid)
+        );
+        CREATE TRIGGER IF NOT EXISTS node_identity_aliases_v2_validate_insert
+        BEFORE INSERT ON node_identity_aliases_v2
+        BEGIN
+          SELECT CASE WHEN NOT EXISTS (
+            SELECT 1 FROM nodes_v2 AS target
+            WHERE target.node_pk = NEW.current_node_pk AND target.project_pk = NEW.project_pk
+          ) THEN RAISE(ABORT, 'identity alias target belongs to another project') END;
+          SELECT CASE WHEN EXISTS (
+            SELECT 1 FROM nodes_v2 AS target
+            WHERE target.node_pk = NEW.current_node_pk AND target.node_uid = NEW.old_node_uid
+          ) THEN RAISE(ABORT, 'identity alias cannot target itself') END;
+          SELECT CASE WHEN EXISTS (
+            SELECT 1 FROM node_identity_aliases_v2 AS existing
+            JOIN nodes_v2 AS target ON target.node_pk = NEW.current_node_pk
+            WHERE existing.project_pk = NEW.project_pk
+              AND existing.old_node_uid = target.node_uid
+          ) THEN RAISE(ABORT, 'identity alias chains are forbidden') END;
+          SELECT CASE WHEN EXISTS (
+            SELECT 1 FROM node_identity_aliases_v2 AS existing
+            JOIN nodes_v2 AS existing_target ON existing_target.node_pk = existing.current_node_pk
+            WHERE existing.project_pk = NEW.project_pk
+              AND existing_target.node_uid = NEW.old_node_uid
+          ) THEN RAISE(ABORT, 'identity alias chains are forbidden') END;
+        END;
+        ",
+    )?;
+    migration.execute(
         "INSERT INTO metadata(key, value) VALUES ('schema_version', ?1)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         [NATIVE_STORE_SCHEMA_VERSION.to_string()],
     )?;
+    migration.pragma_update(None, "user_version", NATIVE_STORE_SCHEMA_VERSION)?;
+    migration.commit()?;
     Ok(connection)
 }
 
@@ -886,6 +1056,17 @@ pub fn promote_graph_build_with_changed_records(
         )?;
     }
     let structural_fact_cache_ms = structural_fact_cache_started.elapsed().as_millis() as u64;
+    // Identity v2 is an additive dual-write in schema v11. It participates in
+    // the same transaction as the compatibility graph, so invalid canonical
+    // identity input can never advance the project pointer independently.
+    sync_identity_v2(
+        &transaction,
+        project_pk,
+        request.project_id,
+        request.graph_version,
+        request.payload,
+        request.structural_batch,
+    )?;
     crash_at_test_boundary("after-fact-storage");
     let project_pointer_started = Instant::now();
     crash_at_test_boundary("before-current-pointer-promotion");
@@ -1397,6 +1578,7 @@ mod tests {
         promote_graph_build_with_changed_records, prune_native_graph_deltas,
         recover_incomplete_graph_builds,
     };
+    use crate::identity_store::{node_identity_by_external_id, node_identity_by_uid};
     use serde_json::json;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1423,6 +1605,36 @@ mod tests {
         assert_eq!(status.busy_timeout_ms, 5_000);
         assert_eq!(status.quick_check.to_lowercase(), "ok");
         assert!(status.path.ends_with(".flopeek/native-core.sqlite3"));
+        let connection = open_native_store(&root).unwrap();
+        assert_eq!(
+            connection
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            NATIVE_STORE_SCHEMA_VERSION
+        );
+        for table in [
+            "projects_v2",
+            "nodes_v2",
+            "node_revisions_v2",
+            "node_placements_v2",
+            "edges_v2",
+            "edge_evidence_v2",
+            "node_external_ids_v2",
+            "node_identity_aliases_v2",
+        ] {
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                        [table],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap(),
+                1,
+                "missing v11 table {table}"
+            );
+        }
+        drop(connection);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1604,7 +1816,21 @@ mod tests {
                 { "id": "file:src/a.js", "kind": "file", "path": "src/a.js" },
                 { "id": "symbol:src/a.js:function:a", "kind": "symbol", "label": "a" }
             ],
-            "edges": [{ "source": "file:src/a.js", "target": "symbol:src/a.js:function:a", "type": "contains" }],
+            "edges": [{
+                "source": "file:src/a.js",
+                "target": "symbol:src/a.js:function:a",
+                "type": "contains",
+                "confidence": "high",
+                "evidence": {
+                    "file": "src/a.js",
+                    "parser": "fixture",
+                    "parserVersion": "1",
+                    "range": {
+                        "start": { "line": 1, "column": 1 },
+                        "end": { "line": 1, "column": 10 }
+                    }
+                }
+            }],
             "flows": [{ "id": "flow:symbol:src/a.js:function:a", "entryId": "symbol:src/a.js:function:a", "steps": [] }],
             "diagnosticFlows": [{ "id": "flow:symbol:src/a.js:function:a", "entryId": "symbol:src/a.js:function:a", "steps": [] }],
         });
@@ -1633,6 +1859,88 @@ mod tests {
                 .unwrap()
                 .payload,
             first_payload
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM nodes_v2", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM node_revisions_v2", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM edges_v2", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM edge_evidence_v2", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM node_placements_v2", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM nodes_v2 AS child
+                     JOIN nodes_v2 AS owner ON owner.node_pk = child.lexical_owner_pk
+                     WHERE child.kind = 'symbol' AND owner.kind = 'file'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
+        let symbol_identity =
+            node_identity_by_external_id(&connection, project, "symbol:src/a.js:function:a")
+                .unwrap()
+                .expect("dual-write creates a canonical symbol identity");
+        assert!(symbol_identity.node_uid.starts_with("n_"));
+        assert_eq!(
+            symbol_identity.legacy_id.as_deref(),
+            Some("symbol:src/a.js:function:a")
+        );
+        assert_eq!(symbol_identity.status, "active");
+        assert_eq!(
+            node_identity_by_uid(&connection, project, &symbol_identity.node_uid)
+                .unwrap()
+                .expect("canonical UID resolves")
+                .node_pk,
+            symbol_identity.node_pk
+        );
+        let (project_pk, symbol_uid) = connection
+            .query_row(
+                "SELECT project_pk, node_uid FROM nodes_v2 WHERE node_pk = ?1",
+                [symbol_identity.node_pk],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+            )
+            .unwrap();
+        assert!(
+            connection
+                .execute(
+                    "INSERT INTO node_identity_aliases_v2(project_pk, old_node_uid,
+                       current_node_pk, reason, confidence, created_graph_version)
+                     VALUES (?1, ?2, ?3, 'invalid-self-test', 'high', 1)",
+                    rusqlite::params![project_pk, symbol_uid, symbol_identity.node_pk],
+                )
+                .is_err(),
+            "alias invariants must reject self-targeting identities"
         );
         let legacy_payload: Option<String> = connection
             .query_row(
@@ -1708,6 +2016,22 @@ mod tests {
                 .unwrap()
                 .payload,
             second_payload
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM nodes_v2", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            2,
+            "a display-name change must preserve durable node UIDs"
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM node_revisions_v2", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            3,
+            "only the changed symbol opens a new revision interval"
         );
         // One changed node creates exactly one new content-addressed component;
         // all unchanged node, edge, and flow payloads are re-used.
@@ -1795,6 +2119,319 @@ mod tests {
             6,
             "source-only reuse must preserve the open membership intervals"
         );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM node_revisions_v2", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            3,
+            "a no-op identity projection must not duplicate revisions"
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM edge_evidence_v2", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1,
+            "stable evidence is one occurrence interval across refreshes"
+        );
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn canonical_store_preserves_java_overloads_outside_public_v1_projection() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-identity-overloads-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let mut connection = open_native_store(&root).unwrap();
+        let project = "project:identity-overloads";
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let payload = json!({
+            "schemaVersion": "native-shadow/v1",
+            "nodes": [
+                { "id": "file:src/OrderService.java", "kind": "file", "type": "module", "path": "src/OrderService.java" },
+                { "id": "symbol:src/OrderService.java:class:OrderService", "kind": "symbol", "type": "class", "path": "src/OrderService.java", "label": "OrderService" }
+            ],
+            "edges": [{ "source": "file:src/OrderService.java", "target": "symbol:src/OrderService.java:class:OrderService", "type": "contains" }],
+            "flows": [],
+            "diagnosticFlows": []
+        });
+        let method = |signature: &str, line: i64| {
+            json!({
+                "type": "method",
+                "name": "save",
+                "methods": [],
+                "evidence": { "parser": "tree-sitter-java", "file": "src/OrderService.java", "range": { "start": { "line": line, "column": 1 }, "end": { "line": line, "column": 20 } } },
+                "identity": {
+                    "qualifiedName": "OrderService.save",
+                    "lexicalOwner": { "type": "class", "name": "OrderService" },
+                    "signature": signature,
+                    "discriminator": "instance-method"
+                }
+            })
+        };
+        let batch = json!({
+            "schemaVersion": "flopeek-structural-fact-batch/v1",
+            "projectId": project,
+            "records": [{
+                "recordOrder": 0,
+                "relativePath": "src/OrderService.java",
+                "language": "java",
+                "sourceHash": "b".repeat(64),
+                "result": { "identitySymbols": [method("(Order):void", 2), method("(Order,User):void", 3)] }
+            }],
+            "factsDigest": digest,
+        });
+        let candidate =
+            begin_graph_build(&mut connection, project, "material:one", "source:one").unwrap();
+        promote_graph_build(
+            &mut connection,
+            NativeGraphPromotionRequest {
+                project_id: project,
+                graph_version: candidate.graph_version,
+                public_graph_version: 1,
+                payload: &payload,
+                compatibility_digest: &format!("sha256:{}", "c".repeat(64)),
+                adjacent_delta: None,
+                facts_digest: Some(&digest),
+                structural_batch: Some(&batch),
+                changed_record_paths: None,
+                reuse_public_components: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM nodes_v2", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            4
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(DISTINCT nodes.node_uid) FROM nodes_v2 AS nodes WHERE nodes.kind = 'method'", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(DISTINCT signature) FROM node_revisions_v2 WHERE signature LIKE '(Order%'", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM node_external_ids_v2 WHERE scheme = 'parser-symbol-v2' AND last_graph_version IS NULL", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+        connection
+            .execute(
+                "UPDATE nodes_v2 SET current_semantic_hash =
+                   (SELECT current_semantic_hash FROM nodes_v2 WHERE kind <> 'file' LIMIT 1)
+                 WHERE kind = 'file'",
+                [],
+            )
+            .unwrap();
+        let collision_candidate = begin_graph_build(
+            &mut connection,
+            project,
+            "material:collision",
+            "source:collision",
+        )
+        .unwrap();
+        let collision = promote_graph_build(
+            &mut connection,
+            NativeGraphPromotionRequest {
+                project_id: project,
+                graph_version: collision_candidate.graph_version,
+                public_graph_version: 2,
+                payload: &payload,
+                compatibility_digest: &format!("sha256:{}", "d".repeat(64)),
+                adjacent_delta: None,
+                facts_digest: Some(&digest),
+                structural_batch: Some(&batch),
+                changed_record_paths: None,
+                reuse_public_components: false,
+            },
+        )
+        .unwrap_err();
+        assert!(
+            collision
+                .to_string()
+                .contains("fatal node semantic hash collision")
+        );
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn canonical_edge_preserves_distinct_callsite_occurrences() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-edge-occurrences-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let mut connection = open_native_store(&root).unwrap();
+        let project = "project:edge-occurrences";
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let evidence = |line: i64| {
+            json!({
+                "parser": "typescript-ast",
+                "file": "src/orders.ts",
+                "range": { "start": { "line": line, "column": 1 }, "end": { "line": line, "column": 14 } }
+            })
+        };
+        let payload = json!({
+            "schemaVersion": "native-shadow/v1",
+            "nodes": [
+                { "id": "file:src/orders.ts", "kind": "file", "type": "module", "path": "src/orders.ts" },
+                { "id": "symbol:src/orders.ts:function:run", "kind": "symbol", "type": "function", "path": "src/orders.ts", "label": "run" },
+                { "id": "symbol:src/orders.ts:function:submit", "kind": "symbol", "type": "function", "path": "src/orders.ts", "label": "submit" }
+            ],
+            "edges": [{
+                "source": "symbol:src/orders.ts:function:run",
+                "target": "symbol:src/orders.ts:function:submit",
+                "type": "calls",
+                "confidence": "exact",
+                "evidence": evidence(2)
+            }],
+            "flows": [],
+            "diagnosticFlows": []
+        });
+        let batch = json!({
+            "schemaVersion": "flopeek-structural-fact-batch/v1",
+            "projectId": project,
+            "records": [{
+                "recordOrder": 0,
+                "relativePath": "src/orders.ts",
+                "language": "typescript",
+                "sourceHash": "b".repeat(64),
+                "result": { "calls": [
+                    { "name": "submit", "source": { "type": "function", "name": "run" }, "imported": null, "evidence": evidence(2) },
+                    { "name": "submit", "source": { "type": "function", "name": "run" }, "imported": null, "evidence": evidence(8) }
+                ] }
+            }],
+            "factsDigest": digest,
+        });
+        let candidate =
+            begin_graph_build(&mut connection, project, "material:one", "source:one").unwrap();
+        promote_graph_build(
+            &mut connection,
+            NativeGraphPromotionRequest {
+                project_id: project,
+                graph_version: candidate.graph_version,
+                public_graph_version: 1,
+                payload: &payload,
+                compatibility_digest: &format!("sha256:{}", "c".repeat(64)),
+                adjacent_delta: None,
+                facts_digest: Some(&digest),
+                structural_batch: Some(&batch),
+                changed_record_paths: None,
+                reuse_public_components: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM edges_v2 WHERE relation = 'calls'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM edge_evidence_v2 WHERE last_graph_version IS NULL",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            2
+        );
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn canonical_external_packages_are_namespaced_by_ecosystem() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-external-ecosystems-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let mut connection = open_native_store(&root).unwrap();
+        let project = "project:external-ecosystems";
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let payload = json!({
+            "schemaVersion": "native-shadow/v1",
+            "nodes": [
+                { "id": "file:src/client.ts", "kind": "file", "type": "module", "path": "src/client.ts" },
+                { "id": "file:src/client.py", "kind": "file", "type": "module", "path": "src/client.py" },
+                { "id": "external:requests", "kind": "external", "type": "external", "label": "Requests" }
+            ],
+            "edges": [], "flows": [], "diagnosticFlows": []
+        });
+        let external = json!({ "specifier": "requests", "nodeType": "external", "metadata": {} });
+        let batch = json!({
+            "schemaVersion": "flopeek-structural-fact-batch/v1", "projectId": project,
+            "records": [
+                { "recordOrder": 0, "relativePath": "src/client.py", "language": "python", "sourceHash": "b".repeat(64), "result": { "externalImports": [external.clone()] } },
+                { "recordOrder": 1, "relativePath": "src/client.ts", "language": "typescript", "sourceHash": "c".repeat(64), "result": { "externalImports": [external] } }
+            ],
+            "factsDigest": digest
+        });
+        let candidate =
+            begin_graph_build(&mut connection, project, "material:one", "source:one").unwrap();
+        promote_graph_build(
+            &mut connection,
+            NativeGraphPromotionRequest {
+                project_id: project,
+                graph_version: candidate.graph_version,
+                public_graph_version: 1,
+                payload: &payload,
+                compatibility_digest: &format!("sha256:{}", "d".repeat(64)),
+                adjacent_delta: None,
+                facts_digest: Some(&digest),
+                structural_batch: Some(&batch),
+                changed_record_paths: None,
+                reuse_public_components: false,
+            },
+        )
+        .unwrap();
+        let ecosystems = {
+            let mut statement = connection
+                .prepare(
+                    "SELECT nodes.ecosystem FROM node_external_ids_v2 AS external
+                 JOIN nodes_v2 AS nodes ON nodes.node_pk = external.node_pk
+                 WHERE external.scheme = 'external-package-v2' ORDER BY nodes.ecosystem",
+                )
+                .unwrap();
+            statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert_eq!(ecosystems, ["npm", "pypi"]);
         drop(connection);
         fs::remove_dir_all(root).unwrap();
     }

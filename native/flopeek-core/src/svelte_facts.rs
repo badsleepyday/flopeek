@@ -137,6 +137,7 @@ pub fn parse_native_svelte_facts(path: &str, source: &str) -> Option<NativeJsFac
     let structural = NativeJsStructuralFacts {
         imports: if valid { imports } else { vec![] },
         symbols: vec![],
+        canonical_symbols: vec![],
         calls: vec![],
         endpoints: vec![],
         requests: vec![],

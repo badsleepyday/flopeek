@@ -1,7 +1,8 @@
 //! C# structural facts for strict-native source authority.
 use crate::js_facts::{
-    NativeJsAnalysis, NativeJsEvidence, NativeJsFacts, NativeJsImport, NativeJsPosition,
-    NativeJsRange, NativeJsStructuralFacts, NativeJsStructuralSymbol, NativeJsSymbol,
+    NativeJsAnalysis, NativeJsCanonicalSymbolIdentity, NativeJsEvidence, NativeJsFacts,
+    NativeJsImport, NativeJsPosition, NativeJsRange, NativeJsStructuralFacts,
+    NativeJsStructuralSymbol, NativeJsSymbol, NativeJsSymbolReference,
 };
 use std::collections::BTreeSet;
 use tree_sitter::{Node, Parser};
@@ -46,6 +47,44 @@ fn type_body(node: Node<'_>) -> Option<Node<'_>> {
         children(node)
             .into_iter()
             .find(|child| child.kind() == "declaration_list")
+    })
+}
+
+fn compact_type(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect()
+}
+
+fn method_signature(node: Node<'_>, source: &str) -> String {
+    let parameters = node
+        .child_by_field_name("parameters")
+        .map(children)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|parameter| parameter.kind() == "parameter")
+        .map(|parameter| {
+            parameter
+                .child_by_field_name("type")
+                .and_then(|kind| text(kind, source))
+                .map(|kind| compact_type(&kind))
+                .unwrap_or_else(|| "unknown".to_string())
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let return_type = node
+        .child_by_field_name("returns")
+        .and_then(|kind| text(kind, source))
+        .map(|kind| compact_type(&kind))
+        .unwrap_or_else(|| "constructor".to_string());
+    format!("({parameters}):{return_type}")
+}
+
+fn is_static(node: Node<'_>, source: &str) -> bool {
+    children(node).into_iter().any(|child| {
+        child.kind() == "modifier"
+            && text(child, source).is_some_and(|modifier| modifier == "static")
     })
 }
 
@@ -116,6 +155,7 @@ fn recover_malformed_declaration(path: &str, source: &str) -> Option<NativeJsStr
                 end: position_at(source, source.len()),
             },
         },
+        identity: None,
     })
 }
 
@@ -137,6 +177,7 @@ pub fn parse_native_csharp_facts(path: &str, source: &str) -> Option<NativeJsFac
     let mut structural = NativeJsStructuralFacts {
         imports: vec![],
         symbols: vec![],
+        canonical_symbols: vec![],
         calls: vec![],
         endpoints: vec![],
         requests: vec![],
@@ -193,19 +234,71 @@ pub fn parse_native_csharp_facts(path: &str, source: &str) -> Option<NativeJsFac
                 | "record_declaration"
         ) {
             if let Some(name) = declaration_name(node, source) {
-                let methods = type_body(node)
-                    .map(children)
-                    .unwrap_or_default()
+                let members = type_body(node).map(children).unwrap_or_default();
+                let method_details = members
                     .into_iter()
-                    .filter(|member| member.kind() == "method_declaration")
-                    .filter_map(|member| declaration_name(member, source))
+                    .filter(|member| {
+                        matches!(
+                            member.kind(),
+                            "method_declaration" | "constructor_declaration"
+                        )
+                    })
+                    .filter_map(|member| {
+                        declaration_name(member, source).map(|member_name| (member, member_name))
+                    })
                     .collect::<Vec<_>>();
                 structural.symbols.push(NativeJsStructuralSymbol {
                     symbol_type: "class".into(),
-                    name,
-                    methods,
+                    name: name.clone(),
+                    methods: method_details
+                        .iter()
+                        .map(|(_, method_name)| method_name.clone())
+                        .collect(),
                     evidence: evidence(path, node),
+                    identity: Some(NativeJsCanonicalSymbolIdentity {
+                        qualified_name: name.clone(),
+                        lexical_owner: None,
+                        signature: None,
+                        discriminator: "type".into(),
+                    }),
                 });
+                structural.canonical_symbols.push(
+                    structural
+                        .symbols
+                        .last()
+                        .expect("class was inserted")
+                        .clone(),
+                );
+                let owner = NativeJsSymbolReference {
+                    symbol_type: "class".into(),
+                    name: name.clone(),
+                };
+                for (method, method_name) in method_details {
+                    structural.canonical_symbols.push(NativeJsStructuralSymbol {
+                        symbol_type: if method.kind() == "constructor_declaration" {
+                            "constructor"
+                        } else {
+                            "method"
+                        }
+                        .into(),
+                        name: method_name.clone(),
+                        methods: vec![],
+                        evidence: evidence(path, method),
+                        identity: Some(NativeJsCanonicalSymbolIdentity {
+                            qualified_name: format!("{name}.{method_name}"),
+                            lexical_owner: Some(owner.clone()),
+                            signature: Some(method_signature(method, source)),
+                            discriminator: if method.kind() == "constructor_declaration" {
+                                "constructor"
+                            } else if is_static(method, source) {
+                                "static-method"
+                            } else {
+                                "instance-method"
+                            }
+                            .into(),
+                        }),
+                    });
+                }
             }
         }
         // Roslyn DescendantNodes is a source-order preorder traversal. A LIFO
@@ -295,6 +388,35 @@ mod tests {
         assert_eq!(facts.structural.symbols[0].methods, ["First"]);
         assert_eq!(facts.structural.symbols[1].methods, ["Second"]);
         assert_eq!(facts.structural.methods, ["First", "Second"]);
+    }
+
+    #[test]
+    fn canonical_symbols_preserve_overloaded_methods_and_constructors() {
+        let facts = parse_native_csharp_facts(
+            "src/OrderService.cs",
+            "public class OrderService { public OrderService(Order order) {} public OrderService(Order order, User user) {} public void Save(Order order) {} public void Save(Order order, User user) {} }",
+        )
+        .unwrap();
+        let identities = facts
+            .structural
+            .canonical_symbols
+            .iter()
+            .filter_map(|symbol| symbol.identity.as_ref())
+            .collect::<Vec<_>>();
+        assert_eq!(identities.len(), 5);
+        assert_eq!(
+            identities[1].signature.as_deref(),
+            Some("(Order):constructor")
+        );
+        assert_eq!(
+            identities[2].signature.as_deref(),
+            Some("(Order,User):constructor")
+        );
+        assert_eq!(identities[3].signature.as_deref(), Some("(Order):void"));
+        assert_eq!(
+            identities[4].signature.as_deref(),
+            Some("(Order,User):void")
+        );
     }
 
     #[test]

@@ -691,6 +691,39 @@ test("Tree-sitter Java resolves only unqualified unique local static method call
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test("Tree-sitter Java canonical facts preserve overloaded methods without changing public v1 IDs", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-java-canonical-overloads-"));
+  try {
+    write(root, "package.json", JSON.stringify({ name: "java-overload-example" }));
+    write(root, "src/OrderService.java", "class OrderService { void save(Order order) {} void save(Order order, User user) {} }\n");
+    const scanner = createRepositoryScanner(root, { persistIdentity: false });
+    const graph = scanner.scan();
+    const record = scanner.snapshotRecords().find((item) => item.relativePath === "src/OrderService.java");
+    const overloads = record.result.identitySymbols.filter((symbol) => symbol.type === "method" && symbol.name === "save");
+    assert.deepEqual(overloads.map((symbol) => symbol.identity.signature), ["(Order):void", "(Order,User):void"]);
+    assert.ok(overloads.every((symbol) => symbol.identity.lexicalOwner.name === "OrderService"));
+    assert.equal(graph.nodes.some((node) => node.id === "symbol:src/OrderService.java:function:OrderService.save"), false);
+    assert.ok(graph.nodes.some((node) => node.id === "symbol:src/OrderService.java:class:OrderService"));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("TypeScript canonical facts preserve owners and overload signatures without changing public v1 IDs", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-typescript-canonical-overloads-"));
+  try {
+    write(root, "package.json", JSON.stringify({ name: "typescript-overload-example" }));
+    write(root, "src/OrderService.ts", "class OrderService { save(order: Order): void; save(order: Order, user: User): void; save(order: Order, user?: User): void {} }\nclass AuditService { save(order: Order): void {} }\n");
+    const scanner = createRepositoryScanner(root, { persistIdentity: false });
+    const graph = scanner.scan();
+    const record = scanner.snapshotRecords().find((item) => item.relativePath === "src/OrderService.ts");
+    const saves = record.result.identitySymbols.filter((symbol) => symbol.name === "save");
+    assert.equal(saves.length, 4);
+    assert.deepEqual(saves.slice(0, 2).map((symbol) => symbol.identity.signature), ["(Order):void", "(Order,User):void"]);
+    assert.equal(saves[0].identity.qualifiedName, "OrderService.save");
+    assert.equal(saves[3].identity.qualifiedName, "AuditService.save");
+    assert.equal(graph.nodes.filter((node) => node.id === "symbol:src/OrderService.ts:class:OrderService").length, 1);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("Tree-sitter Rust analysis extracts types, methods, and direct local calls without Rust tooling", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-rust-"));
   try {

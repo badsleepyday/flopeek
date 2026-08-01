@@ -48,6 +48,8 @@ pub struct NativeJsFacts {
 pub struct NativeJsStructuralFacts {
     pub imports: Vec<NativeJsImport>,
     pub symbols: Vec<NativeJsStructuralSymbol>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub canonical_symbols: Vec<NativeJsStructuralSymbol>,
     pub calls: Vec<NativeJsCall>,
     pub endpoints: Vec<NativeJsEndpoint>,
     pub requests: Vec<NativeJsRequest>,
@@ -95,6 +97,19 @@ pub struct NativeJsStructuralSymbol {
     pub name: String,
     pub methods: Vec<String>,
     pub evidence: NativeJsEvidence,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity: Option<NativeJsCanonicalSymbolIdentity>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeJsCanonicalSymbolIdentity {
+    pub qualified_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lexical_owner: Option<NativeJsSymbolReference>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    pub discriminator: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -712,6 +727,7 @@ fn inventory_only_native_facts(path: &str) -> Option<NativeJsFacts> {
         structural: NativeJsStructuralFacts {
             imports: Vec::new(),
             symbols: Vec::new(),
+            canonical_symbols: Vec::new(),
             calls: Vec::new(),
             endpoints: Vec::new(),
             requests: Vec::new(),
@@ -1323,6 +1339,105 @@ fn object_string_property(node: Node<'_>, source: &str, property_name: &str) -> 
     None
 }
 
+fn compact_signature_type(value: &str) -> String {
+    value
+        .trim_start_matches(':')
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect()
+}
+
+fn canonical_function_signature(node: Node<'_>, source: &str) -> String {
+    let parameters = node
+        .child_by_field_name("parameters")
+        .map(named_children)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|parameter| {
+            let prefix = if parameter.kind() == "rest_pattern" {
+                "..."
+            } else {
+                ""
+            };
+            let kind = parameter
+                .child_by_field_name("type")
+                .or_else(|| {
+                    named_children(parameter)
+                        .into_iter()
+                        .find(|child| child.kind() == "type_annotation")
+                })
+                .and_then(|kind| source_text(kind, source))
+                .map(|kind| compact_signature_type(&kind))
+                .filter(|kind| !kind.is_empty())
+                .unwrap_or_else(|| "unknown".to_string());
+            format!("{prefix}{kind}")
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let return_type = node
+        .child_by_field_name("return_type")
+        .or_else(|| {
+            named_children(node)
+                .into_iter()
+                .find(|child| child.kind() == "type_annotation")
+        })
+        .and_then(|kind| source_text(kind, source))
+        .map(|kind| compact_signature_type(&kind))
+        .filter(|kind| !kind.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+    format!("({parameters}):{return_type}")
+}
+
+fn canonical_class_methods(
+    class: Node<'_>,
+    path: &str,
+    source: &str,
+    class_name: &str,
+) -> Vec<NativeJsStructuralSymbol> {
+    let owner = NativeJsSymbolReference {
+        symbol_type: "class".to_string(),
+        name: class_name.to_string(),
+    };
+    class
+        .child_by_field_name("body")
+        .map(named_children)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|member| matches!(member.kind(), "method_definition" | "method_signature"))
+        .filter_map(|method| {
+            let name = method
+                .child_by_field_name("name")
+                .and_then(|name| source_text(name, source))?;
+            let discriminator = if name == "constructor" {
+                "constructor"
+            } else if source_text(method, source)
+                .is_some_and(|text| text.split_whitespace().any(|item| item == "static"))
+            {
+                "static-method"
+            } else {
+                "instance-method"
+            };
+            Some(NativeJsStructuralSymbol {
+                symbol_type: if name == "constructor" {
+                    "constructor"
+                } else {
+                    "method"
+                }
+                .to_string(),
+                name: name.clone(),
+                methods: vec![],
+                evidence: evidence(path, source, method),
+                identity: Some(NativeJsCanonicalSymbolIdentity {
+                    qualified_name: format!("{class_name}.{name}"),
+                    lexical_owner: Some(owner.clone()),
+                    signature: Some(canonical_function_signature(method, source)),
+                    discriminator: discriminator.to_string(),
+                }),
+            })
+        })
+        .collect()
+}
+
 fn collect_structural(
     node: Node<'_>,
     path: &str,
@@ -1370,24 +1485,43 @@ fn collect_structural(
         }
         "class_declaration" if is_top_level(node) => {
             if let Some(name) = identifier_for(node, source) {
-                facts.symbols.push(NativeJsStructuralSymbol {
+                let symbol = NativeJsStructuralSymbol {
                     symbol_type: "class".to_string(),
-                    name,
+                    name: name.clone(),
                     methods: class_methods(node, source),
                     evidence: evidence(path, source, exported_declaration_evidence_node(node)),
-                });
+                    identity: Some(NativeJsCanonicalSymbolIdentity {
+                        qualified_name: name.clone(),
+                        lexical_owner: None,
+                        signature: None,
+                        discriminator: "type".to_string(),
+                    }),
+                };
+                facts.symbols.push(symbol.clone());
+                facts.canonical_symbols.push(symbol);
+                facts
+                    .canonical_symbols
+                    .extend(canonical_class_methods(node, path, source, &name));
             }
         }
         "function_declaration" | "generator_function_declaration" | "function_signature"
             if is_top_level(node) =>
         {
             if let Some(name) = identifier_for(node, source) {
-                facts.symbols.push(NativeJsStructuralSymbol {
+                let symbol = NativeJsStructuralSymbol {
                     symbol_type: "function".to_string(),
                     name: name.clone(),
                     methods: Vec::new(),
                     evidence: evidence(path, source, exported_declaration_evidence_node(node)),
-                });
+                    identity: Some(NativeJsCanonicalSymbolIdentity {
+                        qualified_name: name.clone(),
+                        lexical_owner: None,
+                        signature: Some(canonical_function_signature(node, source)),
+                        discriminator: "top-level-function".to_string(),
+                    }),
+                };
+                facts.symbols.push(symbol.clone());
+                facts.canonical_symbols.push(symbol);
                 if matches!(name.as_str(), "GET" | "POST" | "PUT" | "PATCH" | "DELETE")
                     && node
                         .parent()
@@ -1413,12 +1547,21 @@ fn collect_structural(
                 .child_by_field_name("name")
                 .and_then(|item| source_text(item, source))
             {
-                facts.symbols.push(NativeJsStructuralSymbol {
+                let function = node.child_by_field_name("value").unwrap_or(node);
+                let symbol = NativeJsStructuralSymbol {
                     symbol_type: "function".to_string(),
-                    name,
+                    name: name.clone(),
                     methods: Vec::new(),
                     evidence: evidence(path, source, node),
-                });
+                    identity: Some(NativeJsCanonicalSymbolIdentity {
+                        qualified_name: name,
+                        lexical_owner: None,
+                        signature: Some(canonical_function_signature(function, source)),
+                        discriminator: "top-level-function".to_string(),
+                    }),
+                };
+                facts.symbols.push(symbol.clone());
+                facts.canonical_symbols.push(symbol);
             }
         }
         "call_expression" => {
@@ -1624,6 +1767,7 @@ fn structural_facts(path: &str, source: &str, root: Node<'_>) -> NativeJsStructu
     let mut facts = NativeJsStructuralFacts {
         imports: Vec::new(),
         symbols: Vec::new(),
+        canonical_symbols: Vec::new(),
         calls: Vec::new(),
         endpoints: Vec::new(),
         requests: Vec::new(),
@@ -2291,6 +2435,33 @@ mod tests {
             declarations.structural.methods,
             vec!["pLimit", "limitFunction"]
         );
+    }
+
+    #[test]
+    fn canonical_typescript_symbols_preserve_owner_and_overload_signatures() {
+        let facts = parse_native_js_facts(
+            "src/OrderService.ts",
+            "class OrderService { save(order: Order): void; save(order: Order, user: User): void; save(order: Order, user?: User): void {} }\nclass AuditService { save(order: Order): void {} }",
+        )
+        .unwrap();
+        let save_identities = facts
+            .structural
+            .canonical_symbols
+            .iter()
+            .filter(|symbol| symbol.name == "save")
+            .filter_map(|symbol| symbol.identity.as_ref())
+            .collect::<Vec<_>>();
+        assert_eq!(save_identities.len(), 4);
+        assert_eq!(save_identities[0].qualified_name, "OrderService.save");
+        assert_eq!(
+            save_identities[0].signature.as_deref(),
+            Some("(Order):void")
+        );
+        assert_eq!(
+            save_identities[1].signature.as_deref(),
+            Some("(Order,User):void")
+        );
+        assert_eq!(save_identities[3].qualified_name, "AuditService.save");
     }
 
     #[test]

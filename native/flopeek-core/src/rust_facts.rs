@@ -1,8 +1,8 @@
 //! Rust parser facts for the strict-native public source authority.
 use crate::js_facts::{
-    NativeJsAnalysis, NativeJsCall, NativeJsEvidence, NativeJsFacts, NativeJsImport,
-    NativeJsImportedReference, NativeJsPosition, NativeJsRange, NativeJsStructuralFacts,
-    NativeJsStructuralSymbol, NativeJsSymbol, NativeJsSymbolReference,
+    NativeJsAnalysis, NativeJsCall, NativeJsCanonicalSymbolIdentity, NativeJsEvidence,
+    NativeJsFacts, NativeJsImport, NativeJsImportedReference, NativeJsPosition, NativeJsRange,
+    NativeJsStructuralFacts, NativeJsStructuralSymbol, NativeJsSymbol, NativeJsSymbolReference,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::{Node, Parser};
@@ -153,6 +153,38 @@ fn declaration_methods(node: Node<'_>, source: &str) -> Vec<String> {
         .collect()
 }
 
+fn function_signature(node: Node<'_>, source: &str) -> String {
+    let parameters = node
+        .child_by_field_name("parameters")
+        .map(children)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|parameter| parameter.kind() == "parameter")
+        .map(|parameter| {
+            parameter
+                .child_by_field_name("type")
+                .and_then(|kind| text(kind, source))
+                .map(|kind| {
+                    kind.chars()
+                        .filter(|value| !value.is_whitespace())
+                        .collect()
+                })
+                .unwrap_or_else(|| "unknown".to_string())
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let result = node
+        .child_by_field_name("return_type")
+        .and_then(|kind| text(kind, source))
+        .map(|kind| {
+            kind.chars()
+                .filter(|value| !value.is_whitespace())
+                .collect()
+        })
+        .unwrap_or_else(|| "()".to_string());
+    format!("({parameters}):{result}")
+}
+
 fn impl_type_name(node: Node<'_>, source: &str) -> Option<String> {
     let ty = node.child_by_field_name("type")?;
     if ty.kind() == "type_identifier" {
@@ -214,6 +246,7 @@ pub fn parse_native_rust_facts(path: &str, source: &str) -> Option<NativeJsFacts
     let mut structural = NativeJsStructuralFacts {
         imports: vec![],
         symbols: vec![],
+        canonical_symbols: vec![],
         calls: vec![],
         endpoints: vec![],
         requests: vec![],
@@ -265,13 +298,20 @@ pub fn parse_native_rust_facts(path: &str, source: &str) -> Option<NativeJsFacts
                 name.clone(),
                 NativeJsStructuralSymbol {
                     symbol_type: "class".into(),
-                    name,
+                    name: name.clone(),
                     methods: declaration_methods(declaration, source),
                     evidence: evidence(path, declaration),
+                    identity: Some(NativeJsCanonicalSymbolIdentity {
+                        qualified_name: name,
+                        lexical_owner: None,
+                        signature: None,
+                        discriminator: "type".into(),
+                    }),
                 },
             );
         }
     }
+    let mut canonical_methods = Vec::new();
     for implementation in children(root)
         .into_iter()
         .filter(|node| node.kind() == "impl_item")
@@ -279,15 +319,43 @@ pub fn parse_native_rust_facts(path: &str, source: &str) -> Option<NativeJsFacts
         if let Some(name) = impl_type_name(implementation, source)
             && let Some(symbol) = classes.get_mut(&name)
         {
-            for method in declaration_methods(implementation, source) {
-                if !symbol.methods.contains(&method) {
-                    symbol.methods.push(method);
+            let owner = NativeJsSymbolReference {
+                symbol_type: "class".into(),
+                name: name.clone(),
+            };
+            for method in implementation
+                .child_by_field_name("body")
+                .map(children)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|node| matches!(node.kind(), "function_item" | "function_signature_item"))
+            {
+                if let Some(method_name) = declaration_name(method, source) {
+                    if !symbol.methods.contains(&method_name) {
+                        symbol.methods.push(method_name.clone());
+                    }
+                    canonical_methods.push(NativeJsStructuralSymbol {
+                        symbol_type: "method".into(),
+                        name: method_name.clone(),
+                        methods: vec![],
+                        evidence: evidence(path, method),
+                        identity: Some(NativeJsCanonicalSymbolIdentity {
+                            qualified_name: format!("{name}.{method_name}"),
+                            lexical_owner: Some(owner.clone()),
+                            signature: Some(function_signature(method, source)),
+                            discriminator: "instance-method".into(),
+                        }),
+                    });
                 }
             }
         }
     }
     let class_names = classes.keys().cloned().collect::<BTreeSet<_>>();
     structural.symbols.extend(classes.into_values());
+    structural
+        .canonical_symbols
+        .extend(structural.symbols.iter().cloned());
+    structural.canonical_symbols.extend(canonical_methods);
     let functions = children(root)
         .into_iter()
         .filter(|node| node.kind() == "function_item")
@@ -298,12 +366,20 @@ pub fn parse_native_rust_facts(path: &str, source: &str) -> Option<NativeJsFacts
         .collect::<BTreeSet<_>>();
     for function in &functions {
         if let Some(name) = declaration_name(*function, source) {
-            structural.symbols.push(NativeJsStructuralSymbol {
+            let symbol = NativeJsStructuralSymbol {
                 symbol_type: "function".into(),
-                name,
+                name: name.clone(),
                 methods: vec![],
                 evidence: evidence(path, *function),
-            });
+                identity: Some(NativeJsCanonicalSymbolIdentity {
+                    qualified_name: name,
+                    lexical_owner: None,
+                    signature: Some(function_signature(*function, source)),
+                    discriminator: "top-level-function".into(),
+                }),
+            };
+            structural.symbols.push(symbol.clone());
+            structural.canonical_symbols.push(symbol);
         }
     }
     let mut seen_methods = BTreeSet::new();

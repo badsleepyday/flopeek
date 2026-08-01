@@ -1,8 +1,8 @@
 //! Go structural facts for strict-native source authority.
 use crate::js_facts::{
-    NativeJsAnalysis, NativeJsCall, NativeJsEvidence, NativeJsFacts, NativeJsImport,
-    NativeJsImportedReference, NativeJsPosition, NativeJsRange, NativeJsStructuralFacts,
-    NativeJsStructuralSymbol, NativeJsSymbol, NativeJsSymbolReference,
+    NativeJsAnalysis, NativeJsCall, NativeJsCanonicalSymbolIdentity, NativeJsEvidence,
+    NativeJsFacts, NativeJsImport, NativeJsImportedReference, NativeJsPosition, NativeJsRange,
+    NativeJsStructuralFacts, NativeJsStructuralSymbol, NativeJsSymbol, NativeJsSymbolReference,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
@@ -131,6 +131,30 @@ fn function_symbol_name(node: Node<'_>, source: &str) -> Option<String> {
             .map(|receiver| format!("{receiver}.{name}"))
             .unwrap_or(name),
     )
+}
+
+fn function_signature(node: Node<'_>, source: &str) -> String {
+    let parameters = node
+        .child_by_field_name("parameters")
+        .and_then(|value| text(value, source))
+        .map(|value| {
+            value
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect::<String>()
+        })
+        .unwrap_or_else(|| "()".to_string());
+    let result = node
+        .child_by_field_name("result")
+        .and_then(|value| text(value, source))
+        .map(|value| {
+            value
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect::<String>()
+        })
+        .unwrap_or_default();
+    format!("{parameters}:{result}")
 }
 
 fn import_path_node(node: Node<'_>) -> Option<Node<'_>> {
@@ -323,6 +347,7 @@ fn malformed_facts() -> NativeJsFacts {
         structural: NativeJsStructuralFacts {
             imports: vec![],
             symbols: vec![],
+            canonical_symbols: vec![],
             calls: vec![],
             endpoints: vec![],
             requests: vec![],
@@ -401,9 +426,15 @@ pub fn parse_native_go_facts(path: &str, source: &str) -> Option<NativeJsFacts> 
                 {
                     symbols.push(NativeJsStructuralSymbol {
                         symbol_type: "class".into(),
-                        name,
+                        name: name.clone(),
                         methods: Vec::new(),
                         evidence: evidence(path, spec),
+                        identity: Some(NativeJsCanonicalSymbolIdentity {
+                            qualified_name: name,
+                            lexical_owner: None,
+                            signature: None,
+                            discriminator: "type".into(),
+                        }),
                     });
                 }
             }
@@ -420,11 +451,26 @@ pub fn parse_native_go_facts(path: &str, source: &str) -> Option<NativeJsFacts> 
             ) {
                 methods_by_type.entry(receiver).or_default().push(method);
             }
+            let receiver = receiver_type_name(*declaration, source);
             symbols.push(NativeJsStructuralSymbol {
                 symbol_type: "function".into(),
-                name,
+                name: name.clone(),
                 methods: Vec::new(),
                 evidence: evidence(path, *declaration),
+                identity: Some(NativeJsCanonicalSymbolIdentity {
+                    qualified_name: name,
+                    lexical_owner: receiver.as_ref().map(|owner| NativeJsSymbolReference {
+                        symbol_type: "class".into(),
+                        name: owner.clone(),
+                    }),
+                    signature: Some(function_signature(*declaration, source)),
+                    discriminator: if receiver.is_some() {
+                        "instance-method"
+                    } else {
+                        "top-level-function"
+                    }
+                    .into(),
+                }),
             });
         }
     }
@@ -435,6 +481,7 @@ pub fn parse_native_go_facts(path: &str, source: &str) -> Option<NativeJsFacts> 
             symbol.methods = methods.clone();
         }
     }
+    let canonical_symbols = symbols.clone();
     let calls = declarations
         .iter()
         .filter(|node| matches!(node.kind(), "function_declaration" | "method_declaration"))
@@ -465,6 +512,7 @@ pub fn parse_native_go_facts(path: &str, source: &str) -> Option<NativeJsFacts> 
     let structural = NativeJsStructuralFacts {
         imports: imports.clone(),
         symbols: symbols.clone(),
+        canonical_symbols,
         calls: calls.clone(),
         endpoints: vec![],
         requests: vec![],

@@ -798,6 +798,15 @@ for (const persistIdentity of [true, false]) {
         analyzedFiles: 0,
         removedFiles: 1,
       });
+      const helperIdentity = persistIdentity
+        ? await native.getNodeIdentity(graph, `file:${adapter.helper}`)
+        : null;
+      const helperContextRefV1 = persistIdentity
+        ? (await native.getContextCard(graph, `file:${adapter.helper}`)).card.contextRef
+        : null;
+      const helperContextRefV2 = persistIdentity
+        ? await native.createContextRefV2(graph, `file:${adapter.helper}`)
+        : null;
       await step({
         label: "file rename",
         changedPaths: [adapter.helper, adapter.renamed],
@@ -811,6 +820,17 @@ for (const persistIdentity of [true, false]) {
         analyzedFiles: 1,
         removedFiles: 1,
       });
+      if (persistIdentity) {
+        const renamedIdentity = await native.getNodeIdentity(graph, `file:${adapter.renamed}`);
+        assert.equal(renamedIdentity.nodeUid, helperIdentity.nodeUid, `${adapter.id}: rename must preserve node UID`);
+        assert.equal((await native.getNodeIdentity(graph, `file:${adapter.helper}`)).nodeUid, helperIdentity.nodeUid, `${adapter.id}: historical legacy ID must resolve to the durable entity`);
+        for (const retainedRef of [helperContextRefV1, helperContextRefV2]) {
+          const resolution = await native.resolveContextRef(graph, retainedRef);
+          assert.equal(resolution.status, "stale", `${adapter.id}: renamed Context Ref must remain resolvable`);
+          assert.equal(resolution.card.node.id, `file:${adapter.renamed}`);
+          assert.match(resolution.resolvedRef, new RegExp(`/node/${helperIdentity.nodeUid}@${graph.state.graphVersion}$`, "u"));
+        }
+      }
       await step({
         label: "import target change",
         changedPaths: [adapter.main],
@@ -854,6 +874,20 @@ test("experimental native core owns persistent public graph versions", async (co
   const flow = first.flows[0];
   assert.ok(flow);
   const nodeRef = (await client.getContextCard(first, node.id)).card.contextRef;
+  const identity = await client.getNodeIdentity(first, node.id);
+  assert.match(identity.nodeUid, /^n_[a-f0-9]{32}$/u);
+  assert.equal(identity.legacyId, node.id);
+  assert.equal(identity.status, "active");
+  assert.equal((await client.getNodeIdentity(first, identity.nodeUid)).nodePk, identity.nodePk);
+  assert.equal((await client.searchNodeIdentities(first, identity.nodeUid)).results[0].nodeUid, identity.nodeUid);
+  assert.equal((await client.searchNodeIdentities(first, identity.semanticHash.slice(7, 19))).results[0].nodeUid, identity.nodeUid);
+  assert.equal((await client.searchNodeIdentities(first, identity.revisionHash.slice(7, 19))).results[0].nodeUid, identity.nodeUid);
+  const nodeRefV2 = await client.createContextRefV2(first, node.id);
+  assert.match(nodeRefV2, new RegExp(`/node/${identity.nodeUid}@1$`, "u"));
+  const currentV2 = await client.resolveContextRef(first, nodeRefV2);
+  assert.equal(currentV2.status, "current");
+  assert.equal(currentV2.card.node.id, node.id);
+  assert.equal(currentV2.resolvedRef, nodeRefV2);
   const flowRef = (await client.getFlowProjection(first, flow.id)).flow.contextRef;
   const changedPath = second.nodes.find((node) => node.kind === "file").path;
   fs.appendFileSync(path.join(root, changedPath), "\n");
@@ -863,6 +897,10 @@ test("experimental native core owns persistent public graph versions", async (co
   assert.equal(third.analysis.latestDelta?.toGraphVersion, 2);
   assert.deepEqual(await client.getChangedContexts(third), createJsCoreClient().getChangedContexts(third));
   assert.deepEqual(await client.resolveContextRef(third, nodeRef), createJsCoreClient().resolveContextRef(third, nodeRef));
+  const staleV2 = await client.resolveContextRef(third, nodeRefV2);
+  assert.equal(staleV2.status, "stale");
+  assert.match(staleV2.resolvedRef, new RegExp(`/node/${identity.nodeUid}@2$`, "u"));
+  assert.equal(staleV2.card.node.id, node.id);
   assert.deepEqual(await client.resolveContextRef(third, flowRef), createJsCoreClient().resolveContextRef(third, flowRef));
 });
 

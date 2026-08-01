@@ -601,11 +601,20 @@ function analyzeJavaScriptTypeScript(content, extension, relativePath, routeInfo
   const calls = [];
   const methods = [];
   const symbols = [];
+  const identitySymbols = [];
   const runtime = runtimeIntegrationFacts(sourceFile, relativePath);
   const schedules = nodeCronSchedules(sourceFile, relativePath);
   const fastifyInstances = fastifyReceivers(sourceFile);
   const importedBindings = namedImportReferences(sourceFile);
   const nextContracts = nextRouteHandlerContracts(sourceFile, relativePath, routeInfo);
+  const signature = (node) => {
+    const parameters = (node.parameters || []).map((parameter) => {
+      const kind = parameter.type ? parameter.type.getText(sourceFile).replace(/\s+/gu, "") : "unknown";
+      return `${parameter.dotDotDotToken ? "..." : ""}${kind}`;
+    }).join(",");
+    const returnType = node.type ? node.type.getText(sourceFile).replace(/\s+/gu, "") : "unknown";
+    return `(${parameters}):${returnType}`;
+  };
   const addImport = (specifier, node) => imports.push({ specifier, evidence: evidenceFor(sourceFile, node, relativePath, "typescript-ast") });
   const visit = (node) => {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) addImport(node.moduleSpecifier.text, node);
@@ -628,15 +637,38 @@ function analyzeJavaScriptTypeScript(content, extension, relativePath, routeInfo
       }
     }
     if (node.parent === sourceFile && ts.isClassDeclaration(node) && node.name && ts.isIdentifier(node.name)) {
-      symbols.push({ type: "class", name: node.name.text, methods: classMethodNames(node), evidence: evidenceFor(sourceFile, node, relativePath, "typescript-ast") });
+      const classSymbol = { type: "class", name: node.name.text, methods: classMethodNames(node), evidence: evidenceFor(sourceFile, node, relativePath, "typescript-ast"), identity: { qualifiedName: node.name.text, discriminator: "type" } };
+      symbols.push(classSymbol);
+      identitySymbols.push(classSymbol);
+      for (const member of node.members) {
+        if ((!ts.isMethodDeclaration(member) && !ts.isMethodSignature(member) && !ts.isConstructorDeclaration(member)) || (member.name && !ts.isIdentifier(member.name))) continue;
+        const name = ts.isConstructorDeclaration(member) ? "constructor" : member.name.text;
+        const isStatic = member.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword);
+        identitySymbols.push({
+          type: name === "constructor" ? "constructor" : "method",
+          name,
+          methods: [],
+          evidence: evidenceFor(sourceFile, member, relativePath, "typescript-ast"),
+          identity: {
+            qualifiedName: `${node.name.text}.${name}`,
+            lexicalOwner: { type: "class", name: node.name.text },
+            signature: signature(member),
+            discriminator: name === "constructor" ? "constructor" : isStatic ? "static-method" : "instance-method",
+          },
+        });
+      }
     }
     if (node.parent === sourceFile && ts.isFunctionDeclaration(node) && node.name && ts.isIdentifier(node.name)) {
-      symbols.push({ type: "function", name: node.name.text, methods: [], evidence: evidenceFor(sourceFile, node, relativePath, "typescript-ast") });
+      const symbol = { type: "function", name: node.name.text, methods: [], evidence: evidenceFor(sourceFile, node, relativePath, "typescript-ast"), identity: { qualifiedName: node.name.text, signature: signature(node), discriminator: "top-level-function" } };
+      symbols.push(symbol);
+      identitySymbols.push(symbol);
     }
     if (node.parent === sourceFile && ts.isVariableStatement(node)) {
       for (const declaration of node.declarationList.declarations) {
         if (!ts.isIdentifier(declaration.name) || !declaration.initializer || (!ts.isArrowFunction(declaration.initializer) && !ts.isFunctionExpression(declaration.initializer))) continue;
-        symbols.push({ type: "function", name: declaration.name.text, methods: [], evidence: evidenceFor(sourceFile, declaration, relativePath, "typescript-ast") });
+        const symbol = { type: "function", name: declaration.name.text, methods: [], evidence: evidenceFor(sourceFile, declaration, relativePath, "typescript-ast"), identity: { qualifiedName: declaration.name.text, signature: signature(declaration.initializer), discriminator: "top-level-function" } };
+        symbols.push(symbol);
+        identitySymbols.push(symbol);
       }
     }
     if ((ts.isFunctionDeclaration(node) || ts.isVariableStatement(node)) && isExported(node)) {
@@ -660,6 +692,7 @@ function analyzeJavaScriptTypeScript(content, extension, relativePath, routeInfo
     unsupportedSchedules: schedules.unsupportedSchedules,
     methods: [...new Set(methods)].slice(0, 12),
     symbols,
+    identitySymbols,
     analysis: { parser: "typescript-ast", status: sourceFile.parseDiagnostics.length ? "parsed-with-diagnostics" : "parsed", confidence: "exact", diagnostics: sourceFile.parseDiagnostics.length },
   };
 }
@@ -842,6 +875,19 @@ function javaMethodDetails(typeDeclaration, content) {
     .filter(Boolean);
 }
 
+function compactJavaType(value) {
+  return String(value || "unknown").replace(/\s+/gu, "");
+}
+
+function javaMethodSignature(method, content) {
+  const parameters = (method.childForFieldName("parameters")?.namedChildren || [])
+    .filter((parameter) => ["formal_parameter", "spread_parameter", "receiver_parameter"].includes(parameter.type))
+    .map((parameter) => compactJavaType(treeText(content, parameter.childForFieldName("type"))))
+    .join(",");
+  const returnType = compactJavaType(treeText(content, method.childForFieldName("type")) || "void");
+  return `(${parameters}):${returnType}`;
+}
+
 function javaInvocationBelongsToMethod(invocation, method) {
   let current = invocation.parent;
   for (; current && current !== method; current = current.parent) {
@@ -862,19 +908,36 @@ function analyzeJava(content, relativePath) {
       return { specifier, standard: specifier.startsWith("java.") || specifier.startsWith("javax."), evidence: treeEvidence(node, relativePath, "tree-sitter-java") };
     });
   const symbols = [];
+  const identitySymbols = [];
   const calls = [];
   for (const declaration of root.namedChildren.filter((node) => ["class_declaration", "interface_declaration", "enum_declaration", "record_declaration", "annotation_type_declaration"].includes(node.type))) {
     const typeName = treeText(content, declaration.childForFieldName("name"));
     if (!typeName) continue;
     const methods = javaMethodDetails(declaration, content);
-    symbols.push({ type: "class", name: typeName, methods: methods.map((method) => method.name), evidence: treeEvidence(declaration, relativePath, "tree-sitter-java") });
+    const classSymbol = { type: "class", name: typeName, methods: methods.map((method) => method.name), evidence: treeEvidence(declaration, relativePath, "tree-sitter-java"), identity: { qualifiedName: typeName, lexicalOwner: null, signature: null, discriminator: "type" } };
+    symbols.push(classSymbol);
+    identitySymbols.push(classSymbol);
+    for (const method of methods) {
+      identitySymbols.push({
+        type: "method",
+        name: method.name,
+        methods: [],
+        evidence: treeEvidence(method.node, relativePath, "tree-sitter-java"),
+        identity: {
+          qualifiedName: `${typeName}.${method.name}`,
+          lexicalOwner: { type: "class", name: typeName },
+          signature: javaMethodSignature(method.node, content),
+          discriminator: method.isStatic ? "static-method" : "instance-method",
+        },
+      });
+    }
     const staticNameCounts = new Map();
     for (const method of methods.filter((method) => method.isStatic)) staticNameCounts.set(method.name, (staticNameCounts.get(method.name) || 0) + 1);
     const uniqueStaticMethods = methods.filter((method) => method.isStatic && staticNameCounts.get(method.name) === 1);
     const uniqueStaticNames = new Set(uniqueStaticMethods.map((method) => method.name));
     for (const method of uniqueStaticMethods) {
       const qualifiedName = `${typeName}.${method.name}`;
-      symbols.push({ type: "function", name: qualifiedName, methods: [], evidence: treeEvidence(method.node, relativePath, "tree-sitter-java") });
+      symbols.push({ type: "function", name: qualifiedName, methods: [], evidence: treeEvidence(method.node, relativePath, "tree-sitter-java"), identity: { qualifiedName, lexicalOwner: { type: "class", name: typeName }, signature: javaMethodSignature(method.node, content), discriminator: "static-method" } });
       const body = method.node.childForFieldName("body");
       for (const invocation of body?.descendantsOfType("method_invocation") || []) {
         if (!javaInvocationBelongsToMethod(invocation, method.node) || invocation.childForFieldName("object")) continue;
@@ -891,6 +954,7 @@ function analyzeJava(content, relativePath) {
     calls,
     methods: [...new Set(symbols.flatMap((symbol) => symbol.methods))].slice(0, 12),
     symbols,
+    identitySymbols,
     analysis: { parser: "tree-sitter-java", status: diagnostics ? "parsed-with-diagnostics" : "parsed", confidence: "exact", diagnostics },
   };
 }
@@ -988,14 +1052,35 @@ function analyzeRust(content, relativePath) {
     .map((imported) => [imported.binding.localName, { specifier: imported.specifier, exportedName: imported.binding.exportedName }]));
   const typeDeclarations = root.namedChildren.filter((node) => ["struct_item", "enum_item", "trait_item", "union_item"].includes(node.type));
   const typeSymbols = new Map();
+  const identitySymbols = [];
+  const signature = (node) => {
+    const parameters = (node.childForFieldName("parameters")?.namedChildren || [])
+      .filter((parameter) => parameter.type === "parameter")
+      .map((parameter) => treeText(content, parameter.childForFieldName("type"))?.replace(/\s+/gu, "") || "unknown")
+      .join(",");
+    const result = treeText(content, node.childForFieldName("return_type"))?.replace(/\s+/gu, "") || "()";
+    return `(${parameters}):${result}`;
+  };
   for (const declaration of typeDeclarations) {
     const name = treeText(content, declaration.childForFieldName("name"));
-    if (name) typeSymbols.set(name, { type: "class", name, methods: rustDeclarationMethods(declaration, content), evidence: treeEvidence(declaration, relativePath, "tree-sitter-rust") });
+    if (name) {
+      const symbol = { type: "class", name, methods: rustDeclarationMethods(declaration, content), evidence: treeEvidence(declaration, relativePath, "tree-sitter-rust"), identity: { qualifiedName: name, discriminator: "type" } };
+      typeSymbols.set(name, symbol);
+      identitySymbols.push(symbol);
+    }
   }
   for (const implementation of root.namedChildren.filter((node) => node.type === "impl_item")) {
     const name = rustTypeName(implementation, content);
     const symbol = typeSymbols.get(name);
-    if (symbol) symbol.methods.push(...rustDeclarationMethods(implementation, content));
+    if (symbol) {
+      symbol.methods.push(...rustDeclarationMethods(implementation, content));
+      for (const method of implementation.childForFieldName("body")?.namedChildren || []) {
+        if (!["function_item", "function_signature_item"].includes(method.type)) continue;
+        const methodName = treeText(content, method.childForFieldName("name"));
+        if (!methodName) continue;
+        identitySymbols.push({ type: "method", name: methodName, methods: [], evidence: treeEvidence(method, relativePath, "tree-sitter-rust"), identity: { qualifiedName: `${name}.${methodName}`, lexicalOwner: { type: "class", name }, signature: signature(method), discriminator: "instance-method" } });
+      }
+    }
   }
   const functionDeclarations = root.namedChildren.filter((node) => node.type === "function_item");
   const localFunctions = new Set(functionDeclarations.map((node) => treeText(content, node.childForFieldName("name"))).filter(Boolean));
@@ -1003,7 +1088,10 @@ function analyzeRust(content, relativePath) {
     ...[...typeSymbols.values()].map((symbol) => ({ ...symbol, methods: [...new Set(symbol.methods)] })),
     ...functionDeclarations.map((node) => {
       const name = treeText(content, node.childForFieldName("name"));
-      return name ? { type: "function", name, methods: [], evidence: treeEvidence(node, relativePath, "tree-sitter-rust") } : null;
+      if (!name) return null;
+      const symbol = { type: "function", name, methods: [], evidence: treeEvidence(node, relativePath, "tree-sitter-rust"), identity: { qualifiedName: name, signature: signature(node), discriminator: "top-level-function" } };
+      identitySymbols.push(symbol);
+      return symbol;
     }).filter(Boolean),
   ];
   const calls = [];
@@ -1030,6 +1118,7 @@ function analyzeRust(content, relativePath) {
     calls,
     methods: [...new Set(symbols.filter((symbol) => symbol.type === "class").flatMap((symbol) => symbol.methods))].slice(0, 12),
     symbols,
+    identitySymbols,
     analysis: { parser: "tree-sitter-rust", status: diagnostics ? "parsed-with-diagnostics" : "parsed", confidence: "exact", diagnostics },
   };
 }

@@ -3,6 +3,8 @@ pub mod facts;
 pub mod go_facts;
 pub mod graph;
 pub mod identity;
+mod identity_store;
+pub mod identity_v2;
 pub mod inventory;
 pub mod java_facts;
 pub mod js_batch;

@@ -964,6 +964,22 @@ function createNativeCoreClient(options = {}) {
       });
     },
     getRelatedTests: async (graph, id) => requestNativeQuery("getRelatedTests", graph, { nodeId: id }),
+    getNodeIdentity: async (graph, nodeIdOrUid) => requestNativeQuery(
+      "getNodeIdentity",
+      graph,
+      String(nodeIdOrUid || "").startsWith("n_")
+        ? { nodeUid: nodeIdOrUid }
+        : { nodeId: nodeIdOrUid },
+    ),
+    searchNodeIdentities: async (graph, query, limit = 20) => requestNativeQuery(
+      "searchNodeIdentities",
+      graph,
+      { query, limit },
+    ),
+    createContextRefV2: async (graph, nodeId) => requestNativeQuery("createContextRefV2", graph, {
+      kind: "node",
+      contextId: nodeId,
+    }),
     getContextCard: async (graph, id, format = "json") => {
       if (format !== "json" || (!isNativeGraphHandleOnly(graph) && !graph.nodes.some((node) => node.id === id))) {
         return extensions.getFormattedContextCard(graph, id, format);

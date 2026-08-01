@@ -1,8 +1,8 @@
 //! Java parser facts for the strict-native source authority.
 use crate::js_facts::{
-    NativeJsAnalysis, NativeJsCall, NativeJsEvidence, NativeJsFacts, NativeJsImport,
-    NativeJsPosition, NativeJsRange, NativeJsStructuralFacts, NativeJsStructuralSymbol,
-    NativeJsSymbol, NativeJsSymbolReference,
+    NativeJsAnalysis, NativeJsCall, NativeJsCanonicalSymbolIdentity, NativeJsEvidence,
+    NativeJsFacts, NativeJsImport, NativeJsPosition, NativeJsRange, NativeJsStructuralFacts,
+    NativeJsStructuralSymbol, NativeJsSymbol, NativeJsSymbolReference,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use tree_sitter::{Node, Parser};
@@ -74,6 +74,42 @@ fn methods<'a>(node: Node<'a>, source: &str) -> Vec<(Node<'a>, String, bool)> {
         .collect()
 }
 
+fn compact_java_type(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect()
+}
+
+fn method_signature(method: Node<'_>, source: &str) -> String {
+    let parameters = method
+        .child_by_field_name("parameters")
+        .map(children)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|parameter| {
+            matches!(
+                parameter.kind(),
+                "formal_parameter" | "spread_parameter" | "receiver_parameter"
+            )
+        })
+        .map(|parameter| {
+            parameter
+                .child_by_field_name("type")
+                .and_then(|kind| text(kind, source))
+                .map(|kind| compact_java_type(&kind))
+                .unwrap_or_else(|| "unknown".to_string())
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let return_type = method
+        .child_by_field_name("type")
+        .and_then(|kind| text(kind, source))
+        .map(|kind| compact_java_type(&kind))
+        .unwrap_or_else(|| "void".to_string());
+    format!("({parameters}):{return_type}")
+}
+
 struct JavaCallContext<'a> {
     path: &'a str,
     source: &'a str,
@@ -132,6 +168,7 @@ pub fn parse_native_java_facts(path: &str, source: &str) -> Option<NativeJsFacts
     let mut structural = NativeJsStructuralFacts {
         imports: vec![],
         symbols: vec![],
+        canonical_symbols: vec![],
         calls: vec![],
         endpoints: vec![],
         requests: vec![],
@@ -197,7 +234,44 @@ pub fn parse_native_java_facts(path: &str, source: &str) -> Option<NativeJsFacts
                 .map(|(_, name, _)| name.clone())
                 .collect(),
             evidence: evidence(path, declaration),
+            identity: Some(NativeJsCanonicalSymbolIdentity {
+                qualified_name: type_name.clone(),
+                lexical_owner: None,
+                signature: None,
+                discriminator: "type".into(),
+            }),
         });
+        structural.canonical_symbols.push(
+            structural
+                .symbols
+                .last()
+                .expect("class was inserted")
+                .clone(),
+        );
+        let owner = NativeJsSymbolReference {
+            symbol_type: "class".into(),
+            name: type_name.clone(),
+        };
+        for (method, name, is_static) in &method_details {
+            let qualified_name = format!("{type_name}.{name}");
+            structural.canonical_symbols.push(NativeJsStructuralSymbol {
+                symbol_type: "method".into(),
+                name: name.clone(),
+                methods: vec![],
+                evidence: evidence(path, *method),
+                identity: Some(NativeJsCanonicalSymbolIdentity {
+                    qualified_name,
+                    lexical_owner: Some(owner.clone()),
+                    signature: Some(method_signature(*method, source)),
+                    discriminator: if *is_static {
+                        "static-method"
+                    } else {
+                        "instance-method"
+                    }
+                    .into(),
+                }),
+            });
+        }
         let mut static_counts = BTreeMap::<String, usize>::new();
         for (_, name, is_static) in &method_details {
             if *is_static {
@@ -223,6 +297,15 @@ pub fn parse_native_java_facts(path: &str, source: &str) -> Option<NativeJsFacts
                 name: qualified_name,
                 methods: vec![],
                 evidence: evidence(path, method),
+                identity: Some(NativeJsCanonicalSymbolIdentity {
+                    qualified_name: format!("{type_name}.{name}"),
+                    lexical_owner: Some(NativeJsSymbolReference {
+                        symbol_type: "class".into(),
+                        name: type_name.clone(),
+                    }),
+                    signature: Some(method_signature(method, source)),
+                    discriminator: "static-method".into(),
+                }),
             });
             if let Some(body) = method.child_by_field_name("body") {
                 let context = JavaCallContext {
@@ -287,5 +370,41 @@ mod tests {
             ["submit", "validate", "helper"]
         );
         assert_eq!(facts.structural.calls[0].name, "Orders.validate");
+    }
+
+    #[test]
+    fn canonical_java_methods_preserve_overload_signatures() {
+        let facts = parse_native_java_facts(
+            "src/OrderService.java",
+            "class OrderService { void save(Order order) {} void save(Order order, User user) {} }",
+        )
+        .unwrap();
+        let overloads = facts
+            .structural
+            .canonical_symbols
+            .iter()
+            .filter(|symbol| symbol.symbol_type == "method" && symbol.name == "save")
+            .collect::<Vec<_>>();
+        assert_eq!(overloads.len(), 2);
+        assert_eq!(
+            overloads
+                .iter()
+                .map(|symbol| symbol
+                    .identity
+                    .as_ref()
+                    .unwrap()
+                    .signature
+                    .as_deref()
+                    .unwrap())
+                .collect::<Vec<_>>(),
+            ["(Order):void", "(Order,User):void"]
+        );
+        assert!(overloads.iter().all(|symbol| {
+            symbol
+                .identity
+                .as_ref()
+                .and_then(|identity| identity.lexical_owner.as_ref())
+                .is_some_and(|owner| owner.name == "OrderService")
+        }));
     }
 }
