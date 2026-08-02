@@ -10,7 +10,7 @@ const SHOWCASE_SCHEMA = "flopeek-showcase/v1";
 const SHOWCASE_WORKSPACE_SCHEMA = "flopeek-showcase-workspace/v1";
 const SHOWCASE_STATE_FILE = ".flopeek-showcase-workspace.json";
 const DEFAULT_SHOWCASE_ROOT = path.join(__dirname, "..", "examples", "commerce-showcase");
-const COPY_IGNORES = new Set([".flopeek", ".flowpeek", ".git", "node_modules"]);
+const COPY_IGNORES = new Set([".flopeek", ".git", "node_modules"]);
 
 class ShowcaseError extends Error {
   constructor(code, message) {

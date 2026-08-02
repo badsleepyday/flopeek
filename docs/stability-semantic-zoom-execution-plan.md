@@ -770,7 +770,7 @@ Stop the active item and preserve the last valid baseline when:
 - Viewer stability requires sending an unbounded graph;
 - semantic grouping would require an unsupported business or runtime inference;
 - a cache cleanup cannot prove ownership of the files it deletes;
-- a new dependency breaks Node 20/22, clean-room packaging, or a supported host;
+- a new dependency breaks Node 22/24, clean-room packaging, or a supported host;
 - the target repository would be executed without a separate explicit contract;
 - source, credentials, prompts, raw logs, or private reasoning would enter a
   portable artifact.

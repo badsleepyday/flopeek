@@ -84,7 +84,23 @@ function parsePorcelainV2(output) {
   return { branch, revision, dirty };
 }
 
+function notRepositoryMetadata() {
+  return {
+    branch: "not-a-git-repository",
+    revision: null,
+    shallow: null,
+    dirty: null,
+    availability: "not-a-repository",
+    reason: "Git metadata is unavailable because this directory is not a readable Git repository.",
+  };
+}
+
 function readGitMetadata(root) {
+  // `git -C <root> status` walks parent directories before reporting this
+  // same result. Avoid spawning a synchronous process for every scan when
+  // neither the root nor an ancestor has a Git marker; gitMarker follows the
+  // same discovery boundary and also supports worktree marker files.
+  if (!gitMarker(root)) return notRepositoryMetadata();
   try {
     const output = execFileSync("git", ["-C", root, "status", "--porcelain=v2", "--branch"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     const parsed = parsePorcelainV2(output);
@@ -100,7 +116,7 @@ function readGitMetadata(root) {
     if (detail.toLowerCase().includes("dubious ownership") || detail.toLowerCase().includes("safe.directory")) {
       return { branch: "git-metadata-unavailable", revision: null, shallow: null, dirty: null, availability: "unavailable", reason: "Git metadata is unavailable because the repository is not trusted by the current Git safe-directory policy." };
     }
-    return { branch: "not-a-git-repository", revision: null, shallow: null, dirty: null, availability: "not-a-repository", reason: "Git metadata is unavailable because this directory is not a readable Git repository." };
+    return notRepositoryMetadata();
   }
 }
 

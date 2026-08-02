@@ -32,6 +32,25 @@ function showcaseParameters() {
   return { id: query.get("showcase"), flowId: query.get("flow") };
 }
 
+function developerModeEnabled() {
+  return new URLSearchParams(window.location.search).get("developer") === "1";
+}
+
+function canonicalIdentitySection(packet) {
+  const identity = packet?.identity;
+  if (!identity) return "";
+  const parents = identity.parents?.length
+    ? `<ul class="rule-list">${identity.parents.map((parent) => `<li><strong>${escapeHtml(parent.parentLegacyId || parent.parentUid)}</strong><br><small>${escapeHtml(parent.relation)} · ${escapeHtml(parent.source)}</small></li>`).join("")}</ul>`
+    : "<p class='muted'>No incoming canonical relationship is recorded.</p>";
+  const history = identity.history?.length
+    ? `<ul class="rule-list">${identity.history.map((revision) => `<li><strong>v${escapeHtml(revision.firstGraphVersion)}${revision.lastGraphVersion === null ? " · current" : `–v${escapeHtml(revision.lastGraphVersion)}`}</strong><br><span>${escapeHtml(revision.qualifiedName || revision.displayName || revision.path || identity.nodeUid)}</span><br><small>${escapeHtml(revision.revisionHash)}</small></li>`).join("")}</ul>`
+    : "<p class='muted'>No canonical revision history is available.</p>";
+  const stableContext = packet.contextRef
+    ? `<div class="button-row"><button id="copy-context-ref-v2">Copy stable Context Ref</button></div><div class="node-path">${escapeHtml(packet.contextRef)}</div>`
+    : "";
+  return `<div class="detail-section"><h3>Canonical identity</h3><p><strong>Stable ID</strong><br><span class="node-path">${escapeHtml(identity.nodeUid)}</span></p><p><strong>Legacy ID</strong><br><span class="node-path">${escapeHtml(identity.legacyId || "not assigned")}</span></p><p><strong>Canonical owner</strong><br><span class="node-path">${escapeHtml(identity.ownerUid || "none")}</span></p><p><strong>Semantic hash</strong><br><span class="node-path">${escapeHtml(identity.semanticHash)}</span></p><p><strong>Revision hash</strong><br><span class="node-path">${escapeHtml(identity.revisionHash || "none")}</span></p>${developerModeEnabled() ? `<p><strong>Local node PK</strong><br>${escapeHtml(identity.nodePk)}</p>` : ""}${stableContext}</div><div class="detail-section"><h3>All parents (${escapeHtml(identity.catalog?.parentTotal || identity.parents.length)})</h3>${parents}</div><div class="detail-section"><h3>Identity history (${escapeHtml(identity.catalog?.revisionTotal || identity.history.length)})</h3>${history}${identity.catalog?.truncated ? "<p class='muted'>This bounded identity response is truncated.</p>" : ""}</div>`;
+}
+
 async function copyText(value, message) {
   await navigator.clipboard.writeText(value);
   toast(message);
@@ -1538,13 +1557,15 @@ function renderFlowLensInspector(lens) {
 }
 
 async function renderRawInspector(id) {
-  const [{ node, incoming, outgoing, relatedTests, agentEvidenceTraces }, contextPacket] = await Promise.all([
+  const [{ node, incoming, outgoing, relatedTests, agentEvidenceTraces }, contextPacket, identityPacket] = await Promise.all([
     request(`/api/node?id=${encodeURIComponent(id)}`),
     request(`/api/context-card?id=${encodeURIComponent(id)}`),
+    request(`/api/node-identity?id=${encodeURIComponent(id)}`).catch(() => null),
   ]);
   const contextCard = contextPacket.card;
+  const identitySection = canonicalIdentitySection(identityPacket);
   const evidence = node.evidence?.range ? `${node.evidence.file}:${node.evidence.range.start.line}` : node.evidence?.file || node.path || "not available";
-  $("#inspector").innerHTML = `<div class="node-kicker">${escapeHtml(node.type)} · ${escapeHtml(node.feature || node.domain)}</div><h2 class="node-title">${escapeHtml(node.label)}</h2>${node.path ? `<div class="node-path">${escapeHtml(node.path)}</div>` : ""}<div class="detail-section first-section"><h3>Detected technical responsibility</h3><p>${escapeHtml(node.detectedResponsibility)}</p></div>${node.methods?.length ? `<div class="detail-section"><h3>Detected methods</h3><div class="method-chips">${node.methods.map((method) => `<span class="method-chip">${escapeHtml(method)}()</span>`).join("")}</div></div>` : ""}<div class="detail-section"><h3>Incoming connections</h3>${connectionList(incoming)}</div><div class="detail-section"><h3>Outgoing connections</h3>${connectionList(outgoing)}</div><div class="detail-section"><h3>Related tests</h3>${connectionList(relatedTests)}</div>${traceHistorySection(agentEvidenceTraces, "node")}<div class="detail-section"><h3>Human-verified description</h3><textarea id="description-input" placeholder="Describe why this component exists, in your own words...">${escapeHtml(node.manualDescription || "")}</textarea><button class="save-description" id="save-description">Save description</button></div><div class="detail-section"><h3>Analysis evidence</h3><p>Parser: ${escapeHtml(node.analysis?.parser || "unknown")}<br>Confidence: ${escapeHtml(node.analysis?.confidence || "unknown")}<br>Source: ${escapeHtml(evidence)}</p></div>`;
+  $("#inspector").innerHTML = `<div class="node-kicker">${escapeHtml(node.type)} · ${escapeHtml(node.feature || node.domain)}</div><h2 class="node-title">${escapeHtml(node.label)}</h2>${node.path ? `<div class="node-path">${escapeHtml(node.path)}</div>` : ""}<div class="detail-section first-section"><h3>Detected technical responsibility</h3><p>${escapeHtml(node.detectedResponsibility)}</p></div>${identitySection}${node.methods?.length ? `<div class="detail-section"><h3>Detected methods</h3><div class="method-chips">${node.methods.map((method) => `<span class="method-chip">${escapeHtml(method)}()</span>`).join("")}</div></div>` : ""}<div class="detail-section"><h3>Incoming connections</h3>${connectionList(incoming)}</div><div class="detail-section"><h3>Outgoing connections</h3>${connectionList(outgoing)}</div><div class="detail-section"><h3>Related tests</h3>${connectionList(relatedTests)}</div>${traceHistorySection(agentEvidenceTraces, "node")}<div class="detail-section"><h3>Human-verified description</h3><textarea id="description-input" placeholder="Describe why this component exists, in your own words...">${escapeHtml(node.manualDescription || "")}</textarea><button class="save-description" id="save-description">Save description</button></div><div class="detail-section"><h3>Analysis evidence</h3><p>Parser: ${escapeHtml(node.analysis?.parser || "unknown")}<br>Confidence: ${escapeHtml(node.analysis?.confidence || "unknown")}<br>Source: ${escapeHtml(evidence)}</p></div>`;
   const resolutionNote = state.contextResolution?.requestedRef === contextCard.contextRef || state.contextResolution?.resolvedRef === contextCard.contextRef
     ? `<p><strong>Resolution:</strong> ${escapeHtml(state.contextResolution.status)}${state.contextResolution.reason ? ` — ${escapeHtml(state.contextResolution.reason)}` : ""}</p>`
     : "";
@@ -1580,6 +1601,12 @@ async function renderRawInspector(id) {
     await navigator.clipboard.writeText(contextCard.contextRef);
     toast("Context reference copied.");
   });
+  if (identityPacket?.contextRef) {
+    $("#copy-context-ref-v2").addEventListener("click", async () => {
+      await navigator.clipboard.writeText(identityPacket.contextRef);
+      toast("Stable Context Ref copied.");
+    });
+  }
   $("#copy-context-json").addEventListener("click", async () => {
     await navigator.clipboard.writeText(JSON.stringify(contextPacket, null, 2));
     toast("Context Card JSON copied.");

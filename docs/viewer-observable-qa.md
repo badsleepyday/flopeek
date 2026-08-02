@@ -33,7 +33,7 @@ certification.
 
 The current product-code evidence target is commit
 `beccef32af9b0a978d4463a90806aeb66a8f1a28`.
-Its [six-job CI matrix](https://github.com/badsleepyday/flopeek/actions/runs/30161751505)
+Its [six-job CI matrix](https://github.com/badsleepyday/flopeek-core/actions/runs/30161751505)
 passed on Ubuntu, Windows, and macOS with Node 20 and 22, including the
 repository-owned Viewer, package, and clean-room MCP checks.
 

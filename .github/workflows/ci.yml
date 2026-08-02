@@ -3,26 +3,80 @@ name: Verify
 on:
   push:
   pull_request:
+  workflow_call:
+    inputs:
+      source_sha:
+        description: Exact source commit to verify.
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
+  rust-msrv:
+    name: Rust MSRV 1.88.0
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-08-02
+        with:
+          toolchain: 1.88.0
+      - run: cargo check --locked --manifest-path native/flopeek-core/Cargo.toml
+
   test:
     name: ${{ matrix.os }} / Node ${{ matrix.node }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        node: [20, 22]
+        node: [22, 24]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: ${{ matrix.node }}
           cache: npm
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+      - id: toolchain-contract
+        shell: pwsh
+        run: |
+          $channel = (Select-String -Path rust-toolchain.toml -Pattern '^\s*channel\s*=\s*"([^"]+)"\s*$').Matches.Groups[1].Value
+          if (-not $channel) { throw 'rust-toolchain.toml has no exact channel.' }
+          "rust=$channel" >> $env:GITHUB_OUTPUT
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable 2026-08-02
+        with:
+          toolchain: ${{ steps.toolchain-contract.outputs.rust }}
+          components: rustfmt, clippy
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.26.4'
+          cache: false
       - run: npm ci
+      - run: npm run verify:toolchains
+      - run: npm run check:go-stdlib
+      - run: cargo fmt --check --manifest-path native/flopeek-core/Cargo.toml
+      - run: cargo clippy --locked --manifest-path native/flopeek-core/Cargo.toml -- -D warnings
+      - run: cargo test --locked --manifest-path native/flopeek-core/Cargo.toml
+      - run: npm run test:native-core
+      - run: npm run verify:native-adapter-parity -- --output native-adapter-parity.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: adapter-parity-${{ matrix.os }}-node-${{ matrix.node }}
+          path: native-adapter-parity.json
+          if-no-files-found: error
+          retention-days: 14
+      - run: cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --version
+      - run: cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-facts .
+      - run: cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-graph .
       - run: node scripts/verify-branch-name.js
       - run: npm run check:support
       - run: npm run check:docs

@@ -1,6 +1,6 @@
 {
   "name": "flopeek",
-  "version": "0.2.1-beta.3",
+  "version": "0.2.1-beta.4",
   "private": false,
   "license": "Apache-2.0",
   "description": "Versioned change context for developers and coding agents.",
@@ -11,13 +11,13 @@
     "mcp",
     "static-analysis"
   ],
-  "homepage": "https://github.com/badsleepyday/flopeek#readme",
+  "homepage": "https://github.com/badsleepyday/flopeek-core#readme",
   "bugs": {
-    "url": "https://github.com/badsleepyday/flopeek/issues"
+    "url": "https://github.com/badsleepyday/flopeek-core/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/badsleepyday/flopeek.git"
+    "url": "git+https://github.com/badsleepyday/flopeek-core.git"
   },
   "type": "commonjs",
   "bin": {
@@ -47,6 +47,9 @@
     "benchmarks/renderer-projection-corpus.json",
     "benchmarks/semantic-flow-suggestions.json",
     "benchmarks/semantic-suggestion-feedback-contract.json",
+    "contracts/adapter-capabilities.json",
+    "contracts/go-stdlib-catalog.json",
+    "packaging/native-rollout-evidence.json",
     "examples/commerce-showcase/",
     "docs/",
     "integrations/skills/flopeek/",
@@ -72,6 +75,7 @@
     "test:agent-comparison": "node --test test/unit/agent-comparison.test.js",
     "test:package": "node scripts/run-tests.js package",
     "test:public-source": "node scripts/run-tests.js public-source",
+    "test:native-core": "cargo fmt --check --manifest-path native/flopeek-core/Cargo.toml && cargo clippy --locked --manifest-path native/flopeek-core/Cargo.toml -- -D warnings && cargo test --locked --manifest-path native/flopeek-core/Cargo.toml && cargo build --release --locked --manifest-path native/flopeek-core/Cargo.toml && node scripts/smoke-native-release.js && npm run verify:native-js-parser-parity && node --test test/unit/core-client.test.js test/unit/native-protocol-client.test.js test/unit/native-rollout-gate.test.js test/unit/core-mode.test.js test/unit/core-cli-mode.test.js test/unit/profile-native-core-client.test.js test/unit/shadow-core-client.test.js test/unit/structural-fact-adapter-host.test.js test/unit/native-js-facts-comparison.test.js test/unit/native-adapter-parity.test.js test/unit/native-activation-surfaces.test.js test/unit/native-candidate-install.test.js test/unit/native-failure-recovery.test.js test/unit/go-stdlib-catalog.test.js test/unit/native-mcp-handle.test.js test/unit/native-server-handle.test.js test/unit/native-surface-contract.test.js test/unit/verify-native-core-parity.test.js",
     "test:clean-room": "node scripts/verify-clean-room.js",
     "test:showcase": "node scripts/run-tests.js showcase",
     "evaluate:handoff-quality": "node src/handoff-quality-benchmark.js",
@@ -80,8 +84,13 @@
     "update:orientation-evidence": "node scripts/update-orientation-evidence.js",
     "audit:package": "node scripts/verify-package.js",
     "verify:clean-room": "node scripts/verify-clean-room.js",
+    "verify:clean-room-native-platform": "node scripts/verify-clean-room-native-platform.js",
     "verify:npm-publication": "node scripts/verify-npm-publication.js",
+    "verify:github-release-preflight": "node scripts/verify-github-release-preflight.js",
     "verify:github-release": "node scripts/verify-github-release.js",
+    "verify:published-release": "node scripts/verify-published-release.js",
+    "build:native-rollout-evidence": "node scripts/build-native-rollout-evidence.js",
+    "build:native-release-manifest": "node scripts/build-native-release-manifest.js",
     "update:clean-room-evidence": "node scripts/verify-clean-room.js --output packaging/evidence/clean-room-current.json",
     "evaluate:agent-comparison": "node src/cli.js evaluate agent-comparison . --cases benchmarks/orientation-cases.json --runs benchmarks/agent-comparison-runs.template.json",
     "showcase": "node src/cli.js showcase",
@@ -94,16 +103,31 @@
     "check:docs": "node scripts/generate-doc-assets.js --check",
     "check:document-contracts": "node scripts/check-document-contracts.js",
     "verify:core-baseline": "node scripts/verify-core-baseline.js",
+    "verify:native-js-parser-parity": "node scripts/compare-native-js-facts.js --require-exact",
+    "verify:native-adapter-parity": "node scripts/verify-native-adapter-parity.js",
+    "verify:native-core-parity": "node scripts/verify-native-core-parity.js",
+    "verify:toolchains": "node scripts/verify-toolchains.js",
     "update:core-baseline": "node scripts/verify-core-baseline.js --update",
     "test:docs": "node --test test/unit/documentation-assets.test.js",
     "check:support": "node scripts/generate-support.js --check",
+    "generate:go-stdlib": "node scripts/generate-go-stdlib-catalog.js",
+    "check:go-stdlib": "node scripts/generate-go-stdlib-catalog.js --check",
     "benchmark": "node src/cli.js benchmark .",
+    "benchmark:native-rust-shadow": "node scripts/benchmark-native-rust-shadow.js",
+    "benchmark:native-incremental": "node scripts/benchmark-native-core-client.js",
+    "benchmark:native-incremental-legacy": "node scripts/benchmark-native-incremental.js",
+    "profile:native-incremental": "node scripts/profile-native-core-client.js",
+    "capture:native-database-open-evidence": "node scripts/capture-native-database-open-evidence.js",
     "test:real-corpus": "node src/real-repository-corpus.js",
+    "verify:native-real-corpus": "node scripts/verify-native-real-corpus.js",
+    "verify:native-candidate": "node scripts/run-native-candidate-evidence.js",
+    "verify:native-surfaces": "node scripts/verify-native-surfaces.js",
+    "verify:native-soak": "node --expose-gc scripts/verify-native-soak.js",
     "qa:viewer-cancellation": "node scripts/viewer-cancellation-fixture.js",
     "prepublishOnly": "npm run verify:npm-publication"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "overrides": {
     "@hono/node-server": "2.0.11"
@@ -120,5 +144,13 @@
     "tree-sitter-rust": "^0.21.0",
     "typescript": "^5.9.3",
     "zod": "^4.4.3"
+  },
+  "optionalDependencies": {
+    "@flopeek/native-darwin-arm64": "0.2.1-beta.4",
+    "@flopeek/native-darwin-x64": "0.2.1-beta.4",
+    "@flopeek/native-linux-arm64-gnu": "0.2.1-beta.4",
+    "@flopeek/native-linux-x64-gnu": "0.2.1-beta.4",
+    "@flopeek/native-win32-arm64": "0.2.1-beta.4",
+    "@flopeek/native-win32-x64": "0.2.1-beta.4"
   }
 }

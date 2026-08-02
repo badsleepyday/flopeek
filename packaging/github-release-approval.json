@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "flopeek-github-release-approval/v1",
+  "schemaVersion": "flopeek-github-release-approval/v2",
   "status": "not-approved",
   "release": null,
   "evidence": null,

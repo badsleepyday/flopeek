@@ -304,6 +304,6 @@ npm run audit:package
 npm run verify:clean-room
 ```
 
-Flopeek currently requires Node.js 20 or later. The source repository is
+Flopeek currently requires Node.js 22 or later. The source repository is
 public, and `flopeek@0.2.1-beta.3` is available through the npm `beta` channel.
 GitHub release tags remain a separate, evidence-gated release decision.

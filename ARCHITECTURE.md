@@ -67,9 +67,12 @@ Status: `current`
   `<type>/<change-name>` SDLC branch names and rejects tool, vendor, account, or
   agent identity prefixes before running the remaining source and package gates.
 - Public Core releases are created from immutable tags on `main` only after the
-  source-owned GitHub release approval validates the exact tag/package identity,
-  recorded release evidence, and—outside alpha—the published npm dist-tag. The
-  approval record is an owner attestation with evidence references, not an
+  source-owned GitHub release approval validates the SHA-256 digest of an exact
+  release manifest. That manifest binds the main tarball, rollout-evidence
+  bytes, every native platform tarball, and every native binary digest to the
+  tag/package/source identity. Outside alpha, the published npm dist-tag is
+  validated as well. The approval record is an owner attestation with evidence
+  references, not an
   automated proof of human/provider independence. A separate private overlay
   consumes those tagged Core versions and must not copy Core source or become a
   second Core source of truth.
@@ -288,7 +291,16 @@ The serialized graph uses schema version 5:
 }
 ```
 
-`analysis.adapterCapabilities` contains the versioned `flopeek-adapter-capabilities/v1` registry. It is deterministic general adapter metadata and does not vary with the scanned repository. `analysis.coverage` remains separate: it reports what happened while parsing this repository and is not runtime coverage. The same registry identity is exposed through `/api/capabilities` and `get_agent_context`.
+`analysis.adapterCapabilities` contains the versioned
+`flopeek-adapter-capabilities/v2` compatibility registry. It is deterministic
+product-level metadata and does not vary with the scanned repository.
+`analysis.executionAdapterCapabilities` reports the implementation actually
+executing that graph. For example, JavaScript C# execution requires the .NET
+Roslyn helper while the native C# parser is bundled; the compatibility registry
+does not change, so compatibility digests remain stable. `analysis.coverage`
+remains separate: it reports what happened while parsing this repository and is
+not runtime coverage. Agent context and capability surfaces expose both
+registries.
 
 `schemaVersion` identifies the file format. `projectId` identifies the local project context. `state.graphVersion` identifies one material static graph state within that project, while `generatedAt` only records a scan time. The material fingerprint includes the deterministic graph payload and source content/revision evidence, excluding transient refresh/cache fields. Thus a source-only edit can advance the graph version while its delta correctly reports no topology change. See [ADR-002](docs/adr/ADR-002-graph-version.md).
 
@@ -583,10 +595,68 @@ explicit unavailable result.
 - agent evidence trace contracts in `test/unit/agent-evidence-trace.test.js`;
 - relationship precision/recall fixture gate in `test/fixture-corpus.test.js`;
 - pinned external-repository audit through `src/real-repository-corpus.js`;
-- GitHub Actions for Node 20/22 pull-request tests;
+- GitHub Actions for Node 22/24 pull-request tests;
 - scheduled and manual external corpus workflow.
 
 The scanner integration suite is large and should be split into faster feedback lanes as the architecture is modularized.
+
+### Native-core strangler boundary
+
+The current `flopeek-core-client/v6` facade gives an unbounded scan coordinator
+one explicit `scan`/`refresh`/`getLastCompleteGraph`/`materializeGraph`/`close`
+lifecycle. Native
+mode uses Rust+SQLite as its sole graph and core-query authority; it cannot
+construct or accept `JsCoreClient`. On the strict source path, Rust owns
+inventory, parsing for every rollout-required adapter (including bundled Go),
+import resolution, source hashes, and
+structural-record ordering, batch envelope, entry metadata, and graph assembly;
+bounded Project Overview selection and its static agent-context evidence are
+also assembled by Rust. Node may append only explicitly local runtime evidence,
+cache audit, semantic feedback, and trace metadata; it must not rebuild a
+native view or silently substitute JavaScript static context.
+it rejects unpromoted adapters instead of invoking a JavaScript parser. The
+ephemeral path performs the same work in one Rust JSONL session without SQLite
+or repository metadata. `native-experimental` is the explicit dogfood request;
+the rollout-gated `native` request records a visible JavaScript fallback when
+it cannot select native. Normal `native` activation loads an immutable bundled
+rollout packet and probes the installed platform package; selection still
+requires an eligible five-repository gate and an exact package/protocol/adapter
+contract/platform-binary binding. MCP uses handle-only graphs for native-safe
+tools and one lazy verified `materializeGraph` snapshot per graph handle for
+legacy tools. The broad synchronous HTTP surface deliberately requests a
+materialized graph until every route has an async native boundary; its native
+cache/capability/delta routes do not read `graph.json`. MCP and HTTP share the
+same client instance with their coordinator. Legacy delivery and extension
+calls remain separate adapters. `native/flopeek-core --native-serve` exposes the persistent
+`flopeek-native-protocol/v1` JSONL bootstrap with request IDs and typed errors.
+`StructuralFactBatch/v1` has no source-body transport. A separate bounded
+manifest-only `sourceBatch` may transfer current changed UTF-8 text once to the
+JavaScript parser, then is discarded. It is accepted only when the inventory
+size and nanosecond modification stamp still match the file; otherwise the
+parser rereads disk. It is not accepted by StructuralFactBatch, SQLite, or the
+record cache. The native incremental coordinator uses one such
+session for its manifest, JavaScript-record load, and record-store requests;
+it does not turn that per-scan session into a cross-command daemon. Its
+`StructuralFactBatch/v1` receipt is shadow-only:
+it neither emits public IDs nor promotes a public graph. After an exact native
+structural shadow comparison, an explicit dogfood option may persist that
+non-public projection through the native SQLite building/complete lifecycle;
+the persisted SHA-256 projection digest and structural-facts fingerprint are
+cache evidence only. Native shadow queries now cover related tests, current and
+retained change impact, Flow Lens, node/flow Context Cards, Context Ref
+resolution, adjacent public deltas, and changed contexts. Their exact corpus
+fixtures are compatibility gates, not a public cutover: CLI, HTTP, MCP, and
+Viewer still receive the JavaScript CoreClient result. SQLite delta retention is
+manual and dry-run-first; it deletes neither a graph version nor the latest
+adjacent delta. Native historical impact may read only a complete SQLite version
+whose persisted projection digest still verifies; it is cache evidence, not a
+public cache cutover. The native queries remain opt-in until their async
+protocol boundary, exact corpus parity, prior graph/delta behavior from SQLite
+where applicable, and explicit fallback behavior are promoted through the
+CoreClient contract. See
+[ADR-024](docs/adr/ADR-024-native-core-strangler-contract.md) for the required
+parity, authority, and rollback gates before native graph assembly or SQLite
+promotion can become observable.
 
 ### Evidence boundaries
 
@@ -1100,7 +1170,8 @@ Do not report incremental parser speed as total end-to-end live-update latency. 
 10. Expose planned overlays and Plan Refs through CLI, HTTP, MCP, and an explicit opt-in Viewer Continue mode with exact non-redirecting resolution, append-only manual reconciliation, deterministic bounded comparison, read-only divergence, and a bounded agent continuation packet (current).
 11. Complete cross-surface dogfooding and stabilization.
 12. Preserve the JavaScript core as the dogfooding and compatibility oracle while a native core matches the pinned static-fact contract.
-13. Evaluate storage backend and permissioned integrations at measured scale.
+13. Follow [ADR-024](docs/adr/ADR-024-native-core-strangler-contract.md): keep public JavaScript IDs and Context Ref semantics authoritative, move one bounded responsibility through shadow parity at a time, and promote SQLite only through a complete validated transaction.
+14. Evaluate additional storage backend changes and permissioned integrations only after the native-core promotion gates are measured.
 
 ## Architecture invariants
 

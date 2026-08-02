@@ -43,6 +43,7 @@ const { getActiveBranchGitEvidence: buildActiveBranchGitEvidence } = require("./
 const { getGitContextContinuity: buildGitContextContinuity } = require("./git-context-continuity");
 const { getGraphDelta } = require("./graph-delta");
 const { getRelatedImplementations: buildRelatedImplementations } = require("./related-implementations");
+const { compareCollation } = require("./collation");
 
 function optionValue(options, key, fallback = null) {
   if (options && typeof options.get === "function") return options.get(key) || fallback;
@@ -127,7 +128,7 @@ function aggregateProjection(graph, sourceNodes, mode, scope, keyForNode = featu
     groupMap.get(key).push(node);
   }
   const memberToSummary = new Map();
-  const nodes = [...groupMap.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([key, members]) => {
+  const nodes = [...groupMap.entries()].sort(([left], [right]) => compareCollation(left, right)).map(([key, members]) => {
     const id = options.idForKey ? options.idForKey(key) : `${options.idPrefix || "feature"}:${key}`;
     members.forEach((member) => memberToSummary.set(member.id, id));
     const types = [...new Set(members.map((member) => member.type))].sort();
@@ -341,7 +342,7 @@ function projectionNodeOrder(focusId) {
   return (left, right) => {
     if (left.id === focusId) return -1;
     if (right.id === focusId) return 1;
-    return left.id.localeCompare(right.id);
+    return compareCollation(left.id, right.id);
   };
 }
 
@@ -353,7 +354,7 @@ function boundedProjection(projection, options = {}) {
   const nodeIds = new Set(nodes.map((node) => node.id));
   const allEdges = projection.edges
     .filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target))
-    .sort((left, right) => String(left.id || `${left.source}\u0000${left.target}\u0000${left.type}`).localeCompare(String(right.id || `${right.source}\u0000${right.target}\u0000${right.type}`)));
+    .sort((left, right) => compareCollation(String(left.id || `${left.source}\u0000${left.target}\u0000${left.type}`), String(right.id || `${right.source}\u0000${right.target}\u0000${right.type}`)));
   const edges = allEdges.slice(0, maxEdges);
   const omittedNodes = allNodes.slice(maxNodes).map((node) => node.id);
   const omittedEdges = allEdges.slice(maxEdges).map((edge) => edge.id || `${edge.source}\u0000${edge.target}\u0000${edge.type}`);
@@ -418,18 +419,15 @@ function agentEntryInventory(graph) {
       })),
     },
     unsupported: {
-      packageScriptReasonCounts: Object.fromEntries([...reasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right))),
-      djangoManagementCommandReasonCounts: Object.fromEntries([...frameworkCommandReasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right))),
-      nodeCronScheduleReasonCounts: Object.fromEntries([...scheduleReasonCounts.entries()].sort(([left], [right]) => left.localeCompare(right))),
+      packageScriptReasonCounts: Object.fromEntries([...reasonCounts.entries()].sort(([left], [right]) => compareCollation(left, right))),
+      djangoManagementCommandReasonCounts: Object.fromEntries([...frameworkCommandReasonCounts.entries()].sort(([left], [right]) => compareCollation(left, right))),
+      nodeCronScheduleReasonCounts: Object.fromEntries([...scheduleReasonCounts.entries()].sort(([left], [right]) => compareCollation(left, right))),
     },
     limitations: inventory.limitations || [],
   };
 }
 
-function createAgentContext(graph, projection, mode, scope, focusId) {
-  const derivedCache = listArtifactCacheAudit(graph.project.root, graph);
-  const derivedCacheEvents = (derivedCache.events || []).slice(0, 10);
-  const derivedCacheEventTotal = derivedCache.eventCatalog?.total || derivedCacheEvents.length;
+function createAgentContextStatic(graph, projection, mode, scope, focusId) {
   const projectionMeaning = mode === "overview"
     ? "Each visible node is a feature summary that aggregates source nodes. It is not a source file, runtime service, or execution step."
     : mode === "requests"
@@ -468,6 +466,7 @@ function createAgentContext(graph, projection, mode, scope, focusId) {
       "Files marked inventory-only have no inferred dependencies or flows.",
     ],
     adapterCapabilities: graph.analysis.adapterCapabilities,
+    executionAdapterCapabilities: graph.analysis.executionAdapterCapabilities,
     capabilities: graph.analysis.capabilities,
     calls: graph.analysis.calls,
     resolution: graph.analysis.resolution,
@@ -496,6 +495,33 @@ function createAgentContext(graph, projection, mode, scope, focusId) {
       portableFormats: ["json", "markdown"],
       foreignImport: { access: "read-only", trust: "foreign-unverified", automaticAdoption: false },
     },
+    trustAnalytics: {
+      schemaVersion: TRUST_ANALYTICS_SCHEMA,
+      httpEndpoint: "/api/trust-analytics",
+      mcpTool: "get_trust_analytics",
+      purpose: "Inspect evidence availability, provenance, and freshness without collapsing unlike evidence classes into a truth score.",
+      compositeScore: false,
+    },
+    productProof: {
+      schemaVersion: PRODUCT_PROOF_SCHEMA,
+      httpEndpoint: "/api/product-proof",
+      mcpTool: "get_product_proof",
+      purpose: "Inspect bounded public benchmark evidence, current-repository facts, feature proof surfaces, reproduction commands, and claim boundaries.",
+    },
+  };
+}
+
+// Local audit stores are intentionally outside the native graph authority.
+// They enrich a static context already assembled by Rust (or by the JS core),
+// but never select graph evidence, derive topology, or alter a projection.
+function attachLocalAgentContext(graph, staticContext, scope) {
+  const derivedCache = listArtifactCacheAudit(graph.project.root, graph);
+  const derivedCacheEvents = (derivedCache.events || []).slice(0, 10);
+  const derivedCacheEventTotal = derivedCache.eventCatalog?.total || derivedCacheEvents.length;
+  const { trustAnalytics, productProof, ...staticEvidence } = staticContext;
+  if (staticEvidence.cache === null && graph.analysis.cache === undefined) staticEvidence.cache = undefined;
+  return {
+    ...staticEvidence,
     runtimeEvidence: runtimeEvidenceSummary(graph.project.root, graph),
     derivedCache: {
       schemaVersion: derivedCache.schemaVersion,
@@ -517,20 +543,13 @@ function createAgentContext(graph, projection, mode, scope, focusId) {
     semanticSuggestions: semanticSuggestionsForGraph(graph, scope),
     semanticSuggestionFeedback: semanticSuggestionFeedbackPolicy(graph.project.root, graph),
     agentEvidenceTrace: agentEvidenceTracePolicy(graph.project.root, graph),
-    trustAnalytics: {
-      schemaVersion: TRUST_ANALYTICS_SCHEMA,
-      httpEndpoint: "/api/trust-analytics",
-      mcpTool: "get_trust_analytics",
-      purpose: "Inspect evidence availability, provenance, and freshness without collapsing unlike evidence classes into a truth score.",
-      compositeScore: false,
-    },
-    productProof: {
-      schemaVersion: PRODUCT_PROOF_SCHEMA,
-      httpEndpoint: "/api/product-proof",
-      mcpTool: "get_product_proof",
-      purpose: "Inspect bounded public benchmark evidence, current-repository facts, feature proof surfaces, reproduction commands, and claim boundaries.",
-    },
+    trustAnalytics,
+    productProof,
   };
+}
+
+function createAgentContext(graph, projection, mode, scope, focusId) {
+  return attachLocalAgentContext(graph, createAgentContextStatic(graph, projection, mode, scope, focusId), scope);
 }
 
 function getAgentBootstrap(graph, options = {}) {
@@ -617,10 +636,59 @@ function findNodes(graph, options = {}) {
   const results = graph.nodes
     .filter((node) => isVisibleInScope(node, scope))
     .filter((node) => [node.label, node.path, node.feature, node.domain, node.type].filter(Boolean).join(" ").toLowerCase().includes(text))
-    .sort((left, right) => (typeRank[left.type] ?? 99) - (typeRank[right.type] ?? 99) || left.label.localeCompare(right.label))
+    .sort((left, right) => (typeRank[left.type] ?? 99) - (typeRank[right.type] ?? 99) || compareCollation(left.label, right.label))
     .slice(0, 12)
     .map(memberSummary);
   return { query: text, scope, results };
+}
+
+function attachNodeExtensions(graph, detail) {
+  if (!detail) return null;
+  return {
+    ...detail,
+    agentEvidenceTraces: listStoredAgentEvidenceTraces(graph.project.root, graph, { contextId: detail.node.id, limit: 10 }),
+  };
+}
+
+// The native core owns static projection selection, hierarchy aggregation,
+// bounds, and flow catalog construction.  This adapter deliberately receives
+// an already bounded public view and only attaches local audit/cache metadata
+// that has no graph-authority equivalent in SQLite yet.
+function attachNativeProjectOverview(graph, coreView) {
+  if (!coreView || coreView.schemaVersion !== "flopeek-native-view-projection-core/v1" || !coreView.view || !coreView.display) {
+    throw new TypeError("Native core returned an invalid view projection.");
+  }
+  const { agentContextCore, ...nativeView } = coreView;
+  if (!agentContextCore || agentContextCore.schemaVersion !== "flopeek-agent-context/v1") {
+    throw new TypeError("Native core returned no static agent context.");
+  }
+  const { mode, scope, focusId } = nativeView.view;
+  const projection = {
+    nodes: nativeView.nodes,
+    edges: nativeView.edges,
+    sourceNodeCount: nativeView.view.sourceNodeCount,
+    hierarchy: nativeView.view.hierarchy,
+    display: nativeView.display,
+  };
+  // Keep the established artifact-audit contract without recomputing the
+  // projection.  The native result is the value persisted under the same key
+  // that the former JavaScript projector used, so cache hits remain a local
+  // transport optimization and never become a second graph authority.
+  if (mode !== "dependencies") {
+    getOrCreateArtifact(graph.project.root, graph, "feature-summary", {
+      mode,
+      scope,
+      level: nativeView.view.level,
+      focusId,
+      semanticHierarchyVersion: 2,
+    }, () => projection, { dependencyPaths: ["*"] });
+  }
+  const staticContext = agentContextCore;
+  return {
+    ...nativeView,
+    schemaVersion: VIEW_PROJECTION_SCHEMA,
+    aiContext: attachLocalAgentContext(graph, staticContext, scope),
+  };
 }
 
 function getNodeDetails(graph, id) {
@@ -630,13 +698,12 @@ function getNodeDetails(graph, id) {
   const detailFor = (edge, nodeId) => ({ ...edge, node: byId.get(nodeId) });
   const incoming = graph.edges.filter((edge) => edge.target === node.id).map((edge) => detailFor(edge, edge.source)).filter((item) => item.node);
   const outgoing = graph.edges.filter((edge) => edge.source === node.id).map((edge) => detailFor(edge, edge.target)).filter((item) => item.node);
-  return {
+  return attachNodeExtensions(graph, {
     node,
     incoming,
     outgoing,
     relatedTests: [...incoming, ...outgoing].filter((item) => item.node.type === "test"),
-    agentEvidenceTraces: listStoredAgentEvidenceTraces(graph.project.root, graph, { contextId: node.id, limit: 10 }),
-  };
+  });
 }
 
 function getContextCard(graph, id, format = "json") {
@@ -646,7 +713,10 @@ function getContextCard(graph, id, format = "json") {
   return createContextPacket(card, format);
 }
 
-function attachFlowVerification(graph, lens) {
+// Extensions decorate an already-assembled static Flow Lens. Keeping this
+// separate from buildFlowProjection lets the Rust core own the deterministic
+// lens while legacy local metadata remains an adapter over the public graph.
+function attachFlowExtensions(graph, lens) {
   if (!lens) return null;
   const semanticSuggestion = createSemanticFlowSuggestion(graph, lens);
   const semanticFeedback = resolveSemanticSuggestionFeedback(graph.project.root, graph, semanticSuggestion);
@@ -681,6 +751,40 @@ function buildFlowContextCard(graph, flowId, scope = "application", options = {}
 function getFlowContextCard(graph, flowId, format = "json", scope = "application", options = {}) {
   const card = buildFlowContextCard(graph, flowId, scope, options);
   return card ? createContextPacket(card, format) : null;
+}
+
+// Rust owns the static Flow Context Card for the native core. This adapter
+// intentionally adds only local human/agent metadata; it must not rebuild the
+// Flow Lens, related-test selection, card bounds, or any graph-derived field.
+function attachNativeFlowContextCard(graph, coreCard, lens) {
+  if (!coreCard || coreCard.schemaVersion !== "flopeek-context/v1" || coreCard.kind !== "flow") {
+    throw new TypeError("Native core returned an invalid Flow Context Card.");
+  }
+  if (!lens?.flow?.id || lens.flow.id !== coreCard.flow?.id) {
+    throw new TypeError("Native core Flow Context Card does not match its Flow Lens.");
+  }
+  const verification = lens.verification || null;
+  return {
+    ...coreCard,
+    semanticSuggestion: lens.semanticSuggestion || null,
+    agentSemanticProposal: lens.agentSemanticProposal || null,
+    semanticFeedback: lens.semanticFeedback || null,
+    flowInterface: lens.flowInterface || null,
+    verification,
+    humanVerification: verification?.record ? {
+      title: verification.record.title,
+      description: verification.record.description,
+      owner: verification.record.owner,
+      risk: verification.record.risk,
+      questions: verification.record.questions,
+      verifiedBy: verification.record.verifiedBy,
+      verifiedAt: verification.record.verifiedAt,
+      sourceGraphVersion: verification.record.sourceGraphVersion,
+      status: verification.status,
+      knowledgeClass: "human-verified",
+    } : null,
+    unresolvedQuestions: lens.unresolvedQuestions,
+  };
 }
 
 function resolveContextRef(graph, contextRef) {
@@ -855,7 +959,7 @@ function getSemanticReviewQueue(graph, options = {}) {
       },
     };
   }).filter((item) => status === "all" || item.queueStatus === status)
-    .sort((left, right) => left.flow.title.localeCompare(right.flow.title) || left.flow.id.localeCompare(right.flow.id));
+    .sort((left, right) => compareCollation(left.flow.title, right.flow.title) || compareCollation(left.flow.id, right.flow.id));
   return {
     schemaVersion: "flopeek-semantic-review-queue/v1",
     status,
@@ -873,7 +977,7 @@ function getFlowProjection(graph, flowId, scope = "application", options = {}) {
   const lens = getOrCreateArtifact(graph.project.root, graph, "flow-projection", { flowId, scope, maxSteps }, () => buildFlowProjection(graph, flowId, scope, { maxSteps }), {
     dependencyPaths: (value) => (value?.steps || []).map((step) => step.node?.path).filter(Boolean),
   }).value;
-  return attachFlowVerification(graph, lens);
+  return attachFlowExtensions(graph, lens);
 }
 
 function recordAgentEvidenceTrace(graph, input) {
@@ -1006,7 +1110,7 @@ function getVerifiedSemanticMemory(graph, options = {}) {
       reason: resolution.reason,
     });
   }
-  records.sort((left, right) => Number(right.reusable) - Number(left.reusable) || right.verifiedAt.localeCompare(left.verifiedAt) || left.flow.id.localeCompare(right.flow.id));
+  records.sort((left, right) => Number(right.reusable) - Number(left.reusable) || compareCollation(right.verifiedAt, left.verifiedAt) || compareCollation(left.flow.id, right.flow.id));
   return {
     schemaVersion: "flopeek-verified-semantic-memory/v1",
     project: { projectId: graph.project.projectId, graphVersion: graph.state.graphVersion },
@@ -1265,7 +1369,7 @@ function historicalDeletedDependents(previousGraph, deletedPaths, currentNodesBy
       queue.push({ id: dependent.id, distance: current.distance + 1 });
     }
   }
-  return { deletedNodes: deletedNodes.sort((left, right) => left.path.localeCompare(right.path)), seeds, truncated: queue.length > 0 };
+  return { deletedNodes: deletedNodes.sort((left, right) => compareCollation(left.path, right.path)), seeds, truncated: queue.length > 0 };
 }
 
 function buildChangeImpact(graph, changedPaths, options = {}) {
@@ -1322,7 +1426,7 @@ function buildChangeImpact(graph, changedPaths, options = {}) {
   }
   const nodes = [...impacted.entries()]
     .map(([id, distance]) => impactNode(nodesById.get(id), distance, historicalDependentIds.has(id) ? "historical-dependent" : undefined))
-    .sort((left, right) => left.distance - right.distance || left.label.localeCompare(right.label));
+    .sort((left, right) => left.distance - right.distance || compareCollation(left.label, right.label));
   const recommendedTests = nodes.filter((node) => node.type === "test");
   const affectedEndpoints = nodes.filter((node) => node.kind === "endpoint");
   const dependencies = new Map();
@@ -1346,7 +1450,7 @@ function buildChangeImpact(graph, changedPaths, options = {}) {
   }
   const dependencyNodes = [...dependencies.entries()]
     .map(([id, distance]) => dependencyNode(nodesById.get(id), distance))
-    .sort((left, right) => left.distance - right.distance || left.label.localeCompare(right.label));
+    .sort((left, right) => left.distance - right.distance || compareCollation(left.label, right.label));
   return {
     changedPaths: paths,
     matchedPaths,
@@ -1382,6 +1486,7 @@ module.exports = {
   getCacheHygiene,
   getContextCard,
   getNodeDetails,
+  attachNodeExtensions,
   getRelatedImplementations,
   getProjectHome,
   getProductProof,
@@ -1396,7 +1501,9 @@ module.exports = {
   getChangedContexts,
   getFlowComparison,
   getFlowContextCard,
+  attachNativeFlowContextCard,
   getFlowProjection,
+  attachFlowExtensions,
   getFlowSuggestion,
   getFlowVerification,
   getVerifiedSemanticMemory,
@@ -1444,6 +1551,9 @@ module.exports = {
   exportHandoffWorkspace,
   importHandoffWorkspace,
   projectView,
+  attachNativeProjectOverview,
+  attachLocalAgentContext,
+  createAgentContextStatic,
   pruneDerivedArtifacts,
   recordAgentEvidenceTrace,
   recordAgentSemanticProposal,

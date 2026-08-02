@@ -7,8 +7,6 @@ import (
 	"go/token"
 	"os"
 	"path"
-	"path/filepath"
-	"runtime"
 	"strconv"
 	"time"
 )
@@ -65,7 +63,8 @@ type FileFact struct {
 }
 
 type Input struct {
-	Files []string `json:"files"`
+	Files           []string `json:"files"`
+	StandardImports []string `json:"standardImports"`
 }
 
 type Output struct {
@@ -91,14 +90,6 @@ func position(fset *token.FileSet, pos token.Pos) Position {
 
 func sourceRange(fset *token.FileSet, node ast.Node) Range {
 	return Range{Start: position(fset, node.Pos()), End: position(fset, node.End())}
-}
-
-func isStandardImport(specifier string) bool {
-	if specifier == "C" {
-		return true
-	}
-	info, err := os.Stat(filepath.Join(runtime.GOROOT(), "src", filepath.FromSlash(specifier)))
-	return err == nil && info.IsDir()
 }
 
 func receiverTypeName(receiver *ast.FieldList) string {
@@ -240,20 +231,18 @@ func main() {
 		return
 	}
 	output := Output{Facts: make([]FileFact, 0, len(input.Files))}
+	standardImports := map[string]bool{}
+	for _, specifier := range input.StandardImports {
+		standardImports[specifier] = true
+	}
 	for _, filename := range input.Files {
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, filename, nil, parser.ParseComments)
 		fact := FileFact{File: filename, Imports: []ImportFact{}, Symbols: []SymbolFact{}, Calls: []CallFact{}, Methods: []string{}, Status: "parsed"}
 		if err != nil {
 			fact.Diagnostics = 1
-			fact.Reason = err.Error()
-			if file == nil {
-				fact.Status = "parse-failed"
-			} else {
-				fact.Status = "parsed-with-diagnostics"
-			}
-		}
-		if file == nil {
+			fact.Reason = "go-parser-reported-syntax-errors"
+			fact.Status = "parsed-with-diagnostics"
 			output.Facts = append(output.Facts, fact)
 			continue
 		}
@@ -263,7 +252,7 @@ func main() {
 		for _, spec := range file.Imports {
 			value, quoteErr := strconv.Unquote(spec.Path.Value)
 			if quoteErr == nil {
-				fact.Imports = append(fact.Imports, ImportFact{Specifier: value, Standard: isStandardImport(value), Range: sourceRange(fset, spec)})
+				fact.Imports = append(fact.Imports, ImportFact{Specifier: value, Standard: standardImports[value], Range: sourceRange(fset, spec)})
 			}
 		}
 		for _, declaration := range file.Decls {

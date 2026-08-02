@@ -12,18 +12,18 @@ It describes current implementation, not roadmap intent. Planned behavior belong
 
 ## Generated adapter capability registry
 
-Registry schema: `flopeek-adapter-capabilities/v1`. This table is generated from `src/adapter-registry.js`; repository parse coverage remains separate in graph analysis.
+Registry schema: `flopeek-adapter-capabilities/v2`. This table is generated from `src/adapter-registry.js`; repository parse coverage remains separate in graph analysis.
 
 | Adapter | Languages/extensions/filenames | Parser | Availability | Structure | Imports | Direct calls | Required toolchain |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| csharp | csharp / .cs | csharp-roslyn | toolchain-conditional | exact-static | exact-static | unsupported | .NET SDK with Roslyn assemblies |
+| csharp | csharp / .cs | csharp-roslyn | toolchain-conditional | exact-static | exact-static | unsupported | .NET SDK |
 | go | go / .go | go-parser | toolchain-conditional | exact-static | exact-static | supported-subset | Go toolchain |
 | inventory | assembly, astro, c, cpp, headers, kotlin, makefile, ruby, scala, shell, swift, vue / .asm .astro .bash .c .cc .cpp .cxx .h .kt .kts .rb .scala .sh .swift .vue .zsh Makefile | inventory | inventory-only | inventory-only | unsupported | unsupported | None |
 | java | java / .java | tree-sitter-java | bundled | exact-static | exact-static | supported-subset | None |
 | php | php / .php | php-parser | bundled | exact-static | exact-static | supported-subset | None |
 | python | python / .py | python-lezer | bundled | exact-static | supported-subset | supported-subset | None |
 | rust | rust / .rs | tree-sitter-rust | bundled | exact-static | supported-subset | supported-subset | None |
-| svelte | svelte / .svelte | svelte-compiler | bundled | exact-static | supported-subset | supported-subset | None |
+| svelte | svelte / .svelte | svelte-static-ast | bundled | exact-static | supported-subset | supported-subset | None |
 | typescript | javascript, jsx, tsx, typescript / .cjs .js .jsx .mjs .ts .tsx | typescript-ast | bundled | exact-static | exact-static | supported-subset | None |
 
 The registry describes proven static parser capabilities, not runtime execution, relationship recall outside audited slices, dynamic dispatch, dependency injection, reflection, or target configuration execution.
@@ -374,7 +374,7 @@ MCP currently exposes no source write, file content, shell, deployment, credenti
 
 ## Package and clean-room support
 
-- Node.js 20 and later is the declared runtime. The npm publication approval change passed CI on Node 20 and 22 across Ubuntu, Windows, and macOS.
+- Node.js 22 and later is the declared runtime. Current CI covers Node 22 and 24 across Ubuntu, Windows, and macOS; older Node 20/22 results remain historical evidence only.
 - `flopeek --version`, `flopeek version`, and `flopeek -v` return the installed package version without scanning a repository.
 - `npm run audit:package` validates the npm dry-run inventory against `packaging/package-policy.json`.
 - `npm run verify:clean-room` packs and installs the exact tarball into a temporary private consumer with lifecycle scripts disabled, then exercises the local binary, help, doctor, one copied-fixture static scan, and MCP bootstrap.

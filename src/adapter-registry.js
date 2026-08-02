@@ -1,64 +1,24 @@
 "use strict";
 
-const ADAPTER_CAPABILITY_SCHEMA = "flopeek-adapter-capabilities/v1";
-const AVAILABILITY = new Set(["bundled", "toolchain-conditional", "inventory-only"]);
+const { createHash } = require("node:crypto");
+const ADAPTER_CAPABILITY_SCHEMA = "flopeek-adapter-capabilities/v2";
+const AVAILABILITY = new Set(["bundled", "toolchain-conditional", "inventory-only", "unavailable"]);
 const LEVELS = new Set(["exact-static", "supported-subset", "structure-only", "inventory-only", "unsupported"]);
+const adapterContract = require("../contracts/adapter-capabilities.json");
 
-const adapters = [
-  {
-    id: "csharp", languages: ["csharp"], extensions: [".cs"], parser: "csharp-roslyn", availability: "toolchain-conditional", requiredToolchain: ".NET SDK with Roslyn assemblies",
-    capabilities: { structure: "exact-static", imports: "exact-static", directCalls: "unsupported", frameworkFacts: [] },
-    resolverCapabilities: [], evidenceClass: "exact-static", limitations: ["Call graph and runtime dispatch are not implemented."],
-  },
-  {
-    id: "go", languages: ["go"], extensions: [".go"], parser: "go-parser", availability: "toolchain-conditional", requiredToolchain: "Go toolchain",
-    capabilities: { structure: "exact-static", imports: "exact-static", directCalls: "supported-subset", frameworkFacts: ["local go.mod module packages"] },
-    resolverCapabilities: ["static local module packages"], evidenceClass: "exact-static", limitations: ["Build tags, function values, method dispatch, ambiguous package functions, and package-name mismatches are unsupported."],
-  },
-  {
-    id: "inventory", languages: ["assembly", "astro", "c", "cpp", "headers", "kotlin", "makefile", "ruby", "scala", "shell", "swift", "vue"], extensions: [".asm", ".astro", ".bash", ".c", ".cc", ".cpp", ".cxx", ".h", ".kt", ".kts", ".rb", ".scala", ".sh", ".swift", ".vue", ".zsh"], filenames: ["Makefile"], parser: "inventory", availability: "inventory-only", requiredToolchain: null,
-    capabilities: { structure: "inventory-only", imports: "unsupported", directCalls: "unsupported", frameworkFacts: [] },
-    resolverCapabilities: [], evidenceClass: "inventory-only", limitations: ["Files are classified but receive no structural relationships."],
-  },
-  {
-    id: "java", languages: ["java"], extensions: [".java"], parser: "tree-sitter-java", availability: "bundled", requiredToolchain: null,
-    capabilities: { structure: "exact-static", imports: "exact-static", directCalls: "supported-subset", frameworkFacts: [] },
-    resolverCapabilities: [], evidenceClass: "exact-static", limitations: ["Instance, qualified, overloaded, reflection, and DI/container dispatch are unsupported."],
-  },
-  {
-    id: "php", languages: ["php"], extensions: [".php"], parser: "php-parser", availability: "bundled", requiredToolchain: null,
-    capabilities: { structure: "exact-static", imports: "exact-static", directCalls: "supported-subset", frameworkFacts: [] },
-    resolverCapabilities: [], evidenceClass: "exact-static", limitations: ["Composer autoloading, dynamic include, method/static dispatch, and container calls are unsupported."],
-  },
-  {
-    id: "python", languages: ["python"], extensions: [".py"], parser: "python-lezer", availability: "bundled", requiredToolchain: null,
-    capabilities: { structure: "exact-static", imports: "supported-subset", directCalls: "supported-subset", frameworkFacts: ["literal HTTP decorators", "Flask and Blueprint literal routes", "narrow Django management commands", "narrow Click, Typer, and Flask CLI command declarations"] },
-    resolverCapabilities: ["relative and src-package imports"], evidenceClass: "exact-static", limitations: ["Attribute calls, dynamic dispatch, dynamic decorator configuration, framework app registration/initialization, computed command names, and indirect management-command base classes are unsupported."],
-  },
-  {
-    id: "rust", languages: ["rust"], extensions: [".rs"], parser: "tree-sitter-rust", availability: "bundled", requiredToolchain: null,
-    capabilities: { structure: "exact-static", imports: "supported-subset", directCalls: "supported-subset", frameworkFacts: ["conventional Cargo src module layout"] },
-    resolverCapabilities: ["crate/self/super modules in conventional Cargo src roots"], evidenceClass: "exact-static", limitations: ["Macros, traits, function values, qualified module calls, custom targets, and #[path] modules are unsupported."],
-  },
-  {
-    id: "svelte", languages: ["svelte"], extensions: [".svelte"], parser: "svelte-compiler", availability: "bundled", requiredToolchain: null,
-    capabilities: { structure: "exact-static", imports: "supported-subset", directCalls: "supported-subset", frameworkFacts: ["SvelteKit file-system routes"] },
-    resolverCapabilities: ["supported script imports"], evidenceClass: "exact-static", limitations: ["Reactive and runtime component behavior are not traced."],
-  },
-  {
-    id: "typescript", languages: ["javascript", "jsx", "tsx", "typescript"], extensions: [".cjs", ".js", ".jsx", ".mjs", ".ts", ".tsx"], parser: "typescript-ast", availability: "bundled", requiredToolchain: null,
-    capabilities: { structure: "exact-static", imports: "exact-static", directCalls: "supported-subset", frameworkFacts: ["Express", "Fastify", "NestJS", "Next.js", "Prisma", "TypeORM", "Drizzle", "BullMQ", "node-cron module-scope literal default-import schedules"] },
-    resolverCapabilities: ["relative paths", "tsconfig/jsconfig paths", "static Vite/Webpack aliases", "package imports/exports", "npm/pnpm workspaces", "Yarn PnP JSON"], evidenceClass: "exact-static", limitations: ["Dynamic imports, general method dispatch, callbacks, dependency injection, reflection, and runtime loading are unsupported."],
-  },
-];
-
-function normalizeAdapter(adapter) {
+function normalizeAdapter(adapter, implementation = "javascript") {
+  const selected = adapter.implementations?.[implementation] || null;
+  const capabilities = adapter.productCapability || adapter.capabilities;
   return {
     ...adapter,
+    ...(selected || {}),
     languages: [...adapter.languages].sort(),
     extensions: [...adapter.extensions].sort(),
     filenames: [...(adapter.filenames || [])].sort(),
-    capabilities: { ...adapter.capabilities, frameworkFacts: [...adapter.capabilities.frameworkFacts].sort() },
+    capabilities: { ...capabilities, frameworkFacts: [...capabilities.frameworkFacts].sort() },
+    ...(adapter.productCapability ? {
+      productCapability: { ...capabilities, frameworkFacts: [...capabilities.frameworkFacts].sort() },
+    } : {}),
     resolverCapabilities: [...adapter.resolverCapabilities].sort(),
     limitations: [...adapter.limitations].sort(),
   };
@@ -69,11 +29,20 @@ function validateAdapterRegistry(registry) {
   const ids = new Set();
   const extensions = new Set();
   for (const adapter of registry.adapters) {
-    const allowed = new Set(["id", "languages", "extensions", "filenames", "parser", "availability", "requiredToolchain", "capabilities", "resolverCapabilities", "evidenceClass", "limitations"]);
+    const allowed = new Set(["id", "languages", "extensions", "filenames", "parser", "availability", "requiredToolchain", "capabilities", "productCapability", "implementations", "resolverCapabilities", "evidenceClass", "limitations"]);
     for (const key of Object.keys(adapter)) if (!allowed.has(key)) throw new Error(`Unknown adapter registry field: ${key}`);
     if (!/^[a-z][a-z0-9-]*$/.test(adapter.id) || ids.has(adapter.id)) throw new Error(`Invalid or duplicate adapter ID: ${adapter.id}`);
     ids.add(adapter.id);
     if (!AVAILABILITY.has(adapter.availability)) throw new Error(`Invalid adapter availability: ${adapter.availability}`);
+    if (adapter.implementations) {
+      for (const implementation of ["javascript", "native"]) {
+        const value = adapter.implementations[implementation];
+        if (!value || !AVAILABILITY.has(value.availability)
+          || !Object.hasOwn(value, "parser") || !Object.hasOwn(value, "requiredToolchain")) {
+          throw new Error(`Adapter ${adapter.id} has an invalid ${implementation} implementation.`);
+        }
+      }
+    }
     if (!Array.isArray(adapter.languages) || !adapter.languages.length || !Array.isArray(adapter.extensions) || !adapter.extensions.length) throw new Error(`Adapter ${adapter.id} requires languages and extensions.`);
     for (const extension of adapter.extensions) {
       if (!/^\.[a-z0-9]+$/.test(extension) || extension !== extension.toLowerCase() || extensions.has(extension)) throw new Error(`Invalid extension for ${adapter.id}: ${extension}`);
@@ -95,10 +64,20 @@ function validateAdapterRegistry(registry) {
   return true;
 }
 
-function getAdapterRegistry() {
-  const registry = { schema: ADAPTER_CAPABILITY_SCHEMA, adapters: adapters.map(normalizeAdapter).sort((left, right) => left.id.localeCompare(right.id)) };
+function getAdapterRegistry(options = {}) {
+  const implementation = options.implementation === "native" ? "native" : "javascript";
+  const registry = {
+    schema: adapterContract.schema,
+    adapters: adapterContract.adapters
+      .map((adapter) => normalizeAdapter(adapter, implementation))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+  };
   validateAdapterRegistry(registry);
   return registry;
+}
+
+function adapterContractDigest() {
+  return `sha256:${createHash("sha256").update(JSON.stringify(adapterContract)).digest("hex")}`;
 }
 
 function adapterForPath(filePath, registry = getAdapterRegistry()) {
@@ -109,4 +88,4 @@ function adapterForPath(filePath, registry = getAdapterRegistry()) {
     || (adapter.filenames || []).some((candidate) => candidate.toLowerCase() === filename)) || null;
 }
 
-module.exports = { ADAPTER_CAPABILITY_SCHEMA, adapterForPath, getAdapterRegistry, validateAdapterRegistry };
+module.exports = { ADAPTER_CAPABILITY_SCHEMA, adapterContractDigest, adapterForPath, getAdapterRegistry, validateAdapterRegistry };

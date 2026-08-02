@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "flopeek-native-rollout-evidence/v2",
+  "status": "incomplete",
+  "binding": {
+    "packageName": "flopeek",
+    "packageVersion": "0.2.1-beta.4",
+    "adapterContractDigest": "sha256:ba29b34d656f706c9d6b425af209497edc1adff59635ffdddcfb8af34457e4f1",
+    "protocolVersion": "flopeek-native-protocol/v1",
+    "repositoryRevision": null,
+    "sourceDigest": null,
+    "binaries": null
+  },
+  "evidence": null
+}

@@ -18,7 +18,7 @@ const lanes = {
   viewer: ["test/scanner.test.js", "test/unit/viewer-empty-flow-state.test.js", "test/unit/viewer-observable-qa.test.js"],
   showcase: ["test/showcase.test.js"],
   "agent-comparison": ["test/unit/agent-comparison.test.js"],
-  package: ["test/unit/package-policy.test.js", "test/unit/clean-room-package.test.js"],
+  package: ["test/unit/package-policy.test.js", "test/unit/clean-room-package.test.js", "test/unit/native-platform-package.test.js"],
   docs: ["test/unit/documentation-assets.test.js"],
 };
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/documentation-assets.test.js");
@@ -50,10 +50,30 @@ for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/chil
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/monorepo-package-benchmark.test.js");
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/framework-command-flow.test.js");
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/public-core-ci.test.js");
+for (const name of ["full", "fast", "unit", "package"]) lanes[name].unshift("test/unit/native-release-controls.test.js");
+for (const name of ["full", "fast", "unit", "package"]) lanes[name].unshift(
+  "test/unit/native-candidate-bundle.test.js",
+  "test/unit/native-candidate-evidence.test.js",
+);
+for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/verify-native-surfaces.test.js");
+for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/native-soak.test.js");
+for (const name of ["full", "fast", "unit", "package"]) lanes[name].unshift(
+  "test/unit/native-database-open-evidence.test.js",
+  "test/unit/native-release-manifest.test.js",
+  "test/unit/github-release-approval.test.js",
+);
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/branch-name-policy.test.js");
+for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/native-activation-surfaces.test.js");
+lanes.full.unshift("test/unit/native-candidate-install.test.js");
+lanes.full.unshift("test/unit/native-failure-recovery.test.js");
+for (const name of ["full", "fast", "unit", "package"]) lanes[name].unshift("test/unit/go-stdlib-catalog.test.js");
+lanes.full.unshift("test/unit/native-mcp-handle.test.js", "test/unit/native-server-handle.test.js", "test/unit/native-surface-contract.test.js");
 for (const name of ["full", "fast", "contracts"]) lanes[name].unshift("test/contracts/flopeek-skill-contract.test.js");
 for (const name of ["full", "fast"]) lanes[name].unshift("test/contracts/core-compatibility-contract.test.js");
 lanes["public-source"] = lanes.full.filter((file) => !["test/contracts/agent-skills-contract.test.js", "test/unit/fixture-cache-hygiene.test.js"].includes(file));
+lanes["public-source"].unshift("test/unit/native-inventory-parity.test.js");
+lanes["public-source"].unshift("test/unit/native-rust-shadow.test.js");
+lanes["public-source"].unshift("test/unit/native-incremental-coordinator.test.js");
 if (!lanes[lane]) throw new Error(`Unknown test lane: ${lane}`);
 if (lane === "fast") {
   const support = spawnSync(process.execPath, ["scripts/generate-support.js", "--check"], { cwd: root, stdio: "inherit" });
@@ -66,6 +86,21 @@ const patterns = {
 };
 const args = ["--test", "--test-concurrency=4"];
 if (patterns[lane]) args.push(`--test-name-pattern=${patterns[lane]}`);
+if (lane === "public-source") {
+  const isolated = ["test/scanner.test.js", "test/unit/native-incremental-coordinator.test.js", "test/unit/native-inventory-parity.test.js", "test/unit/scan-coordinator.test.js"];
+  const shared = lanes[lane].filter((file) => !isolated.includes(file));
+  for (const batch of [
+    ["--test", "--test-concurrency=4", ...shared],
+    ["--test", "--test-concurrency=1", "test/scanner.test.js"],
+    ["--test", "--test-concurrency=1", "test/unit/native-incremental-coordinator.test.js"],
+    ["--test", "--test-concurrency=1", "test/unit/native-inventory-parity.test.js"],
+    ["--test", "--test-concurrency=1", "test/unit/scan-coordinator.test.js"],
+  ]) {
+    const result = spawnSync(process.execPath, batch, { cwd: root, stdio: "inherit" });
+    if (result.status !== 0) process.exit(result.status || 1);
+  }
+  process.exit(0);
+}
 args.push(...lanes[lane]);
 const result = spawnSync(process.execPath, args, { cwd: root, stdio: "inherit" });
 process.exit(result.status || 0);
