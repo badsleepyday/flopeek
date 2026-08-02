@@ -1,12 +1,18 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
 const {
+  PROOF_SUITES,
   PERFORMANCE_CORPUS_SCHEMA,
   parseArguments,
   validatePerformanceCorpus,
 } = require("../../scripts/run-native-candidate-evidence");
+const { SMOKE_TESTS } = require("../../scripts/verify-native-surfaces");
+
+const ROOT = path.resolve(__dirname, "..", "..");
 
 const adapters = {
   repositories: [
@@ -58,4 +64,15 @@ test("candidate runner rejects incomplete identity arguments", () => {
     "--output", "output",
     "--source-sha", "main",
   ]), /Usage/);
+});
+
+test("candidate proof files cannot bypass the exact binary binding with hard-coded Cargo", () => {
+  const proofFiles = new Set([
+    ...Object.values(PROOF_SUITES).flat(),
+    ...SMOKE_TESTS,
+  ]);
+  for (const file of proofFiles) {
+    const source = fs.readFileSync(path.join(ROOT, file), "utf8");
+    assert.doesNotMatch(source, /command:\s*["']cargo["']/u, `${file} hard-codes Cargo instead of the candidate binary binding`);
+  }
 });
