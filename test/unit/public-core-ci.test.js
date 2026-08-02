@@ -18,6 +18,7 @@ test("public Core CI separates quality, compatibility, native platform, and pack
   const publicSourceRunner = fs.readFileSync(path.join(ROOT, "scripts", "run-tests.js"), "utf8");
   assert.match(workflow, /push:\s*\n\s+branches:\s*\[main, development\]/);
   assert.match(workflow, /pull_request:/);
+  assert.match(workflow, /schedule:[\s\S]*cron: '17 3 \* \* 1'/);
   assert.match(workflow, /os:\s*\[ubuntu-latest, windows-latest, macos-latest\]/);
   assert.match(workflow, /node:\s*\[22, 24\]/);
   assert.match(workflow, /runs-on:\s*\$\{\{ matrix\.os \}\}/);
@@ -37,6 +38,8 @@ test("public Core CI separates quality, compatibility, native platform, and pack
   assert.match(workflow, /setup-go@[a-f0-9]{40}[^\n]*[\s\S]*?cache:\s*false/);
   assert.match(workflow, /npm run verify:native-adapter-parity -- --output native-adapter-parity\.json/);
   assert.match(workflow, /name: adapter-parity-\$\{\{ matrix\.os \}\}-node-22/);
+  assert.match(workflow, /uses: EmbarkStudios\/cargo-deny-action@[a-f0-9]{40}[\s\S]*manifest-path: native\/flopeek-core\/Cargo\.toml[\s\S]*command-arguments: advisories bans licenses sources/);
+  assert.match(workflow, /uses: google\/osv-scanner-action\/osv-scanner-action@[a-f0-9]{40}[\s\S]*--lockfile=package-lock\.json[\s\S]*--lockfile=native\/flopeek-core\/Cargo\.lock/);
   assert.match(publicSourceRunner, /lanes\["public-source"\]\.unshift\("test\/unit\/native-inventory-parity\.test\.js"\)/);
   for (const command of ["npm run verify:toolchains", "cargo fmt --check --manifest-path native/flopeek-core/Cargo.toml", "cargo clippy --locked --manifest-path native/flopeek-core/Cargo.toml -- -D warnings", "cargo test --locked --manifest-path native/flopeek-core/Cargo.toml", "npm run verify:native-js-parser-parity", "npm run test:unit", "npm run test:contracts", "node scripts/verify-branch-name.js", "npm run verify:core-baseline", "npm run test:native-platform", "npm run test:package", "npm run audit:package", "npm run verify:clean-room"]) {
     assert.match(workflow, new RegExp(`- run: ${command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
@@ -50,6 +53,17 @@ test("public Core CI separates quality, compatibility, native platform, and pack
   assert.doesNotMatch(packageJson.scripts["test:native-runtime"], /cargo (?:fmt|clippy|test)/);
   assert.match(packageJson.scripts["test:native-platform"], /node scripts\/smoke-native-release\.js/);
   assertThirdPartyActionsPinned(workflow);
+});
+
+test("dependency automation covers npm and Cargo without auto-merge", () => {
+  const dependabot = fs.readFileSync(path.join(ROOT, ".github", "dependabot.yml"), "utf8");
+  assert.match(dependabot, /package-ecosystem: npm[\s\S]*directory: \//);
+  assert.match(dependabot, /package-ecosystem: cargo[\s\S]*directory: \/native\/flopeek-core/);
+  assert.doesNotMatch(dependabot, /auto-merge|automerge/iu);
+
+  const deny = fs.readFileSync(path.join(ROOT, "deny.toml"), "utf8");
+  assert.match(deny, /\[advisories\][\s\S]*ignore = \[\]/);
+  assert.match(deny, /\[sources\][\s\S]*unknown-registry = "deny"[\s\S]*unknown-git = "deny"/);
 });
 
 test("candidate workflow builds each platform once and produces one immutable complete bundle", () => {

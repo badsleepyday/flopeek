@@ -4,6 +4,8 @@ on:
   push:
     branches: [main, development]
   pull_request:
+  schedule:
+    - cron: '17 3 * * 1'
   workflow_call:
     inputs:
       source_sha:
@@ -63,6 +65,19 @@ jobs:
       - run: npm ci
       - run: npm run verify:toolchains
       - run: npm run check:go-stdlib
+      - name: Cargo dependency policy
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          manifest-path: native/flopeek-core/Cargo.toml
+          arguments: --all-features --config deny.toml
+          command: check
+          command-arguments: advisories bans licenses sources
+      - name: OSV lockfile advisories
+        uses: google/osv-scanner-action/osv-scanner-action@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
+        with:
+          scan-args: |-
+            --lockfile=package-lock.json
+            --lockfile=native/flopeek-core/Cargo.lock
       - run: cargo fmt --check --manifest-path native/flopeek-core/Cargo.toml
       - run: cargo clippy --locked --manifest-path native/flopeek-core/Cargo.toml -- -D warnings
       - run: cargo test --locked --manifest-path native/flopeek-core/Cargo.toml
