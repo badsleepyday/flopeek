@@ -149,31 +149,56 @@ Adding another parser is lower priority than correcting a misleading default flo
 
 ## Delivery horizons
 
-### Now
+This section is the sole priority authority. Detailed epics and iteration records
+below preserve delivered contracts and possible backlog; they do not authorize
+work that conflicts with these horizons.
 
-- Execute the versioned work-continuation sequence in [docs/work-continuation-plan.md](docs/work-continuation-plan.md), beginning with an immutable Git/graph-bound checkpoint before adding planned technical overlays.
-- Validate the global workspace hub on a consented multi-repository microservice system and a large monorepo.
-- Run an observed usability study of agent proposal → human revise/verify → reusable semantic memory.
-- Validate the completed Next.js Route Handler literal-contract pilot on a consented production-shaped repository; dynamic values and unsupported adapters remain unavailable.
-- Validate the tested repository-command adapter fixture against a consented repository-owned CI runner.
+### NOW — Native promotion decision
 
-### Next
+Only the native-core promotion program is active:
 
-- Add read-only branch divergence after the checkpoint, Plan Ref, Continue-mode, manual reconciliation, and baseline/plan/current comparison contracts.
-- Run opt-in human/agent handoff studies on real legacy repositories using the consent-ready observation protocol, and retain independently reviewed outcome evidence outside Flopeek's local cache.
-- Add consented runtime/test evidence adapters only after a separate privacy, sanitization, retention, and command-authority review; automatic collection remains out of scope.
-- Validate concept taxonomy and aliases with opted-in human handoff studies before broadening the vocabulary.
-- Continue extracting remaining scanner responsibilities behind adapter and service contracts; deterministic Next.js/SvelteKit file-system route and source-classification derivation are now isolated and regression tested.
-- Validate human-authored cross-project contract references on a consented multi-service handoff; automatic graph edges and flow composition remain out of scope.
-- Semantic suggestion feedback dataset and trace-linked agent outcome benchmark.
+1. Keep correctness and single-authority recovery green. Mutating timeout-before-
+   promotion, timeout-after-commit, process-crash boundaries, and concurrent
+   writers must remain deterministic on Windows and Linux.
+2. Keep the decomposed Rust protocol and store boundaries behavior-equivalent;
+   do not combine module movement with schema or feature work.
+3. Produce source-revision- and binary-digest-bound real-corpus evidence for at
+   least five distinct repositories, including raw query samples and aggregate
+   peak memory.
+4. Verify all six native platform packages, clean-room installation, SQLite
+   database-open behavior, recovery, soak, and several days of honest dogfood.
+5. Make an explicit default-core decision. Native remains experimental and
+   JavaScript remains the public default while rollout evidence or either release
+   approval is incomplete.
 
-### Later
+Completed enabling work in this candidate includes timeout authority recovery,
+generated product-contract enforcement, mechanical protocol/store decomposition,
+non-duplicative CI lanes, npm/Cargo dependency monitoring, and Cargo Deny plus
+OSV advisory gates. Completion here means the implementation and tests exist; it
+does not substitute for a successful protected candidate run or elapsed dogfood.
 
-- Optional local ML and opt-in LLM wording assistance.
-- Explicitly approved local test execution adapters with allowlisted commands; MCP remains free of arbitrary shell access.
-- Suggested plan-to-actual matching only after a consented human-reviewed reconciliation dataset and held-out evaluation exist.
-- Historical continuity and permissioned integrations.
-- Public package/release hardening.
+### FROZEN — Until promotion or cancellation is recorded
+
+- Work continuation, Delivery Graph planning, and workflow expansion.
+- Semantic inference, semantic-memory studies, and model/LLM work.
+- Multi-project expansion and cross-project graph behavior.
+- New language or framework adapters and broader entry-flow families.
+- Viewer/WebGL experiments and renderer migration.
+- New MCP tools, runtime/test evidence adapters, and external integrations.
+
+Security, correctness, compatibility, documentation integrity, and necessary
+release fixes remain allowed. Frozen work may be inspected or regression-tested,
+but it must not gain product behavior.
+
+### NEXT — After the recorded default-core decision
+
+- If native is promoted, monitor the protected release and dogfood evidence,
+  document rollback criteria, then reopen frozen backlog through a new priority
+  decision.
+- If promotion is cancelled, record why, preserve the JavaScript authority, and
+  decide which frozen backlog is still justified before implementation resumes.
+- Do not infer either outcome from a local benchmark, an incomplete evidence
+  manifest, or the mere passage of time.
 
 ## Epic 0 — Trusted technical-map foundation
 
@@ -195,13 +220,13 @@ A repository can be scanned locally into an evidence graph that is useful to peo
 - [x] Fixture relationship quality gate exists.
 - [x] Pinned external audit and reproducible benchmark evidence exist.
 
-### Remaining foundation stories
+### Completed foundation stories
 
-- [ ] Split fast unit/contract tests from slow adapter/integration tests.
-- [ ] Create machine-readable adapter capability registry.
-- [ ] Generate or validate support documentation from capability metadata.
-- [ ] Add CLI `--version` and `doctor`.
-- [ ] Establish public license and packaging policy.
+- [x] Split fast unit/contract tests from slow adapter/integration tests.
+- [x] Create machine-readable adapter capability registry.
+- [x] Generate or validate support documentation from capability metadata.
+- [x] Add CLI `--version` and `doctor`.
+- [x] Establish public license and packaging policy.
 
 ### Exit criteria
 
@@ -1243,14 +1268,16 @@ bounded projections without weakening human comprehension or accessibility.
   unbounded repository graph or hiding evidence labels.
 - [x] Keep Canvas as the supported default and make WebGL an explicit bounded-map preview with Canvas fallback (ADR-018); no default-renderer change is approved.
 
-## Next executable sequence — Versioned work continuation
+## Frozen historical sequence — Versioned work continuation
 
-Status: `in progress`, with C1 through C10 complete. C11 is the next
-implementation item.
+Status: `frozen`. C1 through C10 and C12 through C14 are complete; C11 retains
+partial observation evidence but is not an active implementation priority while
+the native promotion decision is open.
 
-This sequence refines Story 7.6 without creating a second roadmap. Execute it in
-order; one focused commit and acceptance gate per item. The exact schemas, files,
-surface contracts, tests, non-goals, and suggested commit messages are in
+This sequence records Story 7.6 without creating a second priority authority. If
+the frozen backlog is formally reopened, execute it in order with one focused
+commit and acceptance gate per item. The exact schemas, files, surface contracts,
+tests, non-goals, and suggested commit messages are in
 [docs/work-continuation-plan.md](docs/work-continuation-plan.md).
 
 | Item | Status | Outcome |
@@ -1272,10 +1299,10 @@ surface contracts, tests, non-goals, and suggested commit messages are in
 
 ### Immediate dogfooding stability gate
 
-Status: `in progress`. This gate takes priority over new product breadth. Its
-purpose is to make the existing surfaces dependable enough for repeated
-Flopeek-on-Flopeek and supported-language dogfooding; it does not widen any
-language, runtime, business-flow, or release claim.
+Status: `frozen historical gate`. Its completed checks remain regression
+coverage, and its partial human/accessibility evidence remains explicitly
+partial. Native candidate soak and dogfood are governed only by the NOW section;
+this older gate cannot satisfy native rollout evidence by proxy.
 
 | Gate | Status | Required outcome |
 | --- | --- | --- |

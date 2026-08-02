@@ -92,6 +92,26 @@ test("bounded scan documentation states the shared complete-result-only contract
   assert.ok(guide.includes("cancel_scan"));
 });
 
+test("roadmap makes native promotion the only NOW authority and freezes product breadth", () => {
+  const roadmap = read("ROADMAP.md");
+  const now = roadmap.split("### NOW — Native promotion decision")[1]?.split("### FROZEN — Until promotion or cancellation is recorded")[0];
+  const frozen = roadmap.split("### FROZEN — Until promotion or cancellation is recorded")[1]?.split("### NEXT — After the recorded default-core decision")[0];
+  assert.ok(now, "ROADMAP must define an authoritative native-promotion NOW section");
+  assert.match(now, /single-authority recovery/);
+  assert.match(now, /at\s+least five distinct repositories/);
+  assert.match(now, /all six native platform packages/);
+  assert.match(now, /several days of honest dogfood/);
+  assert.match(now, /JavaScript remains the public default/);
+  for (const boundary of ["Work continuation", "Semantic inference", "Multi-project expansion", "New language or framework adapters", "Viewer\/WebGL", "New MCP tools"]) {
+    assert.match(frozen, new RegExp(boundary));
+  }
+  assert.match(roadmap, /## Frozen historical sequence — Versioned work continuation/);
+  assert.doesNotMatch(roadmap, /## Next executable sequence — Versioned work continuation/);
+  for (const delivered of ["Split fast unit/contract tests", "Create machine-readable adapter capability registry", "Add CLI `--version` and `doctor`", "Establish public license and packaging policy"]) {
+    assert.ok(roadmap.includes(`- [x] ${delivered}`), `${delivered} must remain recorded as delivered`);
+  }
+});
+
 test("clean-room documentation keeps its explicit public benchmark count aligned with package metadata", () => {
   const guide = read("docs/clean-room-package.md");
   const packageJson = JSON.parse(read("package.json"));
