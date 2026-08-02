@@ -9,16 +9,15 @@ const { NativeProtocolClient } = require("../../src/native-protocol-client");
 const { createRepositoryScanner } = require("../../src/scanner");
 const { createStructuralFactBatch } = require("../../src/structural-fact-adapter-host");
 const { getAdapterRegistry } = require("../../src/adapter-registry");
+const { nativeTestCommand } = require("../helpers/native-test-command");
 
 const ROOT = path.resolve(__dirname, "..", "..");
-const MANIFEST = path.join(ROOT, "native", "flopeek-core", "Cargo.toml");
+const NATIVE = nativeTestCommand(ROOT);
 
 test("persistent native protocol client preserves one session and reports typed errors", async (context) => {
   const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-native-protocol-client-"));
   const client = new NativeProtocolClient({
-    command: "cargo",
-    args: ["run", "--quiet", "--manifest-path", MANIFEST, "--"],
-    cwd: ROOT,
+    ...NATIVE,
     requestTimeoutMs: 120_000,
   });
   context.after(async () => {
@@ -81,9 +80,7 @@ test("persistent native protocol client preserves one session and reports typed 
 
 test("native protocol abort terminates the isolated process and permits a clean session restart", async (context) => {
   const client = new NativeProtocolClient({
-    command: "cargo",
-    args: ["run", "--quiet", "--manifest-path", MANIFEST, "--"],
-    cwd: ROOT,
+    ...NATIVE,
     requestTimeoutMs: 120_000,
   });
   context.after(() => client.close());

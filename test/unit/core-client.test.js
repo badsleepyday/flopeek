@@ -15,17 +15,15 @@ const { createCoreCompatibilityDigest, createCoreCompatibilityProjection } = req
 const { COLLATION_LOCALE } = require("../../src/collation");
 const { getAgentBootstrap, getChangedContexts, getEntryFlows, getNodeDetails, getRelatedTests, projectView } = require("../../src/graph-service");
 const { canonicalRealpath } = require("../../src/canonical-path");
+const { nativeTestCommand } = require("../helpers/native-test-command");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const FIXTURE = path.join(ROOT, "test", "fixtures", "typescript-order-flow");
-const MANIFEST = path.join(ROOT, "native", "flopeek-core", "Cargo.toml");
 const CORE_BASELINE = JSON.parse(fs.readFileSync(path.join(ROOT, "benchmarks", "js-core-baseline.json"), "utf8"));
 
 function nativeClient() {
   return new NativeProtocolClient({
-    command: "cargo",
-    args: ["run", "--quiet", "--manifest-path", MANIFEST, "--"],
-    cwd: ROOT,
+    ...nativeTestCommand(ROOT),
     // `cargo run` may need a first-source build while other Node test files
     // exercise the release binary in parallel. Product clients still retain
     // their normal timeout; this source-backed harness must include compile
