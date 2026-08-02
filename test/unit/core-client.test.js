@@ -14,6 +14,7 @@ const { scanRepository } = require("../../src/scanner");
 const { createCoreCompatibilityDigest, createCoreCompatibilityProjection } = require("../../src/core-compatibility");
 const { COLLATION_LOCALE } = require("../../src/collation");
 const { getAgentBootstrap, getChangedContexts, getEntryFlows, getNodeDetails, getRelatedTests, projectView } = require("../../src/graph-service");
+const { canonicalRealpath } = require("../../src/canonical-path");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const FIXTURE = path.join(ROOT, "test", "fixtures", "typescript-order-flow");
@@ -333,8 +334,8 @@ test("persistent native queries use verified fact-cache references instead of fu
   assert.equal(request.params.projectId, graph.project.projectId);
   assert.match(request.params.factsDigest, /^sha256:[0-9a-f]{64}$/);
   assert.equal(
-    fs.realpathSync(request.params.projectRoot),
-    fs.realpathSync(root),
+    canonicalRealpath(request.params.projectRoot),
+    canonicalRealpath(root),
     "persistent query roots must identify the same filesystem directory even when macOS expands /var to /private/var",
   );
 });
