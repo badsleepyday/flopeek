@@ -6,6 +6,7 @@ const {
   DOCUMENTS,
   assertGeneratedDocuments,
   buildProductContractFromInputs,
+  canonicalText,
   expectedDocuments,
   loadProductContractInputs,
 } = require("./product-contract");
@@ -18,7 +19,7 @@ const serialized = `${JSON.stringify(contract, null, 2)}\n`;
 const documents = Object.fromEntries(DOCUMENTS.map((name) => [name, fs.readFileSync(path.join(root, name), "utf8")]));
 
 if (check) {
-  if (!fs.existsSync(contractPath) || fs.readFileSync(contractPath, "utf8") !== serialized) {
+  if (!fs.existsSync(contractPath) || canonicalText(fs.readFileSync(contractPath, "utf8")) !== canonicalText(serialized)) {
     throw new Error("contracts/product-contract.json is stale. Run npm run generate:product-contract.");
   }
   assertGeneratedDocuments(contract, documents);

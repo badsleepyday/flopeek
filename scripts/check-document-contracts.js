@@ -2,7 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { DOCUMENTS, assertGeneratedDocuments, buildProductContractFromInputs, loadProductContractInputs } = require("./product-contract");
+const { DOCUMENTS, assertGeneratedDocuments, buildProductContractFromInputs, canonicalText, loadProductContractInputs } = require("./product-contract");
 
 const root = path.resolve(__dirname, "..");
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
@@ -29,7 +29,7 @@ requireMatch(support, /fixture gate reports 40\/40 expected relationships/, "cur
 try {
   const productContract = buildProductContractFromInputs(loadProductContractInputs(root));
   const committed = read("contracts/product-contract.json");
-  if (committed !== `${JSON.stringify(productContract, null, 2)}\n`) failures.push("Generated product contract manifest is stale.");
+  if (canonicalText(committed) !== canonicalText(`${JSON.stringify(productContract, null, 2)}\n`)) failures.push("Generated product contract manifest is stale.");
   assertGeneratedDocuments(productContract, Object.fromEntries(DOCUMENTS.map((name) => [name, read(name)])));
 } catch (error) {
   failures.push(`Product contract validation failed: ${error.message}`);

@@ -43,6 +43,9 @@ test("generated documentation detects version, Node, language, and native-defaul
   const originals = Object.fromEntries(DOCUMENTS.map((name) => [name, fs.readFileSync(path.join(ROOT, name), "utf8")]));
   const generated = expectedDocuments(contract, originals);
   assert.equal(assertGeneratedDocuments(contract, generated), true);
+  const crlfCheckout = Object.fromEntries(Object.entries(generated)
+    .map(([name, source]) => [name, source.replace(/\n/g, "\r\n")]));
+  assert.equal(assertGeneratedDocuments(contract, crlfCheckout), true);
   for (const [label, mutate] of [
     ["version", (source) => source.replace(contract.package.sourceVersion, "0.0.0-stale")],
     ["Node", (source) => source.replace("Node.js 22", "Node.js 20")],

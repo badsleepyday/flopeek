@@ -13,6 +13,10 @@ const DOCUMENTS = Object.freeze([
   "native/flopeek-core/README.md",
 ]);
 
+function canonicalText(source) {
+  return String(source).replace(/\r\n?/g, "\n");
+}
+
 function readJson(root, relativePath) {
   return JSON.parse(fs.readFileSync(path.join(root, relativePath), "utf8"));
 }
@@ -156,7 +160,7 @@ function expectedDocuments(contract, documents) {
 function assertGeneratedDocuments(contract, documents) {
   const expected = expectedDocuments(contract, documents);
   for (const [name, source] of Object.entries(documents)) {
-    if (source !== expected[name]) throw new Error(`${name} generated product contract is stale.`);
+    if (canonicalText(source) !== canonicalText(expected[name])) throw new Error(`${name} generated product contract is stale.`);
   }
   return true;
 }
@@ -168,6 +172,7 @@ module.exports = {
   START,
   assertGeneratedDocuments,
   buildProductContractFromInputs,
+  canonicalText,
   expectedDocuments,
   loadProductContractInputs,
   minimumNodeMajor,
