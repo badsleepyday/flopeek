@@ -9,13 +9,14 @@ dogfooding.
 ## Verified audit-remediation source
 
 - Audited baseline: `48ab710f167edd5f19d3b70f6574a05c254c9578`
-- Verified implementation SHA: `5e404b126ad8b96bbfadd9ae38675a77c58b430e`
+- Native evidence implementation SHA: `5e404b126ad8b96bbfadd9ae38675a77c58b430e`
+- Windows/Node 24 path-identity remediation SHA: `56ca898ba03a8ea6ea8602a0d1ac32d86611aac9`
 - Branch: `fix/rust-core-audit-remediation`
 - Exact Windows release binary SHA-256:
   `7acf85ddcbad49301b9bab2ccfd66b7b4ef1e8462ec6d7f39d8cb9665b572d59`
 - Verification date: `2026-08-02`
 
-The implementation SHA above is the code/evidence commit. This tracker is an
+The implementation SHAs above are the code/evidence commits. This tracker is an
 attestation follow-up and therefore is not part of that self-referenced source
 commit.
 
@@ -25,7 +26,8 @@ commit.
 | --- | --- | --- |
 | Schema/history correctness | `passing` | Schema v12 separates semantic edge/placement identity from presence intervals. Rust tests cover v1 present, v2 absent, v3 present, v4 absent, v5 present, including edge evidence. |
 | Store compatibility and path safety | `passing` | Future schema, version disagreement, missing required objects, corruption, Unix symlink escape, and Windows junction escape fail closed. v11-to-v12 data migration is transactional and tested. |
-| MSRV and runtime contract | `passing` | `rust-version = 1.88`; `cargo +1.88.0 check --locked` passed. Current toolchain verification passed with Rust 1.97.0, .NET 10.0.302, Go 1.26.4, and Node 22.23.2. Supported Node CI matrix is 22/24. |
+| MSRV and runtime contract | `passing` | `rust-version = 1.88`; `cargo +1.88.0 check --locked` passed. Current toolchain verification passed with Rust 1.97.0, .NET 10.0.302, Go 1.26.4, and Node 22.23.2. Supported Node CI matrix is 22/24. Local Windows regression verification passed on Node 24.18.1 (public-source batches: 290, 105, 5, and 15 tests) and Node 22.23.2 (127 targeted tests). |
+| Windows path identity | `passing` | Repository roots use the native canonical realpath across watcher, scanner, cache, MCP, and core-client boundaries. Windows 8.3 short paths and long paths retain one graph identity and adjacent delta; recursive watching no longer feeds a short root into the affected Node 24/libuv path. |
 | Identity/API boundary | `passing` | Identity v2 methods are absent by default and require explicit `experimentalIdentityV2: true` capability negotiation in both client and protocol. JavaScript remains the default authority. |
 | Source-free persistence boundary | `passing` | Structural facts use typed `deny_unknown_fields` allowlists with bounded depth/size and adversarial source-body tests. Store validation remains defense in depth. |
 | External dependency identity | `passing` | The persisted scheme is honestly named `external-import-root-v1`; canonical import roots and exact observed specifiers are distinct. No package-manager coordinate is claimed without resolver evidence. |
