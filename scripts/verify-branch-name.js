@@ -1,6 +1,6 @@
 "use strict";
 
-const ALLOWED_LONG_LIVED_BRANCHES = new Set(["main"]);
+const ALLOWED_LONG_LIVED_BRANCHES = new Set(["main", "development"]);
 const ALLOWED_CHANGE_TYPES = new Set([
   "build",
   "chore",
