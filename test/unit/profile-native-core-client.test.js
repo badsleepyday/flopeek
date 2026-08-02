@@ -51,4 +51,27 @@ test("native core profiler samples graph and Context Ref queries without a graph
   assert.equal(calls.filter((name) => name === "contextCard").length, profile.samplesPerOperation + 1);
   assert.ok(calls.includes("resolveContextRef"));
   assert.ok(calls.includes("flowProjection"));
+  assert.equal(profile.operations.resolveContextRef.targetStatus, "present");
+  assert.equal(profile.operations.flowProjection.targetStatus, "present");
+});
+
+test("native core profiler measures explicit absent lookups when a repository has no flow or Context Ref", async () => {
+  const requested = { contextRefs: [], flowIds: [] };
+  const core = {
+    findNodes: async () => [],
+    getProjectOverview: async () => ({}),
+    getContextCard: async () => ({ card: null }),
+    resolveContextRef: async (_graph, value) => requested.contextRefs.push(value),
+    getFlowProjection: async (_graph, value) => requested.flowIds.push(value),
+  };
+  const profile = await profileQueries(core, {
+    nodes: [{ id: "file:src/lib.rs", kind: "file", label: "lib.rs" }],
+    flows: [],
+  });
+
+  assert.deepEqual(Object.keys(profile.operations).sort(), ["contextCard", "findNodes", "flowProjection", "projectOverview", "resolveContextRef"]);
+  assert.equal(profile.operations.resolveContextRef.targetStatus, "absent");
+  assert.equal(profile.operations.flowProjection.targetStatus, "absent");
+  assert.ok(requested.contextRefs.every((value) => value === "fp://invalid/profile"));
+  assert.ok(requested.flowIds.every((value) => value === "flow:__flopeek_profile_absent__"));
 });

@@ -306,7 +306,7 @@ test("rollout profiles must use the exact release binary and compiler", (context
       measurement: {
         queryLatency: {
           operations: Object.fromEntries(REQUIRED_QUERY_OPERATIONS
-            .map((operation) => [operation, { rawSamplesMs: Array(101).fill(1) }])),
+            .map((operation) => [operation, { rawSamplesMs: Array(101).fill(1), targetStatus: "present" }])),
         },
         concurrentMemory: {
           rawCombinedRssBytes: [100, 101],
@@ -348,6 +348,7 @@ test("rollout profiles must use the exact release binary and compiler", (context
   });
   assert.equal(profileResult.queryRawSamples.length, 5);
   assert.equal(profileResult.queryRawSamples[0].states.cold.findNodes.length, 101);
+  assert.equal(profileResult.queryRawSamples[0].targetStatuses.cold.findNodes, "present");
 
   const slowCell = JSON.parse(fs.readFileSync(path.join(directory, "repo-4.json"), "utf8"));
   slowCell.states.oneFileChange.native.measurement.queryLatency.operations.flowProjection.rawSamplesMs = Array(101).fill(200);

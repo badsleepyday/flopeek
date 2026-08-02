@@ -135,6 +135,7 @@ function validateProfiles(directory, benchmarkRepositories, binaryBindings) {
     }
     repositories.add(profile.repository);
     const retainedStates = {};
+    const retainedTargetStates = {};
     for (const state of STATES) {
       const native = profile.states?.[state]?.native;
       const javascript = profile.states?.[state]?.javascript;
@@ -167,18 +168,21 @@ function validateProfiles(directory, benchmarkRepositories, binaryBindings) {
       const operations = native.measurement?.queryLatency?.operations || {};
       const operationNames = Object.keys(operations).sort();
       if (JSON.stringify(operationNames) !== JSON.stringify([...REQUIRED_QUERY_OPERATIONS].sort())) {
-        throw new Error(`Profile ${profile.repository}/${state} must measure every required query operation exactly once.`);
+        throw new Error(`Profile ${profile.repository}/${state} must measure every required query operation exactly once; received: ${operationNames.join(", ") || "none"}.`);
       }
       for (const name of REQUIRED_QUERY_OPERATIONS) {
         const operation = operations[name];
         if (!Array.isArray(operation.rawSamplesMs) || operation.rawSamplesMs.length !== 101
-          || !operation.rawSamplesMs.every((value) => Number.isFinite(value) && value >= 0)) {
+          || !operation.rawSamplesMs.every((value) => Number.isFinite(value) && value >= 0)
+          || !["present", "absent"].includes(operation.targetStatus)) {
           throw new Error(`Profile ${profile.repository}/${state}/${name} must retain 101 raw query samples.`);
         }
         operationCellP95[name].push(percentile(operation.rawSamplesMs, 95));
       }
       retainedStates[state] = Object.fromEntries(REQUIRED_QUERY_OPERATIONS
         .map((name) => [name, [...operations[name].rawSamplesMs]]));
+      retainedTargetStates[state] = Object.fromEntries(REQUIRED_QUERY_OPERATIONS
+        .map((name) => [name, operations[name].targetStatus]));
       const nativeMemory = native.measurement?.concurrentMemory;
       const javascriptPeak = javascript.measurement?.memoryAfter?.node?.peakRssBytes;
       if (!Array.isArray(nativeMemory?.rawCombinedRssBytes)
@@ -197,6 +201,7 @@ function validateProfiles(directory, benchmarkRepositories, binaryBindings) {
       repositoryRevision: benchmarkRepository.revision,
       sourceDigest: benchmarkRepository.sourceDigest,
       states: retainedStates,
+      targetStatuses: retainedTargetStates,
     });
   }
   if (repositories.size < 5 || repositories.size !== benchmarkRepositories.size

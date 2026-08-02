@@ -142,16 +142,17 @@ async function profileQueries(core, graph, nativeProtocol = null) {
   if (!node) return { schemaVersion: "flopeek-native-query-profile/v1", samplesPerOperation: QUERY_SAMPLES, operations: {} };
   const card = await core.getContextCard(graph, node.id);
   const contextRef = card?.card?.contextRef || null;
+  const flowId = graph.flows[0]?.id || "flow:__flopeek_profile_absent__";
   const query = node.label.slice(0, Math.max(1, Math.min(node.label.length, 24)));
   const operations = [
-    ["findNodes", () => core.findNodes(graph, { query })],
-    ["projectOverview", () => core.getProjectOverview(graph, { mode: "overview", scope: "application", level: "feature" })],
-    ["contextCard", () => core.getContextCard(graph, node.id)],
+    ["findNodes", () => core.findNodes(graph, { query }), "present"],
+    ["projectOverview", () => core.getProjectOverview(graph, { mode: "overview", scope: "application", level: "feature" }), "present"],
+    ["contextCard", () => core.getContextCard(graph, node.id), "present"],
+    ["resolveContextRef", () => core.resolveContextRef(graph, contextRef || "fp://invalid/profile"), contextRef ? "present" : "absent"],
+    ["flowProjection", () => core.getFlowProjection(graph, flowId), graph.flows[0] ? "present" : "absent"],
   ];
-  if (contextRef) operations.push(["resolveContextRef", () => core.resolveContextRef(graph, contextRef)]);
-  if (graph.flows[0]) operations.push(["flowProjection", () => core.getFlowProjection(graph, graph.flows[0].id)]);
   const results = {};
-  for (const [name, operation] of operations) {
+  for (const [name, operation, targetStatus] of operations) {
     const samples = [];
     const transport = [];
     for (let index = 0; index < QUERY_SAMPLES; index += 1) {
@@ -160,7 +161,7 @@ async function profileQueries(core, graph, nativeProtocol = null) {
       const stats = nativeProtocol?.getLastResponseStats?.();
       if (stats && Number.isFinite(stats.roundTripMilliseconds)) transport.push(stats);
     }
-    results[name] = latencySummary(samples, transport);
+    results[name] = { ...latencySummary(samples, transport), targetStatus };
   }
   return { schemaVersion: "flopeek-native-query-profile/v1", samplesPerOperation: QUERY_SAMPLES, operations: results };
 }
