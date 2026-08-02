@@ -13,12 +13,18 @@ const assertThirdPartyActionsPinned = (workflow) => {
   }
 };
 
-test("public Core CI proves package and clean-room behavior on the declared Node and OS matrix", () => {
+test("public Core CI separates quality, compatibility, native platform, and packaging authority", () => {
   const workflow = readWorkflow("ci.yml");
   const publicSourceRunner = fs.readFileSync(path.join(ROOT, "scripts", "run-tests.js"), "utf8");
+  assert.match(workflow, /push:\s*\n\s+branches:\s*\[main, development\]/);
+  assert.match(workflow, /pull_request:/);
   assert.match(workflow, /os:\s*\[ubuntu-latest, windows-latest, macos-latest\]/);
   assert.match(workflow, /node:\s*\[22, 24\]/);
   assert.match(workflow, /runs-on:\s*\$\{\{ matrix\.os \}\}/);
+  assert.match(workflow, /quality:\s*\n\s+name: Linux quality\s*\n\s+runs-on: ubuntu-latest/);
+  assert.match(workflow, /node-compatibility:[\s\S]*runs-on: ubuntu-latest[\s\S]*npm run test:node-compat/);
+  assert.match(workflow, /native-platform:[\s\S]*node-version: 22[\s\S]*npm run test:native-platform/);
+  assert.match(workflow, /packaging:[\s\S]*npm run test:package[\s\S]*npm run audit:package[\s\S]*npm run verify:clean-room/);
   assert.match(workflow, /workflow_call:/);
   assert.match(workflow, /ref:\s*\$\{\{ inputs\.source_sha \|\| github\.sha \}\}/);
   assert.match(workflow, /uses: actions\/checkout@[a-f0-9]{40}/);
@@ -30,13 +36,19 @@ test("public Core CI proves package and clean-room behavior on the declared Node
   assert.match(workflow, /go-version:\s*'1\.26\.4'/);
   assert.match(workflow, /setup-go@[a-f0-9]{40}[^\n]*[\s\S]*?cache:\s*false/);
   assert.match(workflow, /npm run verify:native-adapter-parity -- --output native-adapter-parity\.json/);
-  assert.match(workflow, /name: adapter-parity-\$\{\{ matrix\.os \}\}-node-\$\{\{ matrix\.node \}\}/);
+  assert.match(workflow, /name: adapter-parity-\$\{\{ matrix\.os \}\}-node-22/);
   assert.match(publicSourceRunner, /lanes\["public-source"\]\.unshift\("test\/unit\/native-inventory-parity\.test\.js"\)/);
-  for (const command of ["npm run verify:toolchains", "cargo fmt --check --manifest-path native/flopeek-core/Cargo.toml", "cargo clippy --locked --manifest-path native/flopeek-core/Cargo.toml -- -D warnings", "cargo test --locked --manifest-path native/flopeek-core/Cargo.toml", "npm run test:native-core", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --version", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-facts .", "cargo run --quiet --manifest-path native/flopeek-core/Cargo.toml -- --native-rust-graph .", "node scripts/verify-branch-name.js", "npm run verify:core-baseline", "npm run test:public-source", "npm run test:package", "npm run audit:package", "npm run verify:clean-room"]) {
+  for (const command of ["npm run verify:toolchains", "cargo fmt --check --manifest-path native/flopeek-core/Cargo.toml", "cargo clippy --locked --manifest-path native/flopeek-core/Cargo.toml -- -D warnings", "cargo test --locked --manifest-path native/flopeek-core/Cargo.toml", "npm run verify:native-js-parser-parity", "npm run test:unit", "npm run test:contracts", "node scripts/verify-branch-name.js", "npm run verify:core-baseline", "npm run test:native-platform", "npm run test:package", "npm run audit:package", "npm run verify:clean-room"]) {
     assert.match(workflow, new RegExp(`- run: ${command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   }
+  assert.equal((workflow.match(/cargo fmt --check --manifest-path/g) || []).length, 1);
+  assert.equal((workflow.match(/cargo clippy --locked --manifest-path/g) || []).length, 1);
+  assert.doesNotMatch(workflow, /npm run test:native-core/);
+  assert.doesNotMatch(workflow, /cargo run --quiet/);
   const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
-  assert.match(packageJson.scripts["test:native-core"], /node scripts\/smoke-native-release\.js/);
+  assert.match(packageJson.scripts["test:native-core"], /npm run test:native-runtime/);
+  assert.doesNotMatch(packageJson.scripts["test:native-runtime"], /cargo (?:fmt|clippy|test)/);
+  assert.match(packageJson.scripts["test:native-platform"], /node scripts\/smoke-native-release\.js/);
   assertThirdPartyActionsPinned(workflow);
 });
 
