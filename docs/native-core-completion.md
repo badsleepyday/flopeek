@@ -47,7 +47,7 @@ commit.
 - `npm run verify:core-baseline` — 11/11 deterministic fixture cases matched.
 - `npm run test:public-source` — 103/103 main tests and 5/5 native packaging-facing tests passed.
 - `npm run test:package` — 38/38 passed.
-- `npm run audit:package` — passed; 202 files, 1,038,230 packed bytes; publishing remains unapproved.
+- `npm run audit:package` — passed; 203 files, 1,038,643 packed bytes; publishing remains unapproved.
 - `npm run verify:clean-room` — passed; installed package scanned 12 files and exposed 62 MCP tools without lifecycle scripts or target execution.
 - `npm run verify:native-surfaces` — 7 CLI commands, 62 MCP tools, 95 HTTP routes, zero unclassified.
 - Exact real corpus — 8/8 pinned repositories across TypeScript, Python, PHP, Rust, Java, Svelte, C#, and Go; zero target-repository writes.

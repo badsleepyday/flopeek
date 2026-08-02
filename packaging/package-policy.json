@@ -96,6 +96,6 @@
     ".pem",
     ".pfx"
   ],
-  "maximumEntries": 202,
+  "maximumEntries": 203,
   "maximumUnpackedBytes": 3000000
 }
