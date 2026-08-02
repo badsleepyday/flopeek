@@ -9,9 +9,10 @@ const { resolveBranchName, validateBranchName } = require("../../scripts/verify-
 const ROOT = path.resolve(__dirname, "..", "..");
 const SCRIPT = path.join(ROOT, "scripts", "verify-branch-name.js");
 
-test("branch policy accepts main and typed short-lived SDLC branches", () => {
+test("branch policy accepts protected long-lived and typed short-lived SDLC branches", () => {
   for (const branch of [
     "main",
+    "development",
     "feature/context-card-export",
     "fix/sse-readiness",
     "docs/public-beta",
@@ -35,7 +36,6 @@ test("branch policy rejects tool identity, personal, malformed, and permanent ch
     "feature/nested/change",
     "feature/Uppercase",
     "beta",
-    "development",
   ]) {
     assert.equal(validateBranchName(branch).status, "failed", branch);
   }
