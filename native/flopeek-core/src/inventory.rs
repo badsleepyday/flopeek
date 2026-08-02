@@ -802,7 +802,10 @@ mod tests {
         scan_native_inventory, scan_native_inventory_with_paths,
     };
     use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static NEXT_TEMP_ROOT: AtomicU64 = AtomicU64::new(0);
 
     fn temporary_root() -> std::path::PathBuf {
         let unique = SystemTime::now()
@@ -810,8 +813,9 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!(
-            "flopeek-native-inventory-{}-{unique}",
-            std::process::id()
+            "flopeek-native-inventory-{}-{unique}-{}",
+            std::process::id(),
+            NEXT_TEMP_ROOT.fetch_add(1, Ordering::Relaxed),
         ))
     }
 
@@ -848,10 +852,12 @@ mod tests {
                 .unwrap_err()
                 .starts_with("native-bounded-max-files-exceeded")
         );
-        assert!(
+        let byte_limit_error =
             discover_native_bounded_project(&root, Some("apps/api"), None, Some(1), None)
-                .unwrap_err()
-                .starts_with("native-bounded-max-bytes-exceeded")
+                .unwrap_err();
+        assert!(
+            byte_limit_error.starts_with("native-bounded-max-bytes-exceeded"),
+            "unexpected byte-limit error: {byte_limit_error}"
         );
         assert!(
             discover_native_bounded_project(&root, Some("../outside"), None, None, None)
