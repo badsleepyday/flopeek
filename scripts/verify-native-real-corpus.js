@@ -248,14 +248,22 @@ async function runCorpus(options) {
     sourceAuthority: "rust",
   });
   const results = [];
+  let primaryError = null;
   try {
     for (const repository of manifest.repositories) {
       const root = options.repositories[repository.id]
         || checkoutRepository(repository, options.cloneDirectory);
       results.push(await verifyRepository(repository, root, native));
     }
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    await native.close();
+    try {
+      await native.close();
+    } catch (closeError) {
+      if (!primaryError) throw closeError;
+    }
   }
   const sourceRevision = options.sourceRevision || git(path.resolve(__dirname, ".."), ["rev-parse", "HEAD"]).trim();
   const evidence = {
