@@ -251,6 +251,7 @@ pub fn parse_native_csharp_facts(path: &str, source: &str) -> Option<NativeJsFac
                 name: name.clone(),
                 methods: method_details
                     .iter()
+                    .filter(|(method, _)| method.kind() == "method_declaration")
                     .map(|(_, method_name)| method_name.clone())
                     .collect(),
                 evidence: evidence(path, node),
@@ -415,6 +416,7 @@ mod tests {
             identities[4].signature.as_deref(),
             Some("(Order,User):void")
         );
+        assert_eq!(facts.structural.symbols[0].methods, ["Save", "Save"]);
     }
 
     #[test]
