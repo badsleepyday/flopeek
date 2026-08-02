@@ -38,9 +38,25 @@ boundary. Open-ended parser evidence and adapter contracts remain JSON payloads
 inside the native graph because their schema is intentionally extensible. This
 reduces repeated long ID storage without changing the Flopeek graph contract.
 
-This is not the default product core. Strict Rust source authority now covers
-JavaScript/TypeScript, Python, PHP, Rust, Java, Svelte, C#, and Go. The bundled
-Go Tree-sitter adapter owns static types/functions/methods, imports, unshadowed
+<!-- GENERATED:PRODUCT-CONTRACT:START -->
+
+## Generated product contract
+
+- Source candidate: `flopeek@0.2.1-beta.4` on npm channel `beta`.
+- Last verified preview artifact: `flopeek@0.2.1-beta.3` (`passed`).
+- Runtime: Node.js 22 or later (`>=22`).
+- Public default core: `js` / javascript.
+- Experimental native core: `native-experimental`; rollout is `incomplete` and native-default eligibility is `false`.
+- Release approvals: npm `not-approved`; GitHub Release `not-approved`.
+- JavaScript/default adapters: csharp (csharp; toolchain-conditional; .NET SDK), go (go; toolchain-conditional; Go toolchain), inventory (assembly/astro/c/cpp/headers/kotlin/makefile/ruby/scala/shell/swift/vue; inventory-only), java (java; bundled), php (php; bundled), python (python; bundled), rust (rust; bundled), svelte (svelte; bundled), typescript (javascript/jsx/tsx/typescript; bundled).
+- Native-experimental adapters: csharp (csharp; bundled), go (go; bundled), inventory (assembly/astro/c/cpp/headers/kotlin/makefile/ruby/scala/shell/swift/vue; inventory-only), java (java; bundled), php (php; bundled), python (python; bundled), rust (rust; bundled), svelte (svelte; bundled), typescript (javascript/jsx/tsx/typescript; bundled).
+
+This block is generated from repository contracts; edit the source contracts and run `npm run generate:product-contract`.
+
+<!-- GENERATED:PRODUCT-CONTRACT:END -->
+
+The generated contract above is the authority for default-core and backend
+adapter availability. The bundled Go Tree-sitter adapter owns static types/functions/methods, imports, unshadowed
 local function calls, aliased package selectors, and local `go.mod` package
 resolution without requiring the Go toolchain. Build tags, function values,
 method dispatch, ambiguous package functions, and package-name mismatches

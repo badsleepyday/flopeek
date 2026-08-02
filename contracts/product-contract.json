@@ -1,0 +1,385 @@
+{
+  "schemaVersion": "flopeek-product-contract/v1",
+  "package": {
+    "name": "flopeek",
+    "sourceVersion": "0.2.1-beta.4",
+    "enginesNode": ">=22",
+    "minimumNodeMajor": 22,
+    "distTag": "beta",
+    "lastVerifiedPreview": {
+      "version": "0.2.1-beta.3",
+      "status": "passed",
+      "evidenceClass": "clean-room-package-observation"
+    }
+  },
+  "core": {
+    "modes": [
+      "js",
+      "shadow",
+      "native",
+      "native-experimental"
+    ],
+    "publicDefaultMode": "js",
+    "publicDefaultImplementation": "javascript",
+    "experimentalMode": "native-experimental",
+    "experimentalImplementation": "native",
+    "nativeRolloutStatus": "incomplete",
+    "nativeDefaultEligible": false
+  },
+  "release": {
+    "npm": {
+      "status": "not-approved",
+      "version": "0.2.1-beta.4",
+      "distTag": "beta"
+    },
+    "github": {
+      "status": "not-approved"
+    }
+  },
+  "adapters": {
+    "javascript": [
+      {
+        "id": "csharp",
+        "languages": [
+          "csharp"
+        ],
+        "parser": "csharp-roslyn",
+        "availability": "toolchain-conditional",
+        "requiredToolchain": ".NET SDK",
+        "capabilities": {
+          "structure": "exact-static",
+          "imports": "exact-static",
+          "directCalls": "unsupported",
+          "frameworkFacts": []
+        }
+      },
+      {
+        "id": "go",
+        "languages": [
+          "go"
+        ],
+        "parser": "go-parser",
+        "availability": "toolchain-conditional",
+        "requiredToolchain": "Go toolchain",
+        "capabilities": {
+          "structure": "exact-static",
+          "imports": "exact-static",
+          "directCalls": "supported-subset",
+          "frameworkFacts": [
+            "local go.mod module packages"
+          ]
+        }
+      },
+      {
+        "id": "inventory",
+        "languages": [
+          "assembly",
+          "astro",
+          "c",
+          "cpp",
+          "headers",
+          "kotlin",
+          "makefile",
+          "ruby",
+          "scala",
+          "shell",
+          "swift",
+          "vue"
+        ],
+        "parser": "inventory",
+        "availability": "inventory-only",
+        "requiredToolchain": null,
+        "capabilities": {
+          "structure": "inventory-only",
+          "imports": "unsupported",
+          "directCalls": "unsupported",
+          "frameworkFacts": []
+        }
+      },
+      {
+        "id": "java",
+        "languages": [
+          "java"
+        ],
+        "parser": "tree-sitter-java",
+        "availability": "bundled",
+        "requiredToolchain": null,
+        "capabilities": {
+          "structure": "exact-static",
+          "imports": "exact-static",
+          "directCalls": "supported-subset",
+          "frameworkFacts": []
+        }
+      },
+      {
+        "id": "php",
+        "languages": [
+          "php"
+        ],
+        "parser": "php-parser",
+        "availability": "bundled",
+        "requiredToolchain": null,
+        "capabilities": {
+          "structure": "exact-static",
+          "imports": "exact-static",
+          "directCalls": "supported-subset",
+          "frameworkFacts": []
+        }
+      },
+      {
+        "id": "python",
+        "languages": [
+          "python"
+        ],
+        "parser": "python-lezer",
+        "availability": "bundled",
+        "requiredToolchain": null,
+        "capabilities": {
+          "structure": "exact-static",
+          "imports": "supported-subset",
+          "directCalls": "supported-subset",
+          "frameworkFacts": [
+            "Flask and Blueprint literal routes",
+            "literal HTTP decorators",
+            "narrow Click, Typer, and Flask CLI command declarations",
+            "narrow Django management commands"
+          ]
+        }
+      },
+      {
+        "id": "rust",
+        "languages": [
+          "rust"
+        ],
+        "parser": "tree-sitter-rust",
+        "availability": "bundled",
+        "requiredToolchain": null,
+        "capabilities": {
+          "structure": "exact-static",
+          "imports": "supported-subset",
+          "directCalls": "supported-subset",
+          "frameworkFacts": [
+            "conventional Cargo src module layout"
+          ]
+        }
+      },
+      {
+        "id": "svelte",
+        "languages": [
+          "svelte"
+        ],
+        "parser": "svelte-static-ast",
+        "availability": "bundled",
+        "requiredToolchain": null,
+        "capabilities": {
+          "structure": "exact-static",
+          "imports": "supported-subset",
+          "directCalls": "supported-subset",
+          "frameworkFacts": [
+            "SvelteKit file-system routes"
+          ]
+        }
+      },
+      {
+        "id": "typescript",
+        "languages": [
+          "javascript",
+          "jsx",
+          "tsx",
+          "typescript"
+        ],
+        "parser": "typescript-ast",
+        "availability": "bundled",
+        "requiredToolchain": null,
+        "capabilities": {
+          "structure": "exact-static",
+          "imports": "exact-static",
+          "directCalls": "supported-subset",
+          "frameworkFacts": [
+            "BullMQ",
+            "Drizzle",
+            "Express",
+            "Fastify",
+            "NestJS",
+            "Next.js",
+            "Prisma",
+            "TypeORM",
+            "node-cron module-scope literal default-import schedules"
+          ]
+        }
+      }
+    ],
+    "native": [
+      {
+        "id": "csharp",
+        "languages": [
+          "csharp"
+        ],
+        "parser": "csharp-static-ast",
+        "availability": "bundled",
+        "requiredToolchain": null,
+        "capabilities": {
+          "structure": "exact-static",
+          "imports": "exact-static",
+          "directCalls": "unsupported",
+          "frameworkFacts": []
+        }
+      },
+      {
+        "id": "go",
+        "languages": [
+          "go"
+        ],
+        "parser": "go-parser",
+        "availability": "bundled",
+        "requiredToolchain": null,
+        "capabilities": {
+          "structure": "exact-static",
+          "imports": "exact-static",
+          "directCalls": "supported-subset",
+          "frameworkFacts": [
+            "local go.mod module packages"
+          ]
+        }
+      },
+      {
+        "id": "inventory",
+        "languages": [
+          "assembly",
+          "astro",
+          "c",
+          "cpp",
+          "headers",
+          "kotlin",
+          "makefile",
+          "ruby",
+          "scala",
+          "shell",
+          "swift",
+          "vue"
+        ],
+        "parser": "inventory",
+        "availability": "inventory-only",
+        "requiredToolchain": null,
+        "capabilities": {
+          "structure": "inventory-only",
+          "imports": "unsupported",
+          "directCalls": "unsupported",
+          "frameworkFacts": []
+        }
+      },
+      {
+        "id": "java",
+        "languages": [
+          "java"
+        ],
+        "parser": "tree-sitter-java",
+        "availability": "bundled",
+        "requiredToolchain": null,
+        "capabilities": {
+          "structure": "exact-static",
+          "imports": "exact-static",
+          "directCalls": "supported-subset",
+          "frameworkFacts": []
+        }
+      },
+      {
+        "id": "php",
+        "languages": [
+          "php"
+        ],
+        "parser": "php-parser",
+        "availability": "bundled",
+        "requiredToolchain": null,
+        "capabilities": {
+          "structure": "exact-static",
+          "imports": "exact-static",
+          "directCalls": "supported-subset",
+          "frameworkFacts": []
+        }
+      },
+      {
+        "id": "python",
+        "languages": [
+          "python"
+        ],
+        "parser": "python-lezer",
+        "availability": "bundled",
+        "requiredToolchain": null,
+        "capabilities": {
+          "structure": "exact-static",
+          "imports": "supported-subset",
+          "directCalls": "supported-subset",
+          "frameworkFacts": [
+            "Flask and Blueprint literal routes",
+            "literal HTTP decorators",
+            "narrow Click, Typer, and Flask CLI command declarations",
+            "narrow Django management commands"
+          ]
+        }
+      },
+      {
+        "id": "rust",
+        "languages": [
+          "rust"
+        ],
+        "parser": "tree-sitter-rust",
+        "availability": "bundled",
+        "requiredToolchain": null,
+        "capabilities": {
+          "structure": "exact-static",
+          "imports": "supported-subset",
+          "directCalls": "supported-subset",
+          "frameworkFacts": [
+            "conventional Cargo src module layout"
+          ]
+        }
+      },
+      {
+        "id": "svelte",
+        "languages": [
+          "svelte"
+        ],
+        "parser": "svelte-static-ast",
+        "availability": "bundled",
+        "requiredToolchain": null,
+        "capabilities": {
+          "structure": "exact-static",
+          "imports": "supported-subset",
+          "directCalls": "supported-subset",
+          "frameworkFacts": [
+            "SvelteKit file-system routes"
+          ]
+        }
+      },
+      {
+        "id": "typescript",
+        "languages": [
+          "javascript",
+          "jsx",
+          "tsx",
+          "typescript"
+        ],
+        "parser": "typescript-ast",
+        "availability": "bundled",
+        "requiredToolchain": null,
+        "capabilities": {
+          "structure": "exact-static",
+          "imports": "exact-static",
+          "directCalls": "supported-subset",
+          "frameworkFacts": [
+            "BullMQ",
+            "Drizzle",
+            "Express",
+            "Fastify",
+            "NestJS",
+            "Next.js",
+            "Prisma",
+            "TypeORM",
+            "node-cron module-scope literal default-import schedules"
+          ]
+        }
+      }
+    ]
+  }
+}
