@@ -3148,6 +3148,40 @@ test("local API exposes scope metadata and diagnostic fixture flows", async () =
   }
 });
 
+test("repository watcher ignores unchanged historical events from its scanned baseline", () => {
+  let watchListener = null;
+  const signatures = new Map([
+    [path.join("/repository", "src/initial.ts"), { size: 10, mtimeMs: 100 }],
+  ]);
+  const watcher = { close() {}, on() {} };
+  const fileSystem = {
+    statSync(filename) {
+      const signature = signatures.get(filename);
+      if (!signature) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      return { ...signature, isFile: () => true };
+    },
+    watch(_root, _options, listener) { watchListener = listener; return watcher; },
+    watchFile() {},
+    unwatchFile() {},
+  };
+  const changes = [];
+  const close = watchRepository("/repository", (changedPath) => changes.push(changedPath), fileSystem, ["src/initial.ts"]);
+  watchListener("change", "src/initial.ts");
+  assert.deepEqual(changes, []);
+
+  signatures.set(path.join("/repository", "src/new.ts"), { size: 5, mtimeMs: 200 });
+  watchListener("rename", "src/new.ts");
+  watchListener("change", "src/new.ts");
+  assert.deepEqual(changes, ["src/new.ts"]);
+
+  signatures.set(path.join("/repository", "src/initial.ts"), { size: 11, mtimeMs: 300 });
+  watchListener("change", "src/initial.ts");
+  signatures.delete(path.join("/repository", "src/new.ts"));
+  watchListener("rename", "src/new.ts");
+  assert.deepEqual(changes, ["src/new.ts", "src/initial.ts", "src/new.ts"]);
+  close();
+});
+
 test("repository config watcher remains active when recursive directory watching is unavailable", () => {
   let configListener = null;
   let unwatched = null;
