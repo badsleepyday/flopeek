@@ -44,10 +44,10 @@ function createNativeFallbackCoreClient(native, javascript) {
     }
   };
   const authorityState = (key) => authorityByRoot.get(key) || "javascript";
-  const rememberGraph = (graph, fallback, key) => {
+  const rememberGraph = (graph, fallback, key, durable = true) => {
     if (graph && typeof graph === "object") {
       if (fallback) fallbackGraphs.add(graph);
-      else authorityByRoot.set(key, "native-authoritative");
+      else if (durable) authorityByRoot.set(key, "native-authoritative");
     }
     return graph;
   };
@@ -84,27 +84,30 @@ function createNativeFallbackCoreClient(native, javascript) {
   };
   const scanWithFallback = (method) => async (root, ...args) => {
     const key = authorityKey(root);
+    const durable = args[0]?.persistIdentity !== false;
     observedRoot = key;
     if (fallbackByRoot.has(key)) {
       return rememberGraph(await javascriptCore[method](root, ...args), true, key);
     }
     let baseline = null;
-    try {
-      baseline = await nativeCore.getLastCompleteGraph(root);
-      if (baseline) authorityByRoot.set(key, "native-authoritative");
-    } catch (error) {
-      if (["native-authoritative", "native-authority-unknown"].includes(authorityState(key))) {
-        authorityByRoot.set(key, "native-authority-unknown");
-        throw authorityUnknownError(root, error);
+    if (durable) {
+      try {
+        baseline = await nativeCore.getLastCompleteGraph(root);
+        if (baseline) authorityByRoot.set(key, "native-authoritative");
+      } catch (error) {
+        if (["native-authoritative", "native-authority-unknown"].includes(authorityState(key))) {
+          authorityByRoot.set(key, "native-authority-unknown");
+          throw authorityUnknownError(root, error);
+        }
+        return activateJavascriptFallback(method, root, args, key, "native-bootstrap-failed-before-authority");
       }
-      return activateJavascriptFallback(method, root, args, key, "native-bootstrap-failed-before-authority");
     }
     try {
       const graph = await nativeCore[method](root, ...args);
       fallbackByRoot.delete(key);
-      return rememberGraph(graph, false, key);
+      return rememberGraph(graph, false, key, durable);
     } catch (error) {
-      if (error?.nativeAuthorityMutation === true) {
+      if (durable && error?.nativeAuthorityMutation === true) {
         const recovered = await recoverAfterMutationFailure(root, key, baseline, error);
         if (recovered) return recovered;
         return activateJavascriptFallback(method, root, args, key, "native-mutation-failed-before-promotion");

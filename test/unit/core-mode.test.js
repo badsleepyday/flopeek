@@ -294,6 +294,31 @@ test("configured native core does not create a JavaScript authority after native
   await selected.close();
 });
 
+test("ephemeral native scans never open durable authority state", async () => {
+  let authorityReads = 0;
+  const graph = { project: { projectId: "session:ephemeral-native" } };
+  const nativeCore = {
+    ...createJsCoreClient(),
+    implementation: "native-experimental",
+    getLastCompleteGraph: async () => {
+      authorityReads += 1;
+      throw new Error("ephemeral scans must not read SQLite authority");
+    },
+    scan: async () => graph,
+  };
+  const selected = createConfiguredCoreClient({
+    mode: "native",
+    rolloutEvidence: completeEvidence(),
+    nativeCore,
+    javascript: createJsCoreClient(),
+  });
+  assert.equal(await selected.scan("ignored", { persistIdentity: false }), graph);
+  assert.equal(authorityReads, 0);
+  assert.equal(selected.authorityState, "javascript");
+  assert.deepEqual(selected.fallback, { active: false, reason: null });
+  await selected.close();
+});
+
 test("mutating timeout falls back only after SQLite proves no native promotion", async () => {
   let authorityReads = 0;
   let javascriptScans = 0;
