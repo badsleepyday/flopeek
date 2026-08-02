@@ -36,6 +36,7 @@
     "benchmarks/monorepo-package-selection.json",
     "contracts/adapter-capabilities.json",
     "contracts/go-stdlib-catalog.json",
+    "contracts/product-contract.json",
     "packaging/native-rollout-evidence.json"
   ],
   "allowedDirectories": [
@@ -54,6 +55,7 @@
     "docs/assets/screenshots/flow-lens.png",
     "package.json",
     "contracts/go-stdlib-catalog.json",
+    "contracts/product-contract.json",
     "packaging/native-rollout-evidence.json",
     "src/cli.js",
     "src/core-compatibility.js",
@@ -96,6 +98,6 @@
     ".pem",
     ".pfx"
   ],
-  "maximumEntries": 203,
+  "maximumEntries": 204,
   "maximumUnpackedBytes": 3000000
 }

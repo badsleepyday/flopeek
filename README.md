@@ -109,9 +109,22 @@ universal accuracy claims.
 | Stability | Last-complete-graph fallback, scan cancellation, cache freshness, helper cleanup, and deterministic cancellation coverage |
 | Packaging | Strict allowlist, clean-room installation verification, and tagged public-Core release checks |
 
-The same `flopeek@0.2.1-beta.3` package identity is published on npm and was
-verified through an anonymous clean-room registry installation. The repository
-metrics remain bounded source and test evidence, not live product telemetry.
+<!-- GENERATED:PRODUCT-CONTRACT:START -->
+
+## Generated product contract
+
+- Source candidate: `flopeek@0.2.1-beta.4` on npm channel `beta`.
+- Last verified preview artifact: `flopeek@0.2.1-beta.3` (`passed`).
+- Runtime: Node.js 22 or later (`>=22`).
+- Public default core: `js` / javascript.
+- Experimental native core: `native-experimental`; rollout is `incomplete` and native-default eligibility is `false`.
+- Release approvals: npm `not-approved`; GitHub Release `not-approved`.
+
+This block is generated from repository contracts; edit the source contracts and run `npm run generate:product-contract`.
+
+<!-- GENERATED:PRODUCT-CONTRACT:END -->
+
+Repository metrics remain bounded source and test evidence, not live product telemetry.
 
 </details>
 
@@ -304,6 +317,6 @@ npm run audit:package
 npm run verify:clean-room
 ```
 
-Flopeek currently requires Node.js 22 or later. The source repository is
-public, and `flopeek@0.2.1-beta.3` is available through the npm `beta` channel.
-GitHub release tags remain a separate, evidence-gated release decision.
+Runtime, source-candidate, verified-preview, and release-approval identities are
+defined by the generated product contract above. GitHub release tags remain a
+separate, evidence-gated release decision.

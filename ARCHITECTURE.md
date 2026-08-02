@@ -56,7 +56,21 @@ Status: `current`
 
 ### Runtime and packaging
 
-- Node.js 20 or later.
+<!-- GENERATED:PRODUCT-CONTRACT:START -->
+
+#### Generated product contract
+
+- Source candidate: `flopeek@0.2.1-beta.4` on npm channel `beta`.
+- Last verified preview artifact: `flopeek@0.2.1-beta.3` (`passed`).
+- Runtime: Node.js 22 or later (`>=22`).
+- Public default core: `js` / javascript.
+- Experimental native core: `native-experimental`; rollout is `incomplete` and native-default eligibility is `false`.
+- Release approvals: npm `not-approved`; GitHub Release `not-approved`.
+
+This block is generated from repository contracts; edit the source contracts and run `npm run generate:product-contract`.
+
+<!-- GENERATED:PRODUCT-CONTRACT:END -->
+
 - CommonJS modules.
 - CLI binary name: `flopeek`.
 - Source is currently distributed directly; there is no build step.

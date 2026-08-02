@@ -22,6 +22,7 @@ const lanes = {
   docs: ["test/unit/documentation-assets.test.js"],
 };
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/documentation-assets.test.js");
+for (const name of ["full", "fast", "unit", "docs"]) lanes[name].unshift("test/unit/product-contract.test.js");
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/delivery-graph.test.js");
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/continuation-checkpoint.test.js");
 for (const name of ["full", "fast", "unit"]) lanes[name].unshift("test/unit/continuation-surfaces.test.js");

@@ -223,7 +223,7 @@ fn native_js_facts(root: PathBuf) -> Result<(), String> {
         "facts": result.facts,
         "resolution": result.resolution,
         "structuralRecords": result.structural_records,
-        "limitation": "This direct facts command is diagnostic and returns source facts rather than a public graph. Strict native sessions promote supported JavaScript/TypeScript, Python, PHP, Rust, Java, Svelte, and C# adapters through Rust-owned graph and SQLite lifecycles. Go remains outside this strict native adapter set."
+        "limitation": "This direct facts command is diagnostic and returns source facts rather than a public graph. Strict native sessions promote the backend-specific adapter set declared by the generated product contract through Rust-owned graph and SQLite lifecycles."
     });
     println!(
         "{}",

@@ -2,6 +2,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { DOCUMENTS, assertGeneratedDocuments, buildProductContractFromInputs, canonicalText, loadProductContractInputs } = require("./product-contract");
 
 const root = path.resolve(__dirname, "..");
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), "utf8");
@@ -24,6 +25,15 @@ requireMatch(architecture, /Public Core releases are created from immutable tags
 rejectMatch(`${support}\n${roadmap}\n${architecture}`, /private development source of truth|private-development to public-source projection|public repository creation, visibility change/i, "retired private-to-public source model");
 rejectMatch(`${support}\n${roadmap}\n${architecture}`, /export:public-repository|audit:public-repository|public-snapshot\.yml/, "retired public snapshot tooling");
 requireMatch(support, /fixture gate reports 40\/40 expected relationships/, "current fixture corpus total");
+
+try {
+  const productContract = buildProductContractFromInputs(loadProductContractInputs(root));
+  const committed = read("contracts/product-contract.json");
+  if (canonicalText(committed) !== canonicalText(`${JSON.stringify(productContract, null, 2)}\n`)) failures.push("Generated product contract manifest is stale.");
+  assertGeneratedDocuments(productContract, Object.fromEntries(DOCUMENTS.map((name) => [name, read(name)])));
+} catch (error) {
+  failures.push(`Product contract validation failed: ${error.message}`);
+}
 
 if (failures.length) {
   process.stderr.write(`Document contract check failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}\n`);
