@@ -42,6 +42,7 @@ function protocol(crashPoint = null, requestTimeoutMs = 30_000, delayPoint = nul
     args: [],
     cwd: ROOT,
     requestTimeoutMs,
+    recoveryTimeoutMs: 30_000,
     spawn: (command, args, options) => childProcess.spawn(command, args, {
       ...options,
       env: {

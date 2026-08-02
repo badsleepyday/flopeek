@@ -22,6 +22,11 @@ class NativeProtocolClient {
     this.args = [...(options.args || [])];
     this.cwd = options.cwd;
     this.requestTimeoutMs = Math.max(1, Number(options.requestTimeoutMs) || 30_000);
+    // Mutation deadlines and authority-recovery deadlines have different
+    // responsibilities. A deliberately tight scan deadline must not also
+    // become the startup/read deadline used to determine whether SQLite
+    // committed before the timed-out response became observable.
+    this.recoveryTimeoutMs = Math.max(1, Number(options.recoveryTimeoutMs) || 30_000);
     this.spawn = options.spawn || defaultSpawn;
     this.child = null;
     this.lines = null;
@@ -34,11 +39,11 @@ class NativeProtocolClient {
     this.stderrTail = "";
   }
 
-  async start() {
+  async start(options = {}) {
     if (this.startPromise) return this.startPromise;
     if (this.child && !this.closed) return this;
     const startedAt = process.hrtime.bigint();
-    this.startPromise = this.#start(startedAt);
+    this.startPromise = this.#start(startedAt, options.timeoutMs);
     try {
       return await this.startPromise;
     } finally {
@@ -46,7 +51,7 @@ class NativeProtocolClient {
     }
   }
 
-  async #start(startedAt) {
+  async #start(startedAt, timeoutMs) {
     this.child = null;
     this.lines?.close();
     this.lines = null;
@@ -89,7 +94,7 @@ class NativeProtocolClient {
       // A spawned process is not necessarily ready to serve JSONL yet. Probe
       // the protocol before exposing the session so cold scans never fold
       // binary initialization into an unrelated source-analysis phase.
-      const health = await this.request("health");
+      const health = await this.request("health", {}, { timeoutMs });
       if (!health || typeof health !== "object" || Array.isArray(health)) {
         throw new NativeProtocolClientError("invalid-response", "Native protocol health response is invalid.");
       }
@@ -105,9 +110,12 @@ class NativeProtocolClient {
     return this;
   }
 
-  async request(method, params = {}) {
+  async request(method, params = {}, options = {}) {
     if (!this.child || this.closed) throw new NativeProtocolClientError("not-running", "Native protocol process is not running.");
     if (typeof method !== "string" || !method.trim()) throw new TypeError("Native protocol method must be a non-empty string.");
+    const timeoutMs = options.timeoutMs === undefined
+      ? this.requestTimeoutMs
+      : Math.max(1, Number(options.timeoutMs) || this.requestTimeoutMs);
     const requestId = `native-${++this.nextRequestNumber}`;
     const payload = `${JSON.stringify({ protocolVersion: NATIVE_PROTOCOL_VERSION, requestId, method, params })}\n`;
     const requestBytes = Buffer.byteLength(payload, "utf8");
@@ -139,7 +147,7 @@ class NativeProtocolClient {
             pending.reject(error);
           },
         );
-      }, this.requestTimeoutMs);
+      }, timeoutMs);
       this.pending.set(requestId, pending);
     });
     try {

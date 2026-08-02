@@ -827,13 +827,18 @@ function createNativeCoreClient(options = {}) {
     },
     getLastCompleteGraph: async (root) => {
       const durableRoot = canonicalRealpath(root);
-      await native.start();
+      // Authority recovery is a bounded control-plane read, not a retry of
+      // the timed-out mutation. Give cold process startup and the SQLite read
+      // their own deadline while preserving fail-closed behavior if either
+      // operation cannot establish the last-complete graph.
+      const recoveryOptions = { timeoutMs: native.recoveryTimeoutMs };
+      await native.start(recoveryOptions);
       let result;
       try {
         result = await native.request("getNativeCurrentPublicGraph", {
           projectRoot: durableRoot,
           projectId: durableProjectId(durableRoot),
-        });
+        }, recoveryOptions);
       } catch (error) {
         // A repository with no promoted SQLite graph has no last-complete
         // authority yet. Preserve the CoreClient null contract; transport,
