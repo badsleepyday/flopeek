@@ -46,7 +46,7 @@ function nativeMemorySnapshot(client) {
   if (!Number.isInteger(pid)) return { status: "unavailable", reason: "native-process-not-started", pid: null };
   try {
     if (process.platform === "win32") {
-      const values = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid}).WorkingSet64; (Get-Process -Id ${pid}).PeakWorkingSet64`], { encoding: "utf8" }).trim().split(/\s+/u).map(Number);
+      const values = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `$process = Get-Process -Id ${pid}; $process.WorkingSet64; $process.PeakWorkingSet64`], { encoding: "utf8" }).trim().split(/\s+/u).map(Number);
       return { status: "available", pid, rssBytes: values[0], peakRssBytes: values[1], source: "windows-working-set" };
     }
     if (process.platform === "linux") {
@@ -73,7 +73,7 @@ function combinedMemorySnapshot(nativeProtocol) {
   };
 }
 
-function startConcurrentMemoryMonitor(nativeProtocol, intervalMs = 10) {
+function startConcurrentMemoryMonitor(nativeProtocol, intervalMs = process.platform === "win32" ? 5_000 : 10) {
   let maximum = null;
   const samples = [];
   const sample = () => {
@@ -172,8 +172,8 @@ async function profileState(coordinator, core, request, phases, nativeProtocol =
   const scan = await elapsed(() => coordinator.refresh(request.changedPaths, request.reason));
   const memoryAfter = combinedMemorySnapshot(nativeProtocol);
   assert.equal(scan.result.outcome.status, "complete", scan.result.outcome.failure?.message || "Profile coordinator scan failed.");
-  const queries = await profileQueries(core, scan.result.graph, nativeProtocol);
   const concurrentMemory = stopMemoryMonitor();
+  const queries = await profileQueries(core, scan.result.graph, nativeProtocol);
   return {
     milliseconds: Number(scan.milliseconds.toFixed(3)),
     phases: phases.slice(phaseStart),
