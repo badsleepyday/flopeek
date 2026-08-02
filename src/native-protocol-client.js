@@ -112,19 +112,35 @@ class NativeProtocolClient {
     const payload = `${JSON.stringify({ protocolVersion: NATIVE_PROTOCOL_VERSION, requestId, method, params })}\n`;
     const requestBytes = Buffer.byteLength(payload, "utf8");
     const response = new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pending.delete(requestId);
-        reject(new NativeProtocolClientError("request-timeout", `Native protocol request ${requestId} timed out.`));
-      }, this.requestTimeoutMs);
-      this.pending.set(requestId, {
+      const pending = {
         resolve,
         reject,
-        timeout,
+        timeout: null,
         requestBytes,
         requestStartedAt: process.hrtime.bigint(),
         writeMilliseconds: 0,
         writeBlocked: false,
-      });
+      };
+      pending.timeout = setTimeout(() => {
+        if (this.pending.get(requestId) !== pending) return;
+        this.pending.delete(requestId);
+        const error = new NativeProtocolClientError("request-timeout", `Native protocol request ${requestId} (${method}) timed out.`);
+        error.requestId = requestId;
+        error.method = method;
+        // JSONL requests are sequential. A timed-out child cannot be reused:
+        // it may still be inside a SQLite transaction or may have committed
+        // immediately before the response became observable. Reject only
+        // after the process boundary is closed so callers can safely reopen
+        // the store and determine the last-complete authority.
+        this.#terminate(error).then(
+          () => pending.reject(error),
+          (terminationError) => {
+            error.terminationError = terminationError;
+            pending.reject(error);
+          },
+        );
+      }, this.requestTimeoutMs);
+      this.pending.set(requestId, pending);
     });
     try {
       const writeStarted = process.hrtime.bigint();
@@ -182,13 +198,19 @@ class NativeProtocolClient {
     const child = this.child;
     if (!child || this.closed) return false;
     const error = new NativeProtocolClientError("native-request-cancelled", reason);
+    await this.#terminate(error);
+    return true;
+  }
+
+  async #terminate(error) {
+    const child = this.child;
     this.closed = true;
     this.#fail(error);
+    if (!child || child.exitCode !== null || child.signalCode !== null) return;
     const exited = new Promise((resolve) => child.once("exit", resolve));
     child.stdin.destroy();
     child.kill();
     await exited;
-    return true;
   }
 
   getLastResponseStats() {

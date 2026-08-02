@@ -7,6 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const { createCoreCompatibilityDigest } = require("../../src/core-compatibility");
+const { createNativeFallbackCoreClient } = require("../../src/core-runtime");
 const { createJsCoreClient } = require("../../src/js-core-client");
 const { createNativeCoreClient } = require("../../src/native-core-client");
 const { NativeProtocolClient } = require("../../src/native-protocol-client");
@@ -35,7 +36,7 @@ function write(root, relative, body) {
   fs.writeFileSync(target, body);
 }
 
-function protocol(crashPoint = null, requestTimeoutMs = 30_000) {
+function protocol(crashPoint = null, requestTimeoutMs = 30_000, delayPoint = null, delayMs = 5_000) {
   return new NativeProtocolClient({
     command: BINARY,
     args: [],
@@ -46,17 +47,119 @@ function protocol(crashPoint = null, requestTimeoutMs = 30_000) {
       env: {
         ...process.env,
         ...(crashPoint ? { FLOPEEK_NATIVE_TEST_CRASH_POINT: crashPoint } : {}),
+        ...(delayPoint ? {
+          FLOPEEK_NATIVE_TEST_DELAY_POINT: delayPoint,
+          FLOPEEK_NATIVE_TEST_DELAY_MS: String(delayMs),
+        } : {}),
       },
     }),
   });
 }
 
-function native(crashPoint = null, requestTimeoutMs = 30_000) {
-  const session = protocol(crashPoint, requestTimeoutMs);
+function native(crashPoint = null, requestTimeoutMs = 30_000, delayPoint = null, delayMs = 5_000) {
+  const session = protocol(crashPoint, requestTimeoutMs, delayPoint, delayMs);
   const client = createNativeCoreClient({ native: session, sourceAuthority: "rust" });
   SESSIONS.set(client, session);
   return client;
 }
+
+test("timeout before SQLite promotion proves rollback before JavaScript fallback", {
+  timeout: 120_000,
+  skip: !fs.existsSync(BINARY) && "native release binary is unavailable",
+}, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-native-timeout-before-promotion-"));
+  write(root, "package.json", JSON.stringify({ name: "timeout-before-promotion" }));
+  write(root, "src/index.ts", "export function beforePromotion() { return 1; }\n");
+  const session = protocol(null, 2_000, "before-promotion", 5_000);
+  const rawNativeCore = createNativeCoreClient({ native: session, sourceAuthority: "rust" });
+  let nativeFailure = null;
+  let authorityReadFailure = null;
+  const nativeCore = {
+    ...rawNativeCore,
+    getLastCompleteGraph: async (...args) => {
+      try { return await rawNativeCore.getLastCompleteGraph(...args); }
+      catch (error) { authorityReadFailure = error; throw error; }
+    },
+    scan: async (...args) => {
+      try { return await rawNativeCore.scan(...args); }
+      catch (error) { nativeFailure = error; throw error; }
+    },
+  };
+  let javascriptScans = 0;
+  const javascript = {
+    ...createJsCoreClient(),
+    scan: async (...args) => {
+      javascriptScans += 1;
+      return createJsCoreClient().scan(...args);
+    },
+  };
+  const fallback = createNativeFallbackCoreClient(nativeCore, javascript);
+  const recoveryReader = native();
+  try {
+    const graph = await fallback.scan(root);
+    assert.equal(authorityReadFailure, null, authorityReadFailure?.stack);
+    assert.equal(nativeFailure?.code, "request-timeout", nativeFailure?.stack);
+    assert.equal(nativeFailure?.nativeAuthorityMutation, true);
+    assert.equal(javascriptScans, 1);
+    assert.equal(fallback.authorityState, "javascript");
+    assert.deepEqual(fallback.fallback, { active: true, reason: "native-mutation-failed-before-promotion" });
+    assert.equal(await recoveryReader.getLastCompleteGraph(root), null);
+    assert.equal(createCoreCompatibilityDigest(graph), createCoreCompatibilityDigest(createJsCoreClient().scan(root)));
+    assert.ok(session.child && !session.closed, "authority recovery must restart the terminated native session");
+  } finally {
+    await fallback.close();
+    await close(recoveryReader);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("timeout after SQLite commit recovers the late native graph and never runs JavaScript", {
+  timeout: 120_000,
+  skip: !fs.existsSync(BINARY) && "native release binary is unavailable",
+}, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-native-timeout-after-promotion-"));
+  write(root, "package.json", JSON.stringify({ name: "timeout-after-promotion" }));
+  write(root, "src/index.ts", "export function afterPromotion() { return 1; }\n");
+  const session = protocol(null, 2_000, "after-promotion-before-response", 5_000);
+  const rawNativeCore = createNativeCoreClient({ native: session, sourceAuthority: "rust" });
+  let nativeFailure = null;
+  let authorityReadFailure = null;
+  const nativeCore = {
+    ...rawNativeCore,
+    getLastCompleteGraph: async (...args) => {
+      try { return await rawNativeCore.getLastCompleteGraph(...args); }
+      catch (error) { authorityReadFailure = error; throw error; }
+    },
+    scan: async (...args) => {
+      try { return await rawNativeCore.scan(...args); }
+      catch (error) { nativeFailure = error; throw error; }
+    },
+  };
+  let javascriptScans = 0;
+  const javascript = {
+    ...createJsCoreClient(),
+    scan: async (...args) => {
+      javascriptScans += 1;
+      return createJsCoreClient().scan(...args);
+    },
+  };
+  const fallback = createNativeFallbackCoreClient(nativeCore, javascript);
+  try {
+    const recovered = await fallback.scan(root);
+    assert.equal(authorityReadFailure, null, authorityReadFailure?.stack);
+    assert.equal(nativeFailure?.code, "request-timeout", nativeFailure?.stack);
+    assert.equal(nativeFailure?.nativeAuthorityMutation, true);
+    assert.equal(javascriptScans, 0);
+    assert.equal(fallback.authorityState, "native-authoritative");
+    assert.deepEqual(fallback.fallback, { active: false, reason: null });
+    assert.equal(recovered.state.status, "native-last-complete");
+    assert.equal(createCoreCompatibilityDigest(recovered), createCoreCompatibilityDigest(createJsCoreClient().scan(root)));
+    assert.ok(session.child && !session.closed, "late-commit recovery must continue on a fresh native session");
+  } finally {
+    await fallback.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 async function close(client) {
   try {

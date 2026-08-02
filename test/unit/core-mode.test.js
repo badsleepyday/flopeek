@@ -294,6 +294,128 @@ test("configured native core does not create a JavaScript authority after native
   await selected.close();
 });
 
+test("mutating timeout falls back only after SQLite proves no native promotion", async () => {
+  let authorityReads = 0;
+  let javascriptScans = 0;
+  const javascript = {
+    ...createJsCoreClient(),
+    scan: async () => {
+      javascriptScans += 1;
+      return { project: { projectId: "project:javascript-after-proven-rollback" } };
+    },
+  };
+  const nativeCore = {
+    ...createJsCoreClient(),
+    implementation: "native-experimental",
+    getLastCompleteGraph: async () => {
+      authorityReads += 1;
+      return null;
+    },
+    scan: async () => {
+      const error = new Error("native request timed out before promotion");
+      error.code = "request-timeout";
+      error.nativeAuthorityMutation = true;
+      throw error;
+    },
+  };
+  const selected = createConfiguredCoreClient({
+    mode: "native",
+    rolloutEvidence: completeEvidence(),
+    nativeCore,
+    javascript,
+  });
+  const graph = await selected.scan("ignored");
+  assert.equal(graph.project.projectId, "project:javascript-after-proven-rollback");
+  assert.equal(authorityReads, 2);
+  assert.equal(javascriptScans, 1);
+  assert.equal(selected.authorityState, "javascript");
+  assert.deepEqual(selected.fallback, { active: true, reason: "native-mutation-failed-before-promotion" });
+  await selected.close();
+});
+
+test("mutating timeout after commit recovers SQLite authority without running JavaScript", async () => {
+  let authorityReads = 0;
+  let javascriptScans = 0;
+  const recovered = { project: { projectId: "project:native-late-commit" }, state: { graphVersion: 1, status: "native-last-complete" } };
+  const javascript = {
+    ...createJsCoreClient(),
+    scan: async () => {
+      javascriptScans += 1;
+      throw new Error("JavaScript must not run after a late native commit");
+    },
+  };
+  const nativeCore = {
+    ...createJsCoreClient(),
+    implementation: "native-experimental",
+    getLastCompleteGraph: async () => {
+      authorityReads += 1;
+      return authorityReads === 1 ? null : recovered;
+    },
+    scan: async () => {
+      const error = new Error("native response timed out after promotion");
+      error.code = "request-timeout";
+      error.nativeAuthorityMutation = true;
+      throw error;
+    },
+  };
+  const selected = createConfiguredCoreClient({
+    mode: "native",
+    rolloutEvidence: completeEvidence(),
+    nativeCore,
+    javascript,
+  });
+  assert.equal(await selected.scan("ignored"), recovered);
+  assert.equal(authorityReads, 2);
+  assert.equal(javascriptScans, 0);
+  assert.equal(selected.authorityState, "native-authoritative");
+  assert.deepEqual(selected.fallback, { active: false, reason: null });
+  await selected.close();
+});
+
+test("failed SQLite recovery keeps authority unknown and blocks JavaScript", async () => {
+  let authorityReads = 0;
+  let javascriptScans = 0;
+  const javascript = {
+    ...createJsCoreClient(),
+    scan: async () => {
+      javascriptScans += 1;
+      throw new Error("JavaScript must remain blocked while native authority is unknown");
+    },
+  };
+  const nativeCore = {
+    ...createJsCoreClient(),
+    implementation: "native-experimental",
+    getLastCompleteGraph: async () => {
+      authorityReads += 1;
+      if (authorityReads === 1) return null;
+      throw new Error("SQLite recovery unavailable");
+    },
+    scan: async () => {
+      const error = new Error("native request timed out");
+      error.code = "request-timeout";
+      error.nativeAuthorityMutation = true;
+      throw error;
+    },
+  };
+  const selected = createConfiguredCoreClient({
+    mode: "native",
+    rolloutEvidence: completeEvidence(),
+    nativeCore,
+    javascript,
+  });
+  await assert.rejects(() => selected.scan("ignored"), (error) => {
+    assert.equal(error.code, "native-authority-unknown");
+    assert.equal(error.triggerCode, "request-timeout");
+    assert.match(error.recoveryError.message, /SQLite recovery unavailable/);
+    return true;
+  });
+  assert.equal(authorityReads, 2);
+  assert.equal(javascriptScans, 0);
+  assert.equal(selected.authorityState, "native-authority-unknown");
+  assert.deepEqual(selected.fallback, { active: false, reason: null });
+  await selected.close();
+});
+
 test("surface presentation mode cannot accidentally select a core implementation", async () => {
   const client = createSurfaceCoreClient({ mode: "overview" });
   assert.equal(client.implementation, "javascript");

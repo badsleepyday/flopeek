@@ -2,6 +2,7 @@
 
 const path = require("node:path");
 const { selectCoreMode } = require("./core-mode");
+const { canonicalRealpath } = require("./canonical-path");
 const { CORE_CLIENT_SCHEMA, assertCoreClient } = require("./core-client");
 const { createJsCoreClient } = require("./js-core-client");
 const { createNativeCoreClient } = require("./native-core-client");
@@ -32,23 +33,84 @@ function createNativeFallbackCoreClient(native, javascript) {
   const nativeCore = assertCoreClient(native);
   const javascriptCore = assertCoreClient(javascript);
   const fallbackGraphs = new WeakSet();
-  let nativeAuthoritative = false;
-  let javascriptFallback = false;
-  const rememberGraph = (graph, fallback) => {
+  const authorityByRoot = new Map();
+  const fallbackByRoot = new Map();
+  let observedRoot = null;
+  const authorityKey = (root) => {
+    try {
+      return canonicalRealpath(root);
+    } catch {
+      return path.resolve(String(root));
+    }
+  };
+  const authorityState = (key) => authorityByRoot.get(key) || "javascript";
+  const rememberGraph = (graph, fallback, key) => {
     if (graph && typeof graph === "object") {
       if (fallback) fallbackGraphs.add(graph);
-      else nativeAuthoritative = true;
+      else authorityByRoot.set(key, "native-authoritative");
     }
     return graph;
   };
-  const scanWithFallback = (method) => async (...args) => {
-    if (javascriptFallback) return rememberGraph(await javascriptCore[method](...args), true);
+  const activateJavascriptFallback = async (method, root, args, key, reason) => {
+    authorityByRoot.set(key, "javascript");
+    fallbackByRoot.set(key, reason);
+    return rememberGraph(await javascriptCore[method](root, ...args), true, key);
+  };
+  const authorityUnknownError = (root, trigger, recovery = null) => {
+    const error = new Error(`Native graph authority is unknown for ${path.resolve(String(root))}; JavaScript fallback is blocked until SQLite last-complete recovery succeeds.`);
+    error.code = "native-authority-unknown";
+    error.triggerCode = trigger?.code || null;
+    error.cause = trigger;
+    if (recovery) error.recoveryError = recovery;
+    return error;
+  };
+  const recoverAfterMutationFailure = async (root, key, baseline, trigger) => {
+    authorityByRoot.set(key, "native-authority-unknown");
     try {
-      return rememberGraph(await nativeCore[method](...args), false);
+      const recovered = await nativeCore.getLastCompleteGraph(root);
+      if (recovered) {
+        authorityByRoot.set(key, "native-authoritative");
+        fallbackByRoot.delete(key);
+        return rememberGraph(recovered, false, key);
+      }
+      if (baseline) throw authorityUnknownError(root, trigger);
+      authorityByRoot.set(key, "javascript");
+      return null;
+    } catch (recoveryError) {
+      authorityByRoot.set(key, "native-authority-unknown");
+      if (recoveryError?.code === "native-authority-unknown") throw recoveryError;
+      throw authorityUnknownError(root, trigger, recoveryError);
+    }
+  };
+  const scanWithFallback = (method) => async (root, ...args) => {
+    const key = authorityKey(root);
+    observedRoot = key;
+    if (fallbackByRoot.has(key)) {
+      return rememberGraph(await javascriptCore[method](root, ...args), true, key);
+    }
+    let baseline = null;
+    try {
+      baseline = await nativeCore.getLastCompleteGraph(root);
+      if (baseline) authorityByRoot.set(key, "native-authoritative");
     } catch (error) {
-      if (nativeAuthoritative) throw error;
-      javascriptFallback = true;
-      return rememberGraph(await javascriptCore[method](...args), true);
+      if (["native-authoritative", "native-authority-unknown"].includes(authorityState(key))) {
+        authorityByRoot.set(key, "native-authority-unknown");
+        throw authorityUnknownError(root, error);
+      }
+      return activateJavascriptFallback(method, root, args, key, "native-bootstrap-failed-before-authority");
+    }
+    try {
+      const graph = await nativeCore[method](root, ...args);
+      fallbackByRoot.delete(key);
+      return rememberGraph(graph, false, key);
+    } catch (error) {
+      if (error?.nativeAuthorityMutation === true) {
+        const recovered = await recoverAfterMutationFailure(root, key, baseline, error);
+        if (recovered) return recovered;
+        return activateJavascriptFallback(method, root, args, key, "native-mutation-failed-before-promotion");
+      }
+      if (["native-authoritative", "native-authority-unknown"].includes(authorityState(key))) throw error;
+      return activateJavascriptFallback(method, root, args, key, "native-bootstrap-failed-before-authority");
     }
   };
   const query = (method) => async (graph, ...args) => {
@@ -57,21 +119,36 @@ function createNativeFallbackCoreClient(native, javascript) {
   };
   return Object.freeze({
     schemaVersion: CORE_CLIENT_SCHEMA,
-    get implementation() { return javascriptFallback ? "javascript" : nativeCore.implementation; },
+    get implementation() { return observedRoot && fallbackByRoot.has(observedRoot) ? "javascript" : nativeCore.implementation; },
     // Preserve native capability metadata through the rollback boundary so
     // product orchestration can select the native bounded lifecycle without
     // mistaking this explicit fallback wrapper for a JavaScript core.
-    get sourceAuthority() { return javascriptFallback ? null : nativeCore.sourceAuthority; },
-    get parserHost() { return javascriptFallback ? null : nativeCore.parserHost; },
-    get factEnvelopeHost() { return javascriptFallback ? null : nativeCore.factEnvelopeHost; },
+    get sourceAuthority() { return observedRoot && fallbackByRoot.has(observedRoot) ? null : nativeCore.sourceAuthority; },
+    get parserHost() { return observedRoot && fallbackByRoot.has(observedRoot) ? null : nativeCore.parserHost; },
+    get factEnvelopeHost() { return observedRoot && fallbackByRoot.has(observedRoot) ? null : nativeCore.factEnvelopeHost; },
+    get authorityState() { return observedRoot ? authorityState(observedRoot) : "javascript"; },
     get fallback() {
-      return javascriptFallback
-        ? Object.freeze({ active: true, reason: "native-bootstrap-failed-before-authority" })
+      const reason = observedRoot ? fallbackByRoot.get(observedRoot) : null;
+      return reason
+        ? Object.freeze({ active: true, reason })
         : Object.freeze({ active: false, reason: null });
     },
     scan: scanWithFallback("scan"),
     refresh: scanWithFallback("refresh"),
-    getLastCompleteGraph: (...args) => (nativeAuthoritative ? nativeCore : javascriptCore).getLastCompleteGraph(...args),
+    getLastCompleteGraph: async (root, ...args) => {
+      const key = authorityKey(root);
+      observedRoot = key;
+      if (fallbackByRoot.has(key)) return javascriptCore.getLastCompleteGraph(root, ...args);
+      try {
+        const graph = await nativeCore.getLastCompleteGraph(root, ...args);
+        if (graph) authorityByRoot.set(key, "native-authoritative");
+        else if (authorityState(key) === "native-authority-unknown") authorityByRoot.set(key, "javascript");
+        return graph;
+      } catch (error) {
+        if (authorityState(key) === "native-authority-unknown") throw authorityUnknownError(root, error);
+        throw error;
+      }
+    },
     materializeGraph: query("materializeGraph"),
     getScanStatus: query("getScanStatus"),
     getProjectOverview: query("getProjectOverview"),
