@@ -87,12 +87,13 @@ const patterns = {
 const args = ["--test", "--test-concurrency=4"];
 if (patterns[lane]) args.push(`--test-name-pattern=${patterns[lane]}`);
 if (lane === "public-source") {
-  const isolated = ["test/scanner.test.js", "test/unit/native-incremental-coordinator.test.js"];
+  const isolated = ["test/scanner.test.js", "test/unit/native-incremental-coordinator.test.js", "test/unit/scan-coordinator.test.js"];
   const shared = lanes[lane].filter((file) => !isolated.includes(file));
   for (const batch of [
     ["--test", "--test-concurrency=4", ...shared],
     ["--test", "--test-concurrency=1", "test/scanner.test.js"],
     ["--test", "--test-concurrency=1", "test/unit/native-incremental-coordinator.test.js"],
+    ["--test", "--test-concurrency=1", "test/unit/scan-coordinator.test.js"],
   ]) {
     const result = spawnSync(process.execPath, batch, { cwd: root, stdio: "inherit" });
     if (result.status !== 0) process.exit(result.status || 1);

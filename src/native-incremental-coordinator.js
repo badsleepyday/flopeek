@@ -6,6 +6,7 @@ const { createHash } = require("node:crypto");
 const { NATIVE_PROTOCOL_VERSION, NativeProtocolClient } = require("./native-protocol-client");
 const { createRepositoryScanner } = require("./scanner");
 const { nativePlatformPackageName, nativePlatformTarget } = require("./native-platform-targets");
+const { canonicalRealpath } = require("./canonical-path");
 
 const NATIVE_MANIFEST_SCHEMA = "flopeek-native-incremental-manifest/v1";
 const NATIVE_RECORD_CACHE_SCHEMA = "flopeek-native-js-record-cache/v1";
@@ -157,7 +158,7 @@ async function storeRecords(session, root, manifest, records) {
 }
 
 async function scanWithNativeIncremental(inputRoot, options = {}) {
-  const root = fs.realpathSync(inputRoot);
+  const root = canonicalRealpath(inputRoot);
   const ownsSession = !options.session;
   const session = options.session || createNativeIncrementalSession(options.native, options);
   const sessionWasRunning = Boolean(session.child && !session.closed);

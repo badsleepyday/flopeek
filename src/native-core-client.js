@@ -1,6 +1,5 @@
 "use strict";
 
-const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const { CORE_CLIENT_SCHEMA, assertCoreClient } = require("./core-client");
@@ -10,6 +9,7 @@ const { createNativeIncrementalSession } = require("./native-incremental-coordin
 const { resolveProjectIdentity } = require("./project-identity");
 const { createRepositoryScanner } = require("./scanner");
 const { readRepositoryScope } = require("./scope");
+const { canonicalRealpath } = require("./canonical-path");
 const {
   createStructuralFactBatchFromPrepared,
   createStructuralFactPatch,
@@ -121,7 +121,7 @@ function nativeFlowMetadataGraph(graph, lens) {
 }
 
 async function prepareRustNativeBatch(native, inputRoot, options = {}) {
-  const root = fs.realpathSync(inputRoot);
+  const root = canonicalRealpath(inputRoot);
   const request = (changedPaths) => native.request("nativeJsStructuralFacts", {
     projectRoot: root,
     ...(Array.isArray(changedPaths) ? { changedPaths } : {}),
@@ -392,7 +392,7 @@ function createNativeCoreClient(options = {}) {
   const ephemeralBatches = new WeakMap();
   const sourceAuthority = options.sourceAuthority === "rust" ? "rust" : "javascript-parser-host";
   const cacheDisabledProjectId = (root) => {
-    const canonicalRoot = fs.realpathSync(root);
+    const canonicalRoot = canonicalRealpath(root);
     let projectId = cacheDisabledProjectIds.get(canonicalRoot);
     if (!projectId) {
       projectId = `session:${options.sessionId || randomUUID()}`;
@@ -411,7 +411,7 @@ function createNativeCoreClient(options = {}) {
       // compatibility snapshot from recognizing its preceding graph handle.
       .filter(([key, value]) => key !== "onProfile" && key !== "changedPaths" && key !== "nativeGraphHandle" && typeof value !== "function")
       .sort(([left], [right]) => left.localeCompare(right)));
-    return `${cacheDisabled ? "session" : "persistent"}:${fs.realpathSync(root)}:${JSON.stringify(optionsForKey)}`;
+    return `${cacheDisabled ? "session" : "persistent"}:${canonicalRealpath(root)}:${JSON.stringify(optionsForKey)}`;
   };
   const requireBatch = (graph) => {
     const batch = batches.get(graph);
@@ -491,7 +491,7 @@ function createNativeCoreClient(options = {}) {
         });
         scanners.set(key, scanner);
       }
-      const authorityRoot = scanner?.root || fs.realpathSync(root);
+      const authorityRoot = scanner?.root || canonicalRealpath(root);
       const previous = sourceAuthority === "rust"
         ? nativeSourceStates.get(key)
         : cacheDisabled
@@ -811,7 +811,7 @@ function createNativeCoreClient(options = {}) {
       return scan(root, { ...scanOptions, changedPaths });
     },
     getLastCompleteGraph: async (root) => {
-      const durableRoot = fs.realpathSync(root);
+      const durableRoot = canonicalRealpath(root);
       await native.start();
       const result = await native.request("getNativeCurrentPublicGraph", {
         projectRoot: durableRoot,

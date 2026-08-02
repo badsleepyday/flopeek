@@ -12,6 +12,7 @@ const { createScanCoordinator } = require("./scan-coordinator");
 const { listServeWorkspace, registerServeWorkspace, unregisterServeWorkspace } = require("./serve-workspace");
 const { parseFlowLensMaxStepsQuery } = require("./flow-lens-options");
 const { createSurfaceCoreRuntime } = require("./core-runtime");
+const { canonicalRealpath } = require("./canonical-path");
 
 const PUBLIC_DIRECTORY = path.join(__dirname, "..", "public");
 const VENDOR_ASSETS = new Map([
@@ -100,8 +101,14 @@ function shouldRefreshForChange(filename) {
   return !normalized.split("/").some((segment) => WATCH_IGNORED_DIRECTORIES.has(segment));
 }
 
+function nativeRealpath(root, fileSystem = fs) {
+  if (typeof fileSystem.realpathSync !== "function") return root;
+  return canonicalRealpath(root, fileSystem);
+}
+
 function watchRepository(root, onChange, fileSystem = fs) {
-  const configPath = path.join(root, ".flopeek", "config.json");
+  const watchRoot = nativeRealpath(root, fileSystem);
+  const configPath = path.join(watchRoot, ".flopeek", "config.json");
   const onConfigChange = (current, previous) => {
     if (!current?.nlink && !previous?.nlink) return;
     onChange(".flopeek/config.json");
@@ -109,7 +116,7 @@ function watchRepository(root, onChange, fileSystem = fs) {
   fileSystem.watchFile(configPath, { interval: 200, persistent: false }, onConfigChange);
   let watcher = null;
   try {
-    watcher = fileSystem.watch(root, { recursive: true }, (_eventType, filename) => {
+    watcher = fileSystem.watch(watchRoot, { recursive: true }, (_eventType, filename) => {
       const changedPath = filename ? String(filename) : null;
       if (shouldRefreshForChange(changedPath)) onChange(changedPath);
     });
@@ -166,7 +173,7 @@ async function listenOnAvailablePort(server, requestedPort, options = {}) {
 }
 
 async function startServer(options) {
-  let root = fs.realpathSync(options.root);
+  let root = nativeRealpath(options.root);
   const ownsCoreClient = options.ownsCoreClient === true || !options.coreClient;
   const runtime = options.coreClient ? null : createSurfaceCoreRuntime(options);
   const core = options.coreClient || runtime.core;
@@ -671,7 +678,7 @@ async function startServer(options) {
         const body = await readBody(request);
         if (body.root) {
           if (coordinator.isRunning()) throw requestError(409, "Wait for or cancel the active bounded scan before switching repositories.");
-          const requestedRoot = fs.realpathSync(String(body.root));
+          const requestedRoot = canonicalRealpath(String(body.root));
           if (!fs.statSync(requestedRoot).isDirectory()) throw new Error("Scan target must be a directory.");
           if (requestedRoot === root) return sendManualScanResult(response);
           const candidateCoordinator = createCoordinator(requestedRoot, { broadcastProgress: false });

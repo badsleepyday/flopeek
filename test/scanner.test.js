@@ -3178,6 +3178,51 @@ test("repository config watcher remains active when recursive directory watching
   });
 });
 
+test("repository watcher resolves Windows short paths before starting recursive watches", () => {
+  let watchedRoot = null;
+  let watchedConfig = null;
+  const realpathSync = () => { throw new Error("generic realpath must not be used"); };
+  realpathSync.native = (root) => {
+    assert.equal(root, "C:\\RUNNER~1\\AppData\\Local\\Temp\\repository");
+    return "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\repository";
+  };
+  const watcher = { close() {}, on() {} };
+  const fileSystem = {
+    realpathSync,
+    watch(root) { watchedRoot = root; return watcher; },
+    watchFile(filename) { watchedConfig = filename; },
+    unwatchFile() {},
+  };
+  const close = watchRepository("C:\\RUNNER~1\\AppData\\Local\\Temp\\repository", () => {}, fileSystem);
+  assert.equal(watchedRoot, "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\repository");
+  assert.equal(watchedConfig, path.join(watchedRoot, ".flopeek", "config.json"));
+  close();
+});
+
+test("Windows short and long roots retain one graph identity and adjacent delta", { skip: process.platform !== "win32" }, () => {
+  const shortRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-canonical-root-"));
+  try {
+    const longRoot = fs.realpathSync.native(shortRoot);
+    write(shortRoot, "package.json", JSON.stringify({ name: "canonical-root" }));
+    write(shortRoot, "src/index.js", "module.exports = 1;\n");
+    const first = scanRepository(shortRoot, { persistIdentity: true });
+    const firstWrite = writeGraphCache(shortRoot, first, { reason: "canonical-root-initial" });
+    assert.equal(first.project.root, longRoot);
+    assert.equal(firstWrite.graphState.graphVersion, 1);
+
+    write(shortRoot, "src/index.js", "module.exports = 2;\n");
+    const scanner = createRepositoryScanner(longRoot, { persistIdentity: true });
+    const second = scanner.scan(["src/index.js"]);
+    const secondWrite = writeGraphCache(longRoot, second, { reason: "canonical-root-refresh", changedPaths: ["src/index.js"] });
+    assert.equal(second.project.root, longRoot);
+    assert.equal(secondWrite.previousCache, "valid");
+    assert.equal(secondWrite.graphState.graphVersion, 2);
+    assert.deepEqual(secondWrite.delta.changedPaths, ["src/index.js"]);
+  } finally {
+    fs.rmSync(shortRoot, { recursive: true, force: true });
+  }
+});
+
 test("serve watches repository scope configuration changes", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-scope-watch-"));
   let app;

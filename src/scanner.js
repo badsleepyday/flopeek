@@ -19,6 +19,7 @@ const { advanceSessionGraph } = require("./session-graph-state");
 const { resolveProjectIdentity } = require("./project-identity");
 const { createFrameworkCommandFlowEntry, createHttpFlowEntry, createNodeCronScheduleFlowEntry, createPackageScriptFlowEntry, isSupportedFlowEntryNode } = require("./flow-entry");
 const { compareCollation } = require("./collation");
+const { canonicalRealpath } = require("./canonical-path");
 
 const ADAPTER_REGISTRY = getAdapterRegistry();
 const RESOLVE_EXTENSIONS = ["", ".js", ".cjs", ".mjs", ".jsx", ".ts", ".tsx", ".svelte", ".vue", ".json"];
@@ -3559,7 +3560,7 @@ function graphContextMayHaveChanged(root, relativePath) {
 }
 
 function createRepositoryScanner(inputRoot, options = {}) {
-  const root = fs.realpathSync(inputRoot);
+  const root = canonicalRealpath(inputRoot);
   const persistIdentity = options.persistIdentity !== false;
   const sessionProjectId = persistIdentity ? null : options.sessionProjectId || `session:${randomUUID()}`;
   const records = new Map();

@@ -1,8 +1,8 @@
 "use strict";
 
-const fs = require("node:fs");
 const { CORE_CLIENT_SCHEMA, assertCoreClient } = require("./core-client");
 const { createRepositoryScanner } = require("./scanner");
+const { canonicalRealpath } = require("./canonical-path");
 const {
   findNodes,
   getAgentBootstrap,
@@ -28,7 +28,7 @@ function createJsCoreClient() {
     const optionsForKey = Object.fromEntries(Object.entries(scanOptions)
       .filter(([key, value]) => key !== "changedPaths" && typeof value !== "function")
       .sort(([left], [right]) => left.localeCompare(right)));
-    return `${fs.realpathSync(root)}:${JSON.stringify(optionsForKey)}`;
+    return `${canonicalRealpath(root)}:${JSON.stringify(optionsForKey)}`;
   };
   const scan = (root, options = {}) => {
     const { changedPaths = null, ...scannerOptions } = options;

@@ -8,6 +8,7 @@ const { compareGitSnapshots, createGitSnapshot } = require("./history");
 const { DEFAULT_FLOW_LENS_MAX_STEPS, MAX_FLOW_LENS_STEPS, MIN_FLOW_LENS_STEPS } = require("./flow-lens-options");
 const { createSurfaceCoreRuntime } = require("./core-runtime");
 const { MATERIALIZED, mcpSurfaceCategory } = require("./native-surface-contract");
+const { canonicalRealpath } = require("./canonical-path");
 
 function graphDeltaCompatibilityProjection(delta, previousGraph, graph) {
   if (!delta || delta.available === true) return delta;
@@ -44,7 +45,7 @@ async function createMcpServer(options) {
     import("@modelcontextprotocol/sdk/server/mcp.js"),
     import("zod"),
   ]);
-  const root = fs.realpathSync(options.root);
+  const root = canonicalRealpath(options.root);
   if (!fs.statSync(root).isDirectory()) throw new Error("MCP repository target must be a directory.");
   const ownsCoreClient = options.ownsCoreClient === true || !options.coreClient;
   const runtime = options.coreClient ? null : createSurfaceCoreRuntime(options);

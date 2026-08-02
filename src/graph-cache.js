@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { GraphSchemaError, graphContractSummary, parseGraphCache, validateGraph } = require("./graph-schema");
+const { canonicalRealpath } = require("./canonical-path");
 
 const CACHE_RELATIVE_PATH = ".flopeek/graph.json";
 const TRANSIENT_RENAME_CODES = new Set(["EACCES", "EBUSY", "EPERM"]);
@@ -70,7 +71,7 @@ function atomicWriteJson(target, value, options = {}) {
 }
 
 function validateGraphForCache(root, graph, options = {}) {
-  const expectedRoot = fs.realpathSync(root);
+  const expectedRoot = canonicalRealpath(root);
   try {
     validateGraph(graph, { expectedRoot, expectedProjectId: options.expectedProjectId });
   } catch (error) {
@@ -89,7 +90,7 @@ function writeGraphCache(root, graph, options = {}) {
 function readGraphCacheResult(root, options = {}) {
   let expectedRoot;
   try {
-    expectedRoot = fs.realpathSync(root);
+    expectedRoot = canonicalRealpath(root);
   } catch (error) {
     return { status: "unavailable", path: cachePath(root), diagnostics: [{ code: "repository-unavailable", message: `Repository root is unavailable (${error.message}).`, path: null }] };
   }
