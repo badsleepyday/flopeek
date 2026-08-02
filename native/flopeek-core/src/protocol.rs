@@ -17,8 +17,9 @@ use crate::store::{
     NativeGraphPromotionRequest, begin_graph_build, complete_graph_delta,
     complete_graph_delta_by_public_versions, complete_graph_payload,
     complete_graph_payload_by_public_version, current_complete_graph, current_structural_batch,
-    initialize_native_store, open_native_store, promote_graph_build_with_changed_records,
-    recover_incomplete_graph_builds, retained_public_delta_range,
+    delay_at_test_boundary, initialize_native_store, open_native_store,
+    promote_graph_build_with_changed_records, recover_incomplete_graph_builds,
+    retained_public_delta_range,
 };
 use crate::structural_contract::validate_structural_records;
 use crate::structural_graph::{
@@ -8794,7 +8795,10 @@ fn handle_request(
         },
         "refreshNativePersistentProject" => {
             match refresh_native_persistent_project(session, &request.params) {
-                Ok(result) => (success_response(request.request_id, result), false),
+                Ok(result) => {
+                    delay_at_test_boundary("after-promotion-before-response");
+                    (success_response(request.request_id, result), false)
+                }
                 Err(error) => (
                     error_response(Some(request.request_id), error.code, error.message),
                     false,
@@ -8995,7 +8999,10 @@ fn handle_request(
         },
         "persistNativePublicGraph" => {
             match persist_native_public_graph(session, &mut request.params) {
-                Ok(result) => (success_response(request.request_id, result), false),
+                Ok(result) => {
+                    delay_at_test_boundary("after-promotion-before-response");
+                    (success_response(request.request_id, result), false)
+                }
                 Err(error) => (
                     error_response(Some(request.request_id), error.code, error.message),
                     false,
@@ -9004,7 +9011,10 @@ fn handle_request(
         }
         "persistNativePublicGraphPatch" => {
             match persist_native_public_graph_patch(session, &request.params) {
-                Ok(result) => (success_response(request.request_id, result), false),
+                Ok(result) => {
+                    delay_at_test_boundary("after-promotion-before-response");
+                    (success_response(request.request_id, result), false)
+                }
                 Err(error) => (
                     error_response(Some(request.request_id), error.code, error.message),
                     false,

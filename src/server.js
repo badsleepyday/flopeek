@@ -106,8 +106,24 @@ function nativeRealpath(root, fileSystem = fs) {
   return canonicalRealpath(root, fileSystem);
 }
 
-function watchRepository(root, onChange, fileSystem = fs) {
+function watchedFileSignature(root, changedPath, fileSystem) {
+  if (!changedPath) return null;
+  try {
+    const stats = fileSystem.statSync(path.join(root, changedPath));
+    if (!stats.isFile()) return null;
+    return `${stats.size}:${stats.mtimeMs}`;
+  } catch {
+    return null;
+  }
+}
+
+function watchRepository(root, onChange, fileSystem = fs, baselinePaths = []) {
   const watchRoot = nativeRealpath(root, fileSystem);
+  const fileSignatures = new Map(baselinePaths.flatMap((candidate) => {
+    const changedPath = String(candidate).replaceAll("\\", "/");
+    const signature = watchedFileSignature(watchRoot, changedPath, fileSystem);
+    return signature === null ? [] : [[changedPath, signature]];
+  }));
   const configPath = path.join(watchRoot, ".flopeek", "config.json");
   const onConfigChange = (current, previous) => {
     if (!current?.nlink && !previous?.nlink) return;
@@ -117,8 +133,16 @@ function watchRepository(root, onChange, fileSystem = fs) {
   let watcher = null;
   try {
     watcher = fileSystem.watch(watchRoot, { recursive: true }, (_eventType, filename) => {
-      const changedPath = filename ? String(filename) : null;
-      if (shouldRefreshForChange(changedPath)) onChange(changedPath);
+      const changedPath = filename ? String(filename).replaceAll("\\", "/") : null;
+      if (!shouldRefreshForChange(changedPath)) return;
+      if (changedPath) {
+        const previousSignature = fileSignatures.get(changedPath);
+        const currentSignature = watchedFileSignature(watchRoot, changedPath, fileSystem);
+        if (previousSignature !== undefined && currentSignature === previousSignature) return;
+        if (currentSignature === null) fileSignatures.delete(changedPath);
+        else fileSignatures.set(changedPath, currentSignature);
+      }
+      onChange(changedPath);
     });
     watcher.on("error", () => {});
   } catch {}
@@ -337,7 +361,10 @@ async function startServer(options) {
   };
   const startWatching = () => {
     closeWatcher();
-    closeWatcher = options.watch === false ? () => {} : watchRepository(root, scheduleRefresh);
+    const baselinePaths = materializedGraph?.nodes
+      ?.filter((node) => node.kind === "file" && typeof node.path === "string")
+      .map((node) => node.path) || [];
+    closeWatcher = options.watch === false ? () => {} : watchRepository(root, scheduleRefresh, fs, baselinePaths);
   };
 
   const server = http.createServer(async (request, response) => {

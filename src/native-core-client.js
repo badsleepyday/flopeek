@@ -476,6 +476,8 @@ function createNativeCoreClient(options = {}) {
   ]);
 
   const scan = async (root, scanOptions = {}) => {
+    let persistentMutationStarted = false;
+    try {
       const profile = typeof scanOptions.onProfile === "function" ? scanOptions.onProfile : null;
       const report = (phase, started, extra = {}) => profile?.({ phase, milliseconds: Number(process.hrtime.bigint() - started) / 1_000_000, ...extra });
       const scanStarted = process.hrtime.bigint();
@@ -546,11 +548,14 @@ function createNativeCoreClient(options = {}) {
         ? await (async () => {
           await nativeStartPromise;
           throwIfNativeScanCancelled(scanOptions.signal);
-          const request = (changedPaths) => requestNativeWithSignal(native, scanOptions.signal, "refreshNativePersistentProject", {
-            projectRoot: authorityRoot,
-            ...(Array.isArray(changedPaths) ? { changedPaths } : {}),
-            ...(nativeGraphHandleOnly ? { returnPublicGraph: false } : {}),
-          });
+          const request = (changedPaths) => {
+            persistentMutationStarted = true;
+            return requestNativeWithSignal(native, scanOptions.signal, "refreshNativePersistentProject", {
+              projectRoot: authorityRoot,
+              ...(Array.isArray(changedPaths) ? { changedPaths } : {}),
+              ...(nativeGraphHandleOnly ? { returnPublicGraph: false } : {}),
+            });
+          };
           try {
             directEphemeralResult = await request(scanOptions.changedPaths);
           } catch (error) {
@@ -649,6 +654,7 @@ function createNativeCoreClient(options = {}) {
         if (patch) {
           try {
             usedFactPatch = true;
+            persistentMutationStarted = true;
             result = await requestNativeWithSignal(native, scanOptions.signal, "persistNativePublicGraphPatch", { ...patch, projectRoot: authorityRoot });
             batch = materializeStructuralFactPatch(previous.batch, patch, result?.factsDigest);
           } catch (error) {
@@ -660,10 +666,12 @@ function createNativeCoreClient(options = {}) {
             usedFactPatch = false;
             profile?.({ phase: "native-core-fact-patch-fallback", milliseconds: 0, reason: error.code });
             batch = createStructuralFactBatchFromPrepared(publicEnvelope, prepared, preparedFacts);
+            persistentMutationStarted = true;
             result = await requestNativeWithSignal(native, scanOptions.signal, "persistNativePublicGraph", { ...batch, projectRoot: authorityRoot });
           }
         } else {
           if (!batch) batch = createStructuralFactBatchFromPrepared(publicEnvelope, prepared, preparedFacts);
+          persistentMutationStarted = true;
           result = await requestNativeWithSignal(native, scanOptions.signal, "persistNativePublicGraph", { ...batch, projectRoot: authorityRoot });
         }
       }
@@ -784,6 +792,13 @@ function createNativeCoreClient(options = {}) {
       else if (!cacheDisabled) persistentBatches.set(scanner, state);
       report("native-core-scan-total", scanStarted, { cacheDisabled, scannerReused });
       return result.graph;
+    } catch (cause) {
+      if (!persistentMutationStarted) throw cause;
+      const error = cause instanceof Error ? cause : new Error(String(cause));
+      error.nativeAuthorityMutation = true;
+      error.nativeAuthorityRoot = canonicalRealpath(root);
+      throw error;
+    }
     };
 
   const getNativeFlowContextCard = async (graph, flowId, format = "json", scope = "application", queryOptions = {}) => {
@@ -812,11 +827,25 @@ function createNativeCoreClient(options = {}) {
     },
     getLastCompleteGraph: async (root) => {
       const durableRoot = canonicalRealpath(root);
-      await native.start();
-      const result = await native.request("getNativeCurrentPublicGraph", {
-        projectRoot: durableRoot,
-        projectId: durableProjectId(durableRoot),
-      });
+      // Authority recovery is a bounded control-plane read, not a retry of
+      // the timed-out mutation. Give cold process startup and the SQLite read
+      // their own deadline while preserving fail-closed behavior if either
+      // operation cannot establish the last-complete graph.
+      const recoveryOptions = { timeoutMs: native.recoveryTimeoutMs };
+      await native.start(recoveryOptions);
+      let result;
+      try {
+        result = await native.request("getNativeCurrentPublicGraph", {
+          projectRoot: durableRoot,
+          projectId: durableProjectId(durableRoot),
+        }, recoveryOptions);
+      } catch (error) {
+        // A repository with no promoted SQLite graph has no last-complete
+        // authority yet. Preserve the CoreClient null contract; transport,
+        // store-open, and integrity failures remain loud.
+        if (error?.code === "missing-native-graph") return null;
+        throw error;
+      }
       if (!result?.graph) return null;
       let graphHandle;
       try {

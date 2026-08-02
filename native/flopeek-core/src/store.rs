@@ -4,7 +4,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::thread;
+use std::time::{Duration, Instant};
 
 pub const NATIVE_STORE_SCHEMA_VERSION: i64 = 12;
 pub const NATIVE_STORE_RELATIVE_PATH: &str = ".flopeek/native-core.sqlite3";
@@ -20,6 +21,22 @@ fn crash_at_test_boundary(boundary: &str) {
     if std::env::var("FLOPEEK_NATIVE_TEST_CRASH_POINT").as_deref() == Ok(boundary) {
         std::process::abort();
     }
+}
+
+// Deliberately test-only timing boundary for exercising process termination on
+// both sides of the durable SQLite commit. The exact environment variables are
+// never inferred from product configuration, and the bounded duration prevents
+// a malformed test invocation from hanging a worker indefinitely.
+pub(crate) fn delay_at_test_boundary(boundary: &str) {
+    if std::env::var("FLOPEEK_NATIVE_TEST_DELAY_POINT").as_deref() != Ok(boundary) {
+        return;
+    }
+    let milliseconds = std::env::var("FLOPEEK_NATIVE_TEST_DELAY_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| (1..=60_000).contains(value))
+        .expect("FLOPEEK_NATIVE_TEST_DELAY_MS must be between 1 and 60000");
+    thread::sleep(Duration::from_millis(milliseconds));
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1266,6 +1283,7 @@ pub fn promote_graph_build_with_changed_records(
         rusqlite::params![request.graph_version, project_pk],
     )?;
     let project_pointer_ms = project_pointer_started.elapsed().as_millis() as u64;
+    delay_at_test_boundary("before-promotion");
     transaction.commit()?;
     Ok(NativeGraphPromotionTiming {
         public_cache_ms,
