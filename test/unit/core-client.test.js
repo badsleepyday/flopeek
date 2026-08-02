@@ -1061,6 +1061,8 @@ test("experimental NativeCoreClient preserves graph, core-query, and stale-conte
     assert.deepEqual(await native.getContextCard(first, node.id), javascript.getContextCard(first, node.id), `${fixture.id}: nodeContextCard`);
     assert.deepEqual(await native.getEntryFlows(first, "", "application"), javascript.getEntryFlows(first, "", "application"), `${fixture.id}: entryFlows`);
     assert.deepEqual(await native.getRequestFlows(first, "", "application"), javascript.getRequestFlows(first, "", "application"), `${fixture.id}: requestFlows`);
+    assert.equal(await native.getFlowProjection(first, "flow:__missing__"), null, `${fixture.id}: missingFlowLens`);
+    assert.equal(await native.getFlowContextCard(first, "flow:__missing__"), null, `${fixture.id}: missingFlowContextCard`);
     const changedPath = first.nodes.find((candidate) => candidate.kind === "file" && candidate.sourceScope !== "test")?.path;
     assert.ok(changedPath, `${fixture.id}: needs one application file`);
     assert.deepEqual(await native.getChangeImpact(first, [changedPath], { maxDepth: 4 }), javascript.getChangeImpact(first, [changedPath], { maxDepth: 4 }), `${fixture.id}: impact`);

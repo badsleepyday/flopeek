@@ -34,6 +34,15 @@ function safeIntegerOption(options, ...names) {
   return Number.isSafeInteger(parsed) ? parsed : undefined;
 }
 
+async function optionalNativeFlowQuery(operation) {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error?.code === "missing-flow") return null;
+    throw error;
+  }
+}
+
 function nativeCancellationError() {
   const error = new Error("Native core scan was cancelled.");
   error.name = "AbortError";
@@ -804,7 +813,7 @@ function createNativeCoreClient(options = {}) {
   const getNativeFlowContextCard = async (graph, flowId, format = "json", scope = "application", queryOptions = {}) => {
     if (scope !== "application") return extensions.getNonApplicationFlowContextCard(graph, flowId, format, scope, queryOptions);
     const maxSteps = queryOptions.maxSteps;
-    const coreCard = await requestNativeQuery("getNativeFlowContextCard", graph, { flowId, maxSteps });
+    const coreCard = await optionalNativeFlowQuery(() => requestNativeQuery("getNativeFlowContextCard", graph, { flowId, maxSteps }));
     if (!coreCard) return null;
     const lens = await requestNativeQuery("getNativeFlowLensCore", graph, { flowId, maxSteps });
     const metadataGraph = nativeFlowMetadataGraph(graph, lens);
@@ -939,10 +948,11 @@ function createNativeCoreClient(options = {}) {
     }),
     getFlowProjection: async (graph, flowId, scope = "application", queryOptions = {}) => {
       if (scope !== "application") return extensions.getNonApplicationFlowProjection(graph, flowId, scope, queryOptions);
-      const lens = await requestNativeQuery("getNativeFlowLensCore", graph, {
+      const lens = await optionalNativeFlowQuery(() => requestNativeQuery("getNativeFlowLensCore", graph, {
         flowId,
         maxSteps: queryOptions.maxSteps,
-      });
+      }));
+      if (!lens) return null;
       return extensions.attachFlowExtensions(nativeFlowMetadataGraph(graph, lens), lens);
     },
     getFlowContextCard: getNativeFlowContextCard,
