@@ -179,7 +179,6 @@ async function verifyRepository(repository, root, native) {
   assert.deepEqual(after, before, `${repository.id}: tracked source inventory changed`);
   assert.equal(git(resolved, ["status", "--porcelain", "--untracked-files=all"]).trim(), "", `${repository.id}: verification wrote to target repository`);
   assert.equal(fs.existsSync(path.join(resolved, ".flopeek")), false, `${repository.id}: verification created .flopeek`);
-  assert.equal(fs.existsSync(path.join(resolved, ".flowpeek")), false, `${repository.id}: verification created .flowpeek`);
   return {
     id: repository.id,
     repository: repository.repository,

@@ -281,7 +281,6 @@ async function executeCase(selected, native, javascript, binding) {
     assert.equal(createSourceDigest(root), beforeDigest, `${selected.id}: fixture source digest changed during verification`);
     assert.deepEqual(inventory(root), beforeInventory, `${selected.id}: verification wrote to the fixture`);
     assert.equal(fs.existsSync(path.join(root, ".flopeek")), false, `${selected.id}: native parity created .flopeek`);
-    assert.equal(fs.existsSync(path.join(root, ".flowpeek")), false, `${selected.id}: native parity created .flowpeek`);
     const executionAdapterCapability = nativeResult.graph.analysis.executionAdapterCapabilities.adapters
       .find((adapter) => adapter.id === selected.adapterId);
     assert.ok(executionAdapterCapability, `${selected.id}: missing execution adapter capability`);

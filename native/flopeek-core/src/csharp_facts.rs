@@ -204,8 +204,8 @@ pub fn parse_native_csharp_facts(path: &str, source: &str) -> Option<NativeJsFac
     };
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
-        if node.kind() == "using_directive" {
-            if let Some(name) = text(node, source)
+        if node.kind() == "using_directive"
+            && let Some(name) = text(node, source)
                 .map(|value| value.trim().trim_end_matches(';').trim().to_string())
                 .and_then(|value| {
                     let value = value.strip_prefix("global ").unwrap_or(&value).trim();
@@ -218,13 +218,12 @@ pub fn parse_native_csharp_facts(path: &str, source: &str) -> Option<NativeJsFac
                     (!value.is_empty()).then(|| value.to_string())
                 })
                 .filter(|value| !value.is_empty())
-            {
-                structural.imports.push(NativeJsImport {
-                    specifier: name,
-                    standard: None,
-                    evidence: evidence(path, node),
-                });
-            }
+        {
+            structural.imports.push(NativeJsImport {
+                specifier: name,
+                standard: None,
+                evidence: evidence(path, node),
+            });
         }
         if matches!(
             node.kind(),
@@ -232,73 +231,72 @@ pub fn parse_native_csharp_facts(path: &str, source: &str) -> Option<NativeJsFac
                 | "interface_declaration"
                 | "struct_declaration"
                 | "record_declaration"
-        ) {
-            if let Some(name) = declaration_name(node, source) {
-                let members = type_body(node).map(children).unwrap_or_default();
-                let method_details = members
-                    .into_iter()
-                    .filter(|member| {
-                        matches!(
-                            member.kind(),
-                            "method_declaration" | "constructor_declaration"
-                        )
-                    })
-                    .filter_map(|member| {
-                        declaration_name(member, source).map(|member_name| (member, member_name))
-                    })
-                    .collect::<Vec<_>>();
-                structural.symbols.push(NativeJsStructuralSymbol {
-                    symbol_type: "class".into(),
-                    name: name.clone(),
-                    methods: method_details
-                        .iter()
-                        .map(|(_, method_name)| method_name.clone())
-                        .collect(),
-                    evidence: evidence(path, node),
+        ) && let Some(name) = declaration_name(node, source)
+        {
+            let members = type_body(node).map(children).unwrap_or_default();
+            let method_details = members
+                .into_iter()
+                .filter(|member| {
+                    matches!(
+                        member.kind(),
+                        "method_declaration" | "constructor_declaration"
+                    )
+                })
+                .filter_map(|member| {
+                    declaration_name(member, source).map(|member_name| (member, member_name))
+                })
+                .collect::<Vec<_>>();
+            structural.symbols.push(NativeJsStructuralSymbol {
+                symbol_type: "class".into(),
+                name: name.clone(),
+                methods: method_details
+                    .iter()
+                    .map(|(_, method_name)| method_name.clone())
+                    .collect(),
+                evidence: evidence(path, node),
+                identity: Some(NativeJsCanonicalSymbolIdentity {
+                    qualified_name: name.clone(),
+                    lexical_owner: None,
+                    signature: None,
+                    discriminator: "type".into(),
+                }),
+            });
+            structural.canonical_symbols.push(
+                structural
+                    .symbols
+                    .last()
+                    .expect("class was inserted")
+                    .clone(),
+            );
+            let owner = NativeJsSymbolReference {
+                symbol_type: "class".into(),
+                name: name.clone(),
+            };
+            for (method, method_name) in method_details {
+                structural.canonical_symbols.push(NativeJsStructuralSymbol {
+                    symbol_type: if method.kind() == "constructor_declaration" {
+                        "constructor"
+                    } else {
+                        "method"
+                    }
+                    .into(),
+                    name: method_name.clone(),
+                    methods: vec![],
+                    evidence: evidence(path, method),
                     identity: Some(NativeJsCanonicalSymbolIdentity {
-                        qualified_name: name.clone(),
-                        lexical_owner: None,
-                        signature: None,
-                        discriminator: "type".into(),
-                    }),
-                });
-                structural.canonical_symbols.push(
-                    structural
-                        .symbols
-                        .last()
-                        .expect("class was inserted")
-                        .clone(),
-                );
-                let owner = NativeJsSymbolReference {
-                    symbol_type: "class".into(),
-                    name: name.clone(),
-                };
-                for (method, method_name) in method_details {
-                    structural.canonical_symbols.push(NativeJsStructuralSymbol {
-                        symbol_type: if method.kind() == "constructor_declaration" {
+                        qualified_name: format!("{name}.{method_name}"),
+                        lexical_owner: Some(owner.clone()),
+                        signature: Some(method_signature(method, source)),
+                        discriminator: if method.kind() == "constructor_declaration" {
                             "constructor"
+                        } else if is_static(method, source) {
+                            "static-method"
                         } else {
-                            "method"
+                            "instance-method"
                         }
                         .into(),
-                        name: method_name.clone(),
-                        methods: vec![],
-                        evidence: evidence(path, method),
-                        identity: Some(NativeJsCanonicalSymbolIdentity {
-                            qualified_name: format!("{name}.{method_name}"),
-                            lexical_owner: Some(owner.clone()),
-                            signature: Some(method_signature(method, source)),
-                            discriminator: if method.kind() == "constructor_declaration" {
-                                "constructor"
-                            } else if is_static(method, source) {
-                                "static-method"
-                            } else {
-                                "instance-method"
-                            }
-                            .into(),
-                        }),
-                    });
-                }
+                    }),
+                });
             }
         }
         // Roslyn DescendantNodes is a source-order preorder traversal. A LIFO

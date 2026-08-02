@@ -6,7 +6,7 @@ const path = require("node:path");
 const { execFileSync: execute } = require("node:child_process");
 
 const ROOT = path.resolve(__dirname, "..");
-const SUPPORTED_NODE_MAJORS = Object.freeze([20, 22]);
+const SUPPORTED_NODE_MAJORS = Object.freeze([22, 24]);
 
 function rustContract(root) {
   const source = fs.readFileSync(path.join(root, "rust-toolchain.toml"), "utf8");
@@ -82,7 +82,7 @@ function verifyToolchains({ root = ROOT, execFileSync = execute } = {}) {
   const actualNodeVersion = output("node", ["--version"], root, execFileSync);
   const actualNodeMajor = Number(actualNodeVersion.match(/^v(\d+)\./u)?.[1]);
   if (!SUPPORTED_NODE_MAJORS.includes(actualNodeMajor)) {
-    throw new Error(`Actual Node major ${actualNodeMajor || "unknown"} is outside the frozen 20/22 release contract.`);
+    throw new Error(`Actual Node major ${actualNodeMajor || "unknown"} is outside the frozen 22/24 release contract.`);
   }
   return Object.freeze({
     schemaVersion: "flopeek-toolchain-verification/v1",

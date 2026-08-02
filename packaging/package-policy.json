@@ -8,7 +8,7 @@
       "approvalFile": "packaging/npm-publication-approval.json"
     },
     "bin": "src/cli.js",
-    "minimumNodeMajor": 20
+    "minimumNodeMajor": 22
   },
   "allowedExactPaths": [
     "ARCHITECTURE.md",
@@ -96,6 +96,6 @@
     ".pem",
     ".pfx"
   ],
-  "maximumEntries": 201,
+  "maximumEntries": 202,
   "maximumUnpackedBytes": 3000000
 }

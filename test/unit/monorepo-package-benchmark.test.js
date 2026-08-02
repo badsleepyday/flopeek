@@ -21,7 +21,7 @@ test("monorepo package selection benchmark matches its pinned fixture and contra
   t.after(() => fs.rmSync(fixturePath, { recursive: true, force: true }));
   fs.cpSync(sourceFixturePath, fixturePath, {
     recursive: true,
-    filter: (source) => ![".flopeek", ".flowpeek"].includes(path.basename(source)),
+    filter: (source) => path.basename(source) !== ".flopeek",
   });
 
   for (const pkg of benchmark.packageSelection.packages) {

@@ -49,11 +49,12 @@ scope of `fp://local`.
 
 Identity records use `flopeek-identity-canonical/v1`, encoded as bytes with:
 
-1. an ASCII schema tag;
-2. fields in a fixed contract order;
-3. a length-prefixed field name;
-4. an explicit missing/present marker;
-5. a length-prefixed UTF-8 or binary value.
+1. the ASCII `flopeek-identity-canonical/v1` tag followed by one NUL byte;
+2. fields in a fixed contract order, beginning with `record_schema`;
+3. an unsigned 16-bit big-endian field-name byte length and ASCII field name;
+4. one byte for missing (`0`) or present (`1`);
+5. for a present value, an unsigned 32-bit big-endian value byte length followed
+   by the exact UTF-8 or binary bytes.
 
 Text is Unicode NFC. Repository paths use `/`, preserve case, must be relative,
 must not contain empty, `.` or `..` segments, and must not contain NUL. Canonical
@@ -86,6 +87,22 @@ Every distinct parser callsite or declaration occurrence is stored separately
 as edge evidence. Public graph v1 may continue to expose one compatibility edge
 while v2 retains occurrence multiplicity.
 
+Schema v12 separates durable relationship identity from presence history.
+`edge_presence_v2` and `placement_presence_v2` retain one interval for every
+continuous period of presence. If a relationship exists in graph 1, is absent
+in graph 2, and returns in graph 3, its intervals are `[1,1]` and `[3,NULL]`;
+the graph-2 gap is never reopened or erased. The v11 interval columns remain a
+current-state compatibility projection only.
+
+External dependency identity remains an ecosystem-qualified import-root
+contract until an adapter can prove a package-manager coordinate from a
+manifest, lockfile, workspace, or resolver. For example, npm specifiers
+`lodash/map` and `lodash/get` map to canonical import root `npm:lodash`, while
+both exact observed specifiers remain in revision metadata. The
+`external-import-root-v1` scheme must not be presented as a canonical npm,
+PyPI, Maven, Go, Composer, or NuGet package coordinate. Scoped npm roots retain
+`@scope/package`.
+
 ### Aliases
 
 Legacy/public IDs are versioned external identifiers. A confirmed rename that
@@ -96,10 +113,12 @@ multi-hop chains are forbidden.
 
 ### Compatibility and rollout
 
-Schema v11 is additive and dual-written in the same graph-promotion transaction.
+Schema v12 migrates v11 transactionally and dual-writes in the same
+graph-promotion transaction.
 The v1 public graph, ordering, IDs, Context Refs, and compatibility digest remain
-unchanged. Context Ref v2 and identity-aware query surfaces require separate
-versioned contracts and parity fixtures before activation.
+unchanged. Context Ref v2 and identity-aware query surfaces are hidden by
+default and require explicit `experimentalIdentityV2` capability negotiation;
+default HTTP/CoreClient surfaces do not advertise them.
 
 The first v11 slice may reconcile exact legacy IDs, exact semantic records, and
 unique exact file-content moves. Symbol rename continuity requires parser-owned
@@ -113,7 +132,7 @@ ambiguous.
 - Renames can retain a local entity UID when evidence is unique and explicit.
 - Multiple callsites can be retained without duplicating the relationship.
 - v1 compatibility remains available throughout native rollout.
-- The v11 store is larger, but change-only intervals avoid `nodes × versions`
+- The v12 store is larger, but change-only intervals avoid `nodes × versions`
   revision growth.
 - Cross-clone identity remains explicitly unsupported until a consented
   identity manifest exists.

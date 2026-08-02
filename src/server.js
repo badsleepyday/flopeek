@@ -26,7 +26,7 @@ const MIME_TYPES = {
   ".svg": "image/svg+xml",
 };
 const MAX_REQUEST_BODY_BYTES = 1_000_000;
-const WATCH_IGNORED_DIRECTORIES = new Set([".flopeek", ".flowpeek", ".git", ".next", ".nuxt", ".project-flow", ".turbo", "build", "coverage", "dist", "node_modules", "out", "target", "vendor"]);
+const WATCH_IGNORED_DIRECTORIES = new Set([".flopeek", ".git", ".next", ".nuxt", ".project-flow", ".turbo", "build", "coverage", "dist", "node_modules", "out", "target", "vendor"]);
 function send(response, statusCode, body, contentType = "application/json; charset=utf-8") {
   response.writeHead(statusCode, { "content-type": contentType, "cache-control": "no-store" });
   response.end(typeof body === "string" || Buffer.isBuffer(body) ? body : JSON.stringify(body));

@@ -374,7 +374,7 @@ MCP currently exposes no source write, file content, shell, deployment, credenti
 
 ## Package and clean-room support
 
-- Node.js 20 and later is the declared runtime. The npm publication approval change passed CI on Node 20 and 22 across Ubuntu, Windows, and macOS.
+- Node.js 22 and later is the declared runtime. Current CI covers Node 22 and 24 across Ubuntu, Windows, and macOS; older Node 20/22 results remain historical evidence only.
 - `flopeek --version`, `flopeek version`, and `flopeek -v` return the installed package version without scanning a repository.
 - `npm run audit:package` validates the npm dry-run inventory against `packaging/package-policy.json`.
 - `npm run verify:clean-room` packs and installs the exact tarball into a temporary private consumer with lifecycle scripts disabled, then exercises the local binary, help, doctor, one copied-fixture static scan, and MCP bootstrap.

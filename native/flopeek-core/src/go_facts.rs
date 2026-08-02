@@ -233,13 +233,11 @@ fn function_bound_names(node: Node<'_>, source: &str) -> BTreeSet<String> {
                 | "const_spec"
                 | "range_clause"
                 | "receive_statement"
-        ) {
-            if let Some(left) = current
-                .child_by_field_name("left")
-                .or_else(|| current.child_by_field_name("name"))
-            {
-                direct_identifier_names(left, source, &mut names);
-            }
+        ) && let Some(left) = current
+            .child_by_field_name("left")
+            .or_else(|| current.child_by_field_name("name"))
+        {
+            direct_identifier_names(left, source, &mut names);
         }
         if let Some(alias) = current.child_by_field_name("alias") {
             direct_identifier_names(alias, source, &mut names);
@@ -273,47 +271,46 @@ fn function_calls(
         if current.kind() == "func_literal" {
             continue;
         }
-        if current.kind() == "call_expression" {
-            if let Some(function) = current
+        if current.kind() == "call_expression"
+            && let Some(function) = current
                 .child_by_field_name("function")
                 .or_else(|| children(current).into_iter().next())
-            {
-                if function.kind() == "identifier" {
-                    if let Some(name) = text(function, source)
-                        && top_level_functions.contains(&name)
-                        && !bound.contains(&name)
-                    {
-                        calls.push(NativeJsCall {
-                            name,
-                            source: Some(source_reference.clone()),
-                            imported: None,
-                            evidence: evidence(path, current),
-                        });
-                    }
-                } else if function.kind() == "selector_expression" {
-                    let operand = function
-                        .child_by_field_name("operand")
-                        .or_else(|| children(function).into_iter().next());
-                    let field = function
-                        .child_by_field_name("field")
-                        .or_else(|| children(function).into_iter().last());
-                    if let (Some(operand), Some(field)) = (operand, field)
-                        && operand.kind() == "identifier"
-                        && let (Some(binding), Some(name)) =
-                            (text(operand, source), text(field, source))
-                        && !bound.contains(&binding)
-                        && let Some(specifier) = imports.get(&binding)
-                    {
-                        calls.push(NativeJsCall {
-                            name: name.clone(),
-                            source: Some(source_reference.clone()),
-                            imported: Some(NativeJsImportedReference {
-                                specifier: specifier.clone(),
-                                exported_name: name,
-                            }),
-                            evidence: evidence(path, current),
-                        });
-                    }
+        {
+            if function.kind() == "identifier" {
+                if let Some(name) = text(function, source)
+                    && top_level_functions.contains(&name)
+                    && !bound.contains(&name)
+                {
+                    calls.push(NativeJsCall {
+                        name,
+                        source: Some(source_reference.clone()),
+                        imported: None,
+                        evidence: evidence(path, current),
+                    });
+                }
+            } else if function.kind() == "selector_expression" {
+                let operand = function
+                    .child_by_field_name("operand")
+                    .or_else(|| children(function).into_iter().next());
+                let field = function
+                    .child_by_field_name("field")
+                    .or_else(|| children(function).into_iter().last());
+                if let (Some(operand), Some(field)) = (operand, field)
+                    && operand.kind() == "identifier"
+                    && let (Some(binding), Some(name)) =
+                        (text(operand, source), text(field, source))
+                    && !bound.contains(&binding)
+                    && let Some(specifier) = imports.get(&binding)
+                {
+                    calls.push(NativeJsCall {
+                        name: name.clone(),
+                        source: Some(source_reference.clone()),
+                        imported: Some(NativeJsImportedReference {
+                            specifier: specifier.clone(),
+                            exported_name: name,
+                        }),
+                        evidence: evidence(path, current),
+                    });
                 }
             }
         }

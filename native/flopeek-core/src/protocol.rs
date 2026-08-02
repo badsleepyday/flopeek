@@ -20,6 +20,7 @@ use crate::store::{
     initialize_native_store, open_native_store, promote_graph_build_with_changed_records,
     recover_incomplete_graph_builds, retained_public_delta_range,
 };
+use crate::structural_contract::validate_structural_records;
 use crate::structural_graph::{
     StructuralGraphNode, StructuralGraphProjection, StructuralGraphSnapshot,
     build_structural_graph, javascript_ascii_cmp, javascript_ascii_locale_cmp,
@@ -998,29 +999,28 @@ fn refresh_native_persistent_project(
         && session.persistent_sources.contains_key(&session_key);
     let status = load_native_js_facts_status(session, params)?;
     let source_refresh_ms = elapsed_ms(source_refresh_started);
-    if explicit_no_op {
-        if let Some(mut response) = reuse_native_persistent_project_no_op(session, &root, &status)?
-        {
-            response["sourceAuthority"] = json!("rust-native-persistent/v1");
-            response["sourceRefresh"] = json!({
-                "mode": "no-op-session",
-                "parsedFiles": 0,
-                "reusedFiles": status.reused_files,
-                "changedPaths": [],
-                "removedPaths": [],
-            });
-            response["graphHandle"] = json!({
-                "schemaVersion": "flopeek-native-graph-handle/v1",
-                "projectId": status.project_identity.project_id,
-                "factsDigest": response["factsDigest"],
-                "persistence": "sqlite",
-                "publicGraphVersion": response["publicGraphVersion"],
-            });
-            if handle_only_public_graph {
-                replace_public_graph_with_handle_envelope(&mut response)?;
-            }
-            return Ok(response);
+    if explicit_no_op
+        && let Some(mut response) = reuse_native_persistent_project_no_op(session, &root, &status)?
+    {
+        response["sourceAuthority"] = json!("rust-native-persistent/v1");
+        response["sourceRefresh"] = json!({
+            "mode": "no-op-session",
+            "parsedFiles": 0,
+            "reusedFiles": status.reused_files,
+            "changedPaths": [],
+            "removedPaths": [],
+        });
+        response["graphHandle"] = json!({
+            "schemaVersion": "flopeek-native-graph-handle/v1",
+            "projectId": status.project_identity.project_id,
+            "factsDigest": response["factsDigest"],
+            "persistence": "sqlite",
+            "publicGraphVersion": response["publicGraphVersion"],
+        });
+        if handle_only_public_graph {
+            replace_public_graph_with_handle_envelope(&mut response)?;
         }
+        return Ok(response);
     }
     let supported_paths = status.facts.keys().cloned().collect::<BTreeSet<_>>();
     let unsupported_paths = status
@@ -1642,40 +1642,6 @@ fn native_js_record_cache_load_raw(params: &Value) -> Result<Box<RawValue>, Nati
     })
 }
 
-fn contains_source_body(value: &Value) -> bool {
-    match value {
-        Value::Array(items) => items.iter().any(contains_source_body),
-        Value::Object(entries) => entries.iter().any(|(key, nested)| {
-            let lower = key.to_ascii_lowercase();
-            matches!(
-                lower.as_str(),
-                "content" | "contents" | "rawsource" | "sourcebody" | "sourcetext" | "text"
-            ) || lower == "source" && !is_safe_source_reference(nested)
-                || contains_source_body(nested)
-        }),
-        _ => false,
-    }
-}
-
-fn is_safe_source_reference(value: &Value) -> bool {
-    let Value::Object(reference) = value else {
-        return value.is_null();
-    };
-    reference.len() == 2
-        && reference
-            .get("name")
-            .and_then(Value::as_str)
-            .is_some_and(|name| !name.is_empty() && name.len() <= 240)
-        && reference
-            .get("type")
-            .and_then(Value::as_str)
-            .is_some_and(|kind| !kind.is_empty() && kind.len() <= 80)
-}
-
-fn records_contain_source_body(records: &[Value]) -> bool {
-    records.iter().any(contains_source_body)
-}
-
 fn string_field<'a>(
     value: &'a serde_json::Map<String, Value>,
     field: &'static str,
@@ -2193,14 +2159,16 @@ fn submit_structural_facts_with_verified_digest(
             message: "StructuralFactBatch/v1 requires records.".to_string(),
         });
     };
-    if records.len() > 100_000 || records_contain_source_body(records) {
+    if records.len() > 100_000 {
         return Err(NativeProtocolError {
             code: "unsafe-structural-facts",
-            message:
-                "StructuralFactBatch/v1 must not contain source bodies and must remain bounded."
-                    .to_string(),
+            message: "StructuralFactBatch/v1 must remain bounded.".to_string(),
         });
     }
+    validate_structural_records(records).map_err(|message| NativeProtocolError {
+        code: "unsafe-structural-facts",
+        message,
+    })?;
     let mut record_orders = std::collections::BTreeSet::new();
     for record in records {
         let Some(record) = record.as_object() else {
@@ -3469,10 +3437,10 @@ fn native_flow_context_card(params: &Value) -> Result<Value, NativeProtocolError
         })
         .collect::<std::collections::BTreeMap<_, _>>();
     for step in lens["steps"].as_array().into_iter().flatten() {
-        if let Some(path) = step["node"]["path"].as_str() {
-            if let Some(file_id) = file_ids_by_path.get(path) {
-                step_ids.insert((*file_id).to_string());
-            }
+        if let Some(path) = step["node"]["path"].as_str()
+            && let Some(file_id) = file_ids_by_path.get(path)
+        {
+            step_ids.insert((*file_id).to_string());
         }
     }
     let edge_order = structural_edge_traversal_order(batch, &projection);
@@ -4021,10 +3989,10 @@ fn resolve_native_context_ref(params: &Value) -> Result<Value, NativeProtocolErr
         "successorCandidates": [],
         "reason": format!("The {} still exists, but the requested graph version is older than the current graph.", parsed.kind),
     });
-    if let Some(object) = result.as_object_mut() {
-        if let Some(delta) = delta {
-            object.insert("delta".to_string(), delta);
-        }
+    if let Some(object) = result.as_object_mut()
+        && let Some(delta) = delta
+    {
+        object.insert("delta".to_string(), delta);
     }
     Ok(result)
 }
@@ -4633,12 +4601,13 @@ fn native_decode_component(value: &str) -> String {
     let input = value.as_bytes();
     let mut index = 0;
     while index < input.len() {
-        if input[index] == b'%' && index + 2 < input.len() {
-            if let Ok(byte) = u8::from_str_radix(&value[index + 1..index + 3], 16) {
-                bytes.push(byte);
-                index += 3;
-                continue;
-            }
+        if input[index] == b'%'
+            && index + 2 < input.len()
+            && let Ok(byte) = u8::from_str_radix(&value[index + 1..index + 3], 16)
+        {
+            bytes.push(byte);
+            index += 3;
+            continue;
         }
         bytes.push(input[index]);
         index += 1;
@@ -6349,13 +6318,13 @@ fn reconstruct_structural_fact_patch(
             code: "invalid-structural-fact-patch",
             message,
         })?;
-    if let Some(expected_digest) = expected_digest.as_ref() {
-        if expected_digest != &computed_digest {
-            return Err(NativeProtocolError {
-                code: "invalid-structural-fact-patch",
-                message: "Structural fact patch digest verification failed.".to_string(),
-            });
-        }
+    if let Some(expected_digest) = expected_digest.as_ref()
+        && expected_digest != &computed_digest
+    {
+        return Err(NativeProtocolError {
+            code: "invalid-structural-fact-patch",
+            message: "Structural fact patch digest verification failed.".to_string(),
+        });
     }
     // The digest string is tiny; retain it for the internal validation proof
     // while the reconstructed wire batch takes its own owned value.
@@ -8646,6 +8615,25 @@ fn handle_request(
             false,
         );
     }
+    let identity_v2_requested = request
+        .params
+        .get("experimentalIdentityV2")
+        .and_then(Value::as_bool)
+        == Some(true);
+    if matches!(
+        request.method.as_str(),
+        "createContextRefV2" | "getNodeIdentity" | "searchNodeIdentities"
+    ) && !identity_v2_requested
+    {
+        return (
+            error_response(
+                Some(request.request_id),
+                "experimental-capability-disabled",
+                "Canonical identity v2 is experimental and requires params.experimentalIdentityV2=true.",
+            ),
+            false,
+        );
+    }
     let accepts_cached_fact_reference = matches!(
         request.method.as_str(),
         "getEntryFlows"
@@ -8679,12 +8667,61 @@ fn handle_request(
         }
     }
     match request.method.as_str() {
-        "health" => (
-            success_response(
-                request.request_id,
-                json!({
+        "health" => {
+            let mut capabilities = vec![
+                "health",
+                "initialize",
+                "nativeIncrementalManifest",
+                "nativeBoundedDiscovery",
+                "refreshNativeProject",
+                "refreshNativePersistentProject",
+                "nativeJsRecordCache",
+                "nativeJsStructuralFacts",
+                "submitStructuralFacts",
+                "assembleStructuralGraph",
+                "assembleNativePublicGraph",
+                "assembleNativeFlows",
+                "findNodes",
+                "getNodeDetails",
+                "getEntryFlows",
+                "getRequestFlows",
+                "createContextRef",
+                "resolveNativeContextRef",
+                "getNativeFlowLensCore",
+                "getNativeNodeContextCard",
+                "getNativeFlowContextCard",
+                "getNativeScanStatus",
+                "getNativeProjectOverviewCore",
+                "getRelatedTests",
+                "getChangeImpact",
+                "persistStructuralGraph",
+                "persistNativePublicGraph",
+                "persistNativePublicGraphPatch",
+                "refreshNativeSessionGraph",
+                "refreshNativeJsSessionGraph",
+                "getNativeStructuralDelta",
+                "getNativePublicGraphSnapshot",
+                "getNativeCurrentPublicGraph",
+                "getNativeDatabaseOpenEvidence",
+                "materializeNativeGraph",
+                "getNativePublicGraphDelta",
+                "getNativeChangedContexts",
+                "shutdown",
+            ];
+            if identity_v2_requested {
+                capabilities.extend([
+                    "createContextRefV2",
+                    "getNodeIdentity",
+                    "searchNodeIdentities",
+                ]);
+            }
+            (
+                success_response(
+                    request.request_id,
+                    json!({
                     "implementation": "rust",
-                    "capabilities": ["health", "initialize", "nativeIncrementalManifest", "nativeBoundedDiscovery", "refreshNativeProject", "refreshNativePersistentProject", "nativeJsRecordCache", "nativeJsStructuralFacts", "submitStructuralFacts", "assembleStructuralGraph", "assembleNativePublicGraph", "assembleNativeFlows", "findNodes", "getNodeDetails", "getEntryFlows", "getRequestFlows", "createContextRef", "createContextRefV2", "getNodeIdentity", "searchNodeIdentities", "resolveNativeContextRef", "getNativeFlowLensCore", "getNativeNodeContextCard", "getNativeFlowContextCard", "getNativeScanStatus", "getNativeProjectOverviewCore", "getRelatedTests", "getChangeImpact", "persistStructuralGraph", "persistNativePublicGraph", "persistNativePublicGraphPatch", "refreshNativeSessionGraph", "refreshNativeJsSessionGraph", "getNativeStructuralDelta", "getNativePublicGraphSnapshot", "getNativeCurrentPublicGraph", "getNativeDatabaseOpenEvidence", "materializeNativeGraph", "getNativePublicGraphDelta", "getNativeChangedContexts", "shutdown"],
+                    "capabilities": capabilities,
+                    "experimentalCapabilities": if identity_v2_requested { json!(["canonical-identity-v2"]) } else { json!([]) },
                     "storeAuthoritative": false,
                     "publicNodeIdsEnabled": true,
                     "sessionGraphHistory": {
@@ -8694,10 +8731,11 @@ fn handle_request(
                     },
                     "adapterCapabilities": native_adapter_registry(),
                     "executionAdapterCapabilities": native_execution_adapter_registry(),
-                }),
-            ),
-            false,
-        ),
+                    }),
+                ),
+                false,
+            )
+        }
         "initialize" => match project_root(&request.params) {
             Ok(root) => match initialize_native_store(&root) {
                 Ok(store) => (
@@ -9076,17 +9114,16 @@ pub fn serve_jsonl<R: BufRead, W: Write>(reader: R, mut writer: W) -> Result<(),
                 false,
             ),
         };
-        if let Some(NativeProtocolResult::Value(result)) = response.result.as_mut() {
-            if let Some(profile) = result
+        if let Some(NativeProtocolResult::Value(result)) = response.result.as_mut()
+            && let Some(profile) = result
                 .get_mut("receipt")
                 .and_then(|receipt| receipt.get_mut("profile"))
                 .and_then(Value::as_object_mut)
-            {
-                profile.insert(
-                    "nativeProtocolDispatchMs".to_string(),
-                    json!(elapsed_ms(dispatch_started)),
-                );
-            }
+        {
+            profile.insert(
+                "nativeProtocolDispatchMs".to_string(),
+                json!(elapsed_ms(dispatch_started)),
+            );
         }
         serde_json::to_writer(&mut writer, &response)
             .map_err(|error| format!("Unable to encode native protocol response: {error}"))?;
@@ -9843,6 +9880,19 @@ mod tests {
                 .unwrap()
                 .contains(&json!("refreshNativeJsSessionGraph"))
         );
+        for capability in [
+            "createContextRefV2",
+            "getNodeIdentity",
+            "searchNodeIdentities",
+        ] {
+            assert!(
+                !result[0]["result"]["capabilities"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!(capability)),
+                "identity v2 must not be advertised by default"
+            );
+        }
         let compatibility_csharp = result[0]["result"]["adapterCapabilities"]["adapters"]
             .as_array()
             .unwrap()
@@ -9861,6 +9911,33 @@ mod tests {
         assert_eq!(execution_csharp["availability"], "bundled");
         assert_eq!(execution_csharp["requiredToolchain"], Value::Null);
         assert_eq!(result[1]["result"]["accepted"], true);
+    }
+
+    #[test]
+    fn identity_v2_requires_explicit_capability_negotiation() {
+        let result = responses(&format!(
+            "{{\"protocolVersion\":\"{NATIVE_PROTOCOL_VERSION}\",\"requestId\":\"blocked\",\"method\":\"getNodeIdentity\",\"params\":{{}}}}\n{{\"protocolVersion\":\"{NATIVE_PROTOCOL_VERSION}\",\"requestId\":\"health\",\"method\":\"health\",\"params\":{{\"experimentalIdentityV2\":true}}}}\n{{\"protocolVersion\":\"{NATIVE_PROTOCOL_VERSION}\",\"requestId\":\"shutdown\",\"method\":\"shutdown\"}}\n"
+        ));
+        assert_eq!(
+            result[0]["error"]["code"],
+            "experimental-capability-disabled"
+        );
+        assert_eq!(
+            result[1]["result"]["experimentalCapabilities"],
+            json!(["canonical-identity-v2"])
+        );
+        for capability in [
+            "createContextRefV2",
+            "getNodeIdentity",
+            "searchNodeIdentities",
+        ] {
+            assert!(
+                result[1]["result"]["capabilities"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!(capability))
+            );
+        }
     }
 
     #[test]

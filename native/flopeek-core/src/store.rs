@@ -2,10 +2,11 @@ use crate::identity_store::sync_identity_v2;
 use rusqlite::{Connection, OptionalExtension};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-pub const NATIVE_STORE_SCHEMA_VERSION: i64 = 11;
+pub const NATIVE_STORE_SCHEMA_VERSION: i64 = 12;
 pub const NATIVE_STORE_RELATIVE_PATH: &str = ".flopeek/native-core.sqlite3";
 pub const DEFAULT_NATIVE_DELTA_HISTORY_LIMIT: usize = 8;
 pub const DEFAULT_NATIVE_DELTA_HISTORY_MAX_BYTES: usize = 16 * 1024 * 1024;
@@ -130,18 +131,171 @@ const NATIVE_PUBLIC_GRAPH_COMPONENT_KINDS: [(&str, &str); 4] = [
     ("diagnosticFlows", "diagnostic-flow"),
 ];
 
-pub fn open_native_store(root: &Path) -> rusqlite::Result<Connection> {
-    let metadata_directory = root.join(".flopeek");
-    fs::create_dir_all(&metadata_directory)
+fn invalid_store(message: impl Into<String>) -> rusqlite::Error {
+    rusqlite::Error::ToSqlConversionFailure(Box::new(io::Error::new(
+        io::ErrorKind::InvalidData,
+        message.into(),
+    )))
+}
+
+fn native_store_path(root: &Path) -> rusqlite::Result<PathBuf> {
+    let canonical_root = fs::canonicalize(root)
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-    let database_path = root.join(NATIVE_STORE_RELATIVE_PATH);
+    let metadata_directory = root.join(".flopeek");
+    if metadata_directory.exists() {
+        let metadata = fs::symlink_metadata(&metadata_directory)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(invalid_store(
+                ".flopeek must be a real directory inside the project root, not a symlink, junction, or file",
+            ));
+        }
+    } else {
+        fs::create_dir(&metadata_directory)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+    }
+    let canonical_metadata = fs::canonicalize(&metadata_directory)
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+    if canonical_metadata.parent() != Some(canonical_root.as_path()) {
+        return Err(invalid_store(
+            ".flopeek resolves outside the canonical project root",
+        ));
+    }
+    let database_path = metadata_directory.join("native-core.sqlite3");
+    if database_path.exists()
+        && fs::symlink_metadata(&database_path)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?
+            .file_type()
+            .is_symlink()
+    {
+        return Err(invalid_store(
+            "native-core.sqlite3 must not be a symlink or junction",
+        ));
+    }
+    Ok(database_path)
+}
+
+fn sqlite_object_exists(
+    connection: &Connection,
+    object_type: &str,
+    name: &str,
+) -> rusqlite::Result<bool> {
+    connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = ?1 AND name = ?2)",
+        rusqlite::params![object_type, name],
+        |row| row.get(0),
+    )
+}
+
+fn validate_native_store_schema(connection: &Connection) -> rusqlite::Result<()> {
+    for table in [
+        "metadata",
+        "projects",
+        "graph_versions",
+        "projects_v2",
+        "nodes_v2",
+        "node_revisions_v2",
+        "node_placements_v2",
+        "edges_v2",
+        "edge_evidence_v2",
+        "node_external_ids_v2",
+        "node_identity_aliases_v2",
+        "edge_presence_v2",
+        "placement_presence_v2",
+    ] {
+        if !sqlite_object_exists(connection, "table", table)? {
+            return Err(invalid_store(format!(
+                "native store schema v{NATIVE_STORE_SCHEMA_VERSION} is missing required table {table}"
+            )));
+        }
+    }
+    for index in ["edge_presence_v2_open", "placement_presence_v2_open"] {
+        if !sqlite_object_exists(connection, "index", index)? {
+            return Err(invalid_store(format!(
+                "native store schema v{NATIVE_STORE_SCHEMA_VERSION} is missing required index {index}"
+            )));
+        }
+    }
+    if !sqlite_object_exists(
+        connection,
+        "trigger",
+        "node_identity_aliases_v2_validate_insert",
+    )? {
+        return Err(invalid_store(format!(
+            "native store schema v{NATIVE_STORE_SCHEMA_VERSION} is missing its identity alias validation trigger"
+        )));
+    }
+    Ok(())
+}
+
+fn preflight_native_store(connection: &Connection) -> rusqlite::Result<i64> {
+    let user_version =
+        connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))?;
+    if user_version > NATIVE_STORE_SCHEMA_VERSION {
+        return Err(invalid_store(format!(
+            "native store schema v{user_version} is newer than supported v{NATIVE_STORE_SCHEMA_VERSION}; refusing to modify it"
+        )));
+    }
+    let metadata_version = if sqlite_object_exists(connection, "table", "metadata")? {
+        connection
+            .query_row(
+                "SELECT value FROM metadata WHERE key = 'schema_version'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .map(|value| {
+                value.parse::<i64>().map_err(|_| {
+                    invalid_store(format!("invalid metadata schema_version value {value:?}"))
+                })
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    match (user_version, metadata_version) {
+        (0, None | Some(0)) => {}
+        (0, Some(metadata)) => {
+            return Err(invalid_store(format!(
+                "native store schema metadata v{metadata} disagrees with PRAGMA user_version 0"
+            )));
+        }
+        (_, Some(metadata)) if metadata == user_version => {}
+        (_, Some(metadata)) => {
+            return Err(invalid_store(format!(
+                "native store schema metadata v{metadata} disagrees with PRAGMA user_version {user_version}"
+            )));
+        }
+        (_, None) => {
+            return Err(invalid_store(format!(
+                "native store schema v{user_version} has no matching metadata schema_version"
+            )));
+        }
+    }
+    if user_version == NATIVE_STORE_SCHEMA_VERSION {
+        validate_native_store_schema(connection)?;
+    }
+    Ok(user_version)
+}
+
+pub fn open_native_store(root: &Path) -> rusqlite::Result<Connection> {
+    let database_path = native_store_path(root)?;
     let mut connection = Connection::open(&database_path)?;
+    let on_disk_version = preflight_native_store(&connection)?;
     connection.execute_batch(
         "
         PRAGMA foreign_keys = ON;
         PRAGMA journal_mode = WAL;
         PRAGMA synchronous = NORMAL;
         PRAGMA busy_timeout = 5000;
+        ",
+    )?;
+    if on_disk_version == NATIVE_STORE_SCHEMA_VERSION {
+        return Ok(connection);
+    }
+    let migration = connection.transaction()?;
+    migration.execute_batch(
+        "
         CREATE TABLE IF NOT EXISTS metadata (
           key TEXT PRIMARY KEY,
           value TEXT NOT NULL
@@ -316,7 +470,7 @@ pub fn open_native_store(root: &Path) -> rusqlite::Result<Connection> {
         ",
     )?;
     let has_source_scope = {
-        let mut statement = connection.prepare("PRAGMA table_info(inventory_files)")?;
+        let mut statement = migration.prepare("PRAGMA table_info(inventory_files)")?;
         statement
             .query_map([], |row| row.get::<_, String>(1))?
             .collect::<Result<Vec<_>, _>>()?
@@ -324,10 +478,10 @@ pub fn open_native_store(root: &Path) -> rusqlite::Result<Connection> {
             .any(|name| name == "source_scope")
     };
     if !has_source_scope {
-        connection.execute("ALTER TABLE inventory_files ADD COLUMN source_scope TEXT NOT NULL DEFAULT 'application'", [])?;
+        migration.execute("ALTER TABLE inventory_files ADD COLUMN source_scope TEXT NOT NULL DEFAULT 'application'", [])?;
     }
     let has_current_graph_version = {
-        let mut statement = connection.prepare("PRAGMA table_info(projects)")?;
+        let mut statement = migration.prepare("PRAGMA table_info(projects)")?;
         statement
             .query_map([], |row| row.get::<_, String>(1))?
             .collect::<Result<Vec<_>, _>>()?
@@ -335,13 +489,13 @@ pub fn open_native_store(root: &Path) -> rusqlite::Result<Connection> {
             .any(|name| name == "current_graph_version")
     };
     if !has_current_graph_version {
-        connection.execute(
+        migration.execute(
             "ALTER TABLE projects ADD COLUMN current_graph_version INTEGER",
             [],
         )?;
     }
     let has_compatibility_digest = {
-        let mut statement = connection.prepare("PRAGMA table_info(graph_versions)")?;
+        let mut statement = migration.prepare("PRAGMA table_info(graph_versions)")?;
         statement
             .query_map([], |row| row.get::<_, String>(1))?
             .collect::<Result<Vec<_>, _>>()?
@@ -349,13 +503,13 @@ pub fn open_native_store(root: &Path) -> rusqlite::Result<Connection> {
             .any(|name| name == "compatibility_digest")
     };
     if !has_compatibility_digest {
-        connection.execute(
+        migration.execute(
             "ALTER TABLE graph_versions ADD COLUMN compatibility_digest TEXT",
             [],
         )?;
     }
     let has_public_graph_version = {
-        let mut statement = connection.prepare("PRAGMA table_info(graph_versions)")?;
+        let mut statement = migration.prepare("PRAGMA table_info(graph_versions)")?;
         statement
             .query_map([], |row| row.get::<_, String>(1))?
             .collect::<Result<Vec<_>, _>>()?
@@ -363,20 +517,19 @@ pub fn open_native_store(root: &Path) -> rusqlite::Result<Connection> {
             .any(|name| name == "public_graph_version")
     };
     if !has_public_graph_version {
-        connection.execute(
+        migration.execute(
             "ALTER TABLE graph_versions ADD COLUMN public_graph_version INTEGER",
             [],
         )?;
     }
-    connection.execute_batch(
+    migration.execute_batch(
         "CREATE INDEX IF NOT EXISTS graph_versions_project_public_version
            ON graph_versions(project_pk, public_graph_version);",
     )?;
-    // v11 is an additive, transactional identity store. Public graph v1 and
+    // v11 is an additive identity store. Public graph v1 and
     // its component cache remain authoritative compatibility projections.
-    // Keeping this migration separate from the bootstrap DDL makes an older
-    // database either fully v10 or fully v11 after a crash, never half-created.
-    let migration = connection.transaction()?;
+    // The complete upgrade is one transaction, so an older database is either
+    // wholly upgraded or left at its original declared version after a crash.
     migration.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS projects_v2 (
@@ -537,6 +690,43 @@ pub fn open_native_store(root: &Path) -> rusqlite::Result<Connection> {
               AND existing_target.node_uid = NEW.old_node_uid
           ) THEN RAISE(ABORT, 'identity alias chains are forbidden') END;
         END;
+
+        -- v12 separates durable relationship identity from presence history.
+        -- The v11 last_graph_version columns remain a compatibility projection
+        -- for current-state queries; these interval tables are authoritative
+        -- for historical presence and retain every absent/reappeared gap.
+        CREATE TABLE IF NOT EXISTS edge_presence_v2 (
+          edge_pk INTEGER NOT NULL REFERENCES edges_v2(edge_pk) ON DELETE CASCADE,
+          first_graph_version INTEGER NOT NULL CHECK(first_graph_version >= 0),
+          last_graph_version INTEGER CHECK(last_graph_version >= first_graph_version),
+          PRIMARY KEY(edge_pk, first_graph_version)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS edge_presence_v2_open
+          ON edge_presence_v2(edge_pk) WHERE last_graph_version IS NULL;
+        CREATE INDEX IF NOT EXISTS edge_presence_v2_history
+          ON edge_presence_v2(first_graph_version, last_graph_version, edge_pk);
+        CREATE TABLE IF NOT EXISTS placement_presence_v2 (
+          placement_pk INTEGER NOT NULL REFERENCES node_placements_v2(placement_pk) ON DELETE CASCADE,
+          first_graph_version INTEGER NOT NULL CHECK(first_graph_version >= 0),
+          last_graph_version INTEGER CHECK(last_graph_version >= first_graph_version),
+          PRIMARY KEY(placement_pk, first_graph_version)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS placement_presence_v2_open
+          ON placement_presence_v2(placement_pk) WHERE last_graph_version IS NULL;
+        CREATE INDEX IF NOT EXISTS placement_presence_v2_history
+          ON placement_presence_v2(first_graph_version, last_graph_version, placement_pk);
+
+        -- v11 stored only one possibly-reopened interval. Preserve exactly the
+        -- recoverable history during migration; future promotions append new
+        -- intervals instead of rewriting this imported interval.
+        INSERT OR IGNORE INTO edge_presence_v2(
+          edge_pk, first_graph_version, last_graph_version
+        )
+        SELECT edge_pk, first_graph_version, last_graph_version FROM edges_v2;
+        INSERT OR IGNORE INTO placement_presence_v2(
+          placement_pk, first_graph_version, last_graph_version
+        )
+        SELECT placement_pk, first_graph_version, last_graph_version FROM node_placements_v2;
         ",
     )?;
     migration.execute(
@@ -545,6 +735,7 @@ pub fn open_native_store(root: &Path) -> rusqlite::Result<Connection> {
         [NATIVE_STORE_SCHEMA_VERSION.to_string()],
     )?;
     migration.pragma_update(None, "user_version", NATIVE_STORE_SCHEMA_VERSION)?;
+    validate_native_store_schema(&migration)?;
     migration.commit()?;
     Ok(connection)
 }
@@ -1621,6 +1812,8 @@ mod tests {
             "edge_evidence_v2",
             "node_external_ids_v2",
             "node_identity_aliases_v2",
+            "edge_presence_v2",
+            "placement_presence_v2",
         ] {
             assert_eq!(
                 connection
@@ -1631,11 +1824,287 @@ mod tests {
                     )
                     .unwrap(),
                 1,
-                "missing v11 table {table}"
+                "missing current schema table {table}"
             );
         }
         drop(connection);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refuses_future_schema_without_modifying_the_database() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-store-future-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(root.join(".flopeek")).unwrap();
+        let path = root.join(NATIVE_STORE_RELATIVE_PATH);
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO metadata(key, value) VALUES ('schema_version', '999');
+                 PRAGMA user_version = 999;",
+            )
+            .unwrap();
+        drop(connection);
+        let before = fs::read(&path).unwrap();
+        let error = open_native_store(&root).unwrap_err();
+        assert!(error.to_string().contains("newer than supported"));
+        assert_eq!(fs::read(&path).unwrap(), before);
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        assert_eq!(
+            connection
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            999
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE name = 'projects'",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refuses_schema_metadata_disagreement_and_does_not_repair_current_schema() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-store-metadata-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let connection = open_native_store(&root).unwrap();
+        connection
+            .execute("DROP TABLE edge_presence_v2", [])
+            .unwrap();
+        drop(connection);
+        let error = open_native_store(&root).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("missing required table edge_presence_v2")
+        );
+        let connection = rusqlite::Connection::open(root.join(NATIVE_STORE_RELATIVE_PATH)).unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'edge_presence_v2'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0,
+            "a declared-current but incomplete schema must not be silently repaired"
+        );
+        connection
+            .execute(
+                "UPDATE metadata SET value = '11' WHERE key = 'schema_version'",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+        let error = open_native_store(&root).unwrap_err();
+        assert!(error.to_string().contains("disagrees"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn migrates_v11_relationship_state_to_v12_presence_intervals_atomically() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-store-v11-migration-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let connection = open_native_store(&root).unwrap();
+        connection
+            .execute(
+                "INSERT INTO projects(project_id, created_at_ms) VALUES ('project:migration', 1)",
+                [],
+            )
+            .unwrap();
+        let project_pk = connection.last_insert_rowid();
+        connection
+            .execute(
+                "INSERT INTO projects_v2(project_pk, project_uid, public_project_id,
+                   identity_status, created_at_ms)
+                 VALUES (?1, ?2, 'project:migration', 'local', 1)",
+                rusqlite::params![project_pk, [1_u8; 16].as_slice()],
+            )
+            .unwrap();
+        for (uid, hash, identity) in [
+            ([2_u8; 16], [3_u8; 32], [4_u8]),
+            ([5_u8; 16], [6_u8; 32], [7_u8]),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO nodes_v2(project_pk, node_uid, kind, current_semantic_hash,
+                       current_canonical_identity, first_seen_graph_version, status)
+                     VALUES (?1, ?2, 'file', ?3, ?4, 1, 'active')",
+                    rusqlite::params![
+                        project_pk,
+                        uid.as_slice(),
+                        hash.as_slice(),
+                        identity.as_slice()
+                    ],
+                )
+                .unwrap();
+        }
+        let source_pk = connection
+            .query_row(
+                "SELECT MIN(node_pk) FROM nodes_v2 WHERE project_pk = ?1",
+                [project_pk],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        let target_pk = connection
+            .query_row(
+                "SELECT MAX(node_pk) FROM nodes_v2 WHERE project_pk = ?1",
+                [project_pk],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO edges_v2(project_pk, edge_uid, source_node_pk, target_node_pk,
+                   relation, qualifier_hash, canonical_qualifier, first_graph_version,
+                   last_graph_version)
+                 VALUES (?1, ?2, ?3, ?4, 'calls', ?5, X'', 1, NULL)",
+                rusqlite::params![
+                    project_pk,
+                    [8_u8; 32].as_slice(),
+                    source_pk,
+                    target_pk,
+                    [9_u8; 32].as_slice()
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO node_placements_v2(project_pk, parent_node_pk, child_node_pk,
+                   relation, placement_hash, first_graph_version, last_graph_version)
+                 VALUES (?1, ?2, ?3, 'contains', ?4, 1, NULL)",
+                rusqlite::params![project_pk, source_pk, target_pk, [10_u8; 32].as_slice()],
+            )
+            .unwrap();
+        connection
+            .execute("DROP TABLE edge_presence_v2", [])
+            .unwrap();
+        connection
+            .execute("DROP TABLE placement_presence_v2", [])
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE metadata SET value = '11' WHERE key = 'schema_version'",
+                [],
+            )
+            .unwrap();
+        connection.pragma_update(None, "user_version", 11).unwrap();
+        drop(connection);
+
+        let connection = open_native_store(&root).unwrap();
+        assert_eq!(
+            connection
+                .query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            12
+        );
+        for table in ["edge_presence_v2", "placement_presence_v2"] {
+            assert_eq!(
+                connection
+                    .query_row(
+                        &format!("SELECT COUNT(*) FROM {table} WHERE first_graph_version = 1 AND last_graph_version IS NULL"),
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap(),
+                1,
+                "v11 current relationship must be preserved in {table}"
+            );
+        }
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_metadata_directory_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-store-link-{}-{unique}",
+            std::process::id()
+        ));
+        let outside = std::env::temp_dir().join(format!(
+            "flopeek-native-store-outside-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        symlink(&outside, root.join(".flopeek")).unwrap();
+        assert!(open_native_store(&root).is_err());
+        assert!(!outside.join("native-core.sqlite3").exists());
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn refuses_metadata_directory_junction_escape() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-store-junction-{}-{unique}",
+            std::process::id()
+        ));
+        let outside = std::env::temp_dir().join(format!(
+            "flopeek-native-store-junction-outside-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let junction = root.join(".flopeek");
+        let status = std::process::Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "New-Item -ItemType Junction -Path $env:FLOPEEK_TEST_JUNCTION -Target $env:FLOPEEK_TEST_JUNCTION_TARGET | Out-Null",
+            ])
+            .env("FLOPEEK_TEST_JUNCTION", &junction)
+            .env("FLOPEEK_TEST_JUNCTION_TARGET", &outside)
+            .status()
+            .unwrap();
+        assert!(status.success(), "test fixture junction must be created");
+        assert!(open_native_store(&root).is_err());
+        assert!(!outside.join("native-core.sqlite3").exists());
+        fs::remove_dir(&junction).unwrap();
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
     }
 
     #[test]
@@ -2368,7 +2837,172 @@ mod tests {
     }
 
     #[test]
-    fn canonical_external_packages_are_namespaced_by_ecosystem() {
+    fn relationship_presence_retains_absent_then_reappeared_intervals() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-presence-intervals-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let mut connection = open_native_store(&root).unwrap();
+        let project = "project:presence-intervals";
+        let nodes = json!([
+            { "id": "file:src/a.js", "kind": "file", "type": "module", "path": "src/a.js" },
+            { "id": "symbol:src/a.js:function:a", "kind": "symbol", "type": "function", "path": "src/a.js", "label": "a" },
+            { "id": "symbol:src/a.js:function:b", "kind": "symbol", "type": "function", "path": "src/a.js", "label": "b" }
+        ]);
+        let evidence = json!({
+            "parser": "typescript-ast",
+            "file": "src/a.js",
+            "range": { "start": { "line": 1, "column": 1 }, "end": { "line": 1, "column": 8 } }
+        });
+        let present_edges = json!([
+            { "source": "file:src/a.js", "target": "symbol:src/a.js:function:a", "type": "contains" },
+            { "source": "symbol:src/a.js:function:a", "target": "symbol:src/a.js:function:b", "type": "calls", "confidence": "exact", "evidence": evidence }
+        ]);
+
+        for (public_version, present) in
+            [(1_i64, true), (2, false), (3, true), (4, false), (5, true)]
+        {
+            let digest = format!("sha256:{}", format!("{public_version:x}").repeat(64));
+            let payload = json!({
+                "schemaVersion": "native-shadow/v1",
+                "nodes": nodes.clone(),
+                "edges": if present { present_edges.clone() } else { json!([]) },
+                "flows": [],
+                "diagnosticFlows": []
+            });
+            let batch = json!({
+                "schemaVersion": "flopeek-structural-fact-batch/v1",
+                "projectId": project,
+                "records": [{
+                    "recordOrder": 0,
+                    "relativePath": "src/a.js",
+                    "language": "javascript",
+                    "sourceHash": format!("{:064x}", public_version),
+                    "result": { "calls": if present { json!([{
+                        "name": "b",
+                        "source": { "type": "function", "name": "a" },
+                        "imported": null,
+                        "evidence": evidence.clone()
+                    }]) } else { json!([]) } }
+                }],
+                "factsDigest": digest
+            });
+            let candidate = begin_graph_build(
+                &mut connection,
+                project,
+                &format!("material:{public_version}"),
+                &format!("source:{public_version}"),
+            )
+            .unwrap();
+            promote_graph_build(
+                &mut connection,
+                NativeGraphPromotionRequest {
+                    project_id: project,
+                    graph_version: candidate.graph_version,
+                    public_graph_version: public_version,
+                    payload: &payload,
+                    compatibility_digest: &format!("sha256:{}", "f".repeat(64)),
+                    adjacent_delta: None,
+                    facts_digest: Some(&digest),
+                    structural_batch: Some(&batch),
+                    changed_record_paths: None,
+                    reuse_public_components: false,
+                },
+            )
+            .unwrap();
+        }
+
+        let edge_intervals = connection
+            .prepare(
+                "SELECT presence.first_graph_version, presence.last_graph_version
+                 FROM edge_presence_v2 AS presence
+                 JOIN edges_v2 AS edge ON edge.edge_pk = presence.edge_pk
+                 WHERE edge.relation = 'calls'
+                 ORDER BY presence.first_graph_version",
+            )
+            .unwrap()
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(edge_intervals, vec![(1, Some(1)), (3, Some(3)), (5, None)]);
+
+        let placement_intervals = connection
+            .prepare(
+                "SELECT presence.first_graph_version, presence.last_graph_version
+                 FROM placement_presence_v2 AS presence
+                 JOIN node_placements_v2 AS placement
+                   ON placement.placement_pk = presence.placement_pk
+                 WHERE placement.relation = 'contains'
+                 ORDER BY presence.first_graph_version",
+            )
+            .unwrap()
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            placement_intervals,
+            vec![(1, Some(1)), (3, Some(3)), (5, None)]
+        );
+        let evidence_intervals = connection
+            .prepare(
+                "SELECT first_graph_version, last_graph_version
+                 FROM edge_evidence_v2
+                 ORDER BY first_graph_version",
+            )
+            .unwrap()
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            evidence_intervals,
+            vec![(1, Some(1)), (3, Some(3)), (5, None)]
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM edge_presence_v2
+                     WHERE first_graph_version <= 2
+                       AND (last_graph_version IS NULL OR last_graph_version >= 2)",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0,
+            "the relationship must be historically absent at graph version 2"
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM edge_presence_v2
+                     WHERE first_graph_version <= 4
+                       AND (last_graph_version IS NULL OR last_graph_version >= 4)",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0,
+            "the relationship must remain historically absent after another reappearance"
+        );
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn canonical_external_import_roots_are_namespaced_by_ecosystem() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -2422,7 +3056,7 @@ mod tests {
                 .prepare(
                     "SELECT nodes.ecosystem FROM node_external_ids_v2 AS external
                  JOIN nodes_v2 AS nodes ON nodes.node_pk = external.node_pk
-                 WHERE external.scheme = 'external-package-v2' ORDER BY nodes.ecosystem",
+                     WHERE external.scheme = 'external-import-root-v1' ORDER BY nodes.ecosystem",
                 )
                 .unwrap();
             statement
@@ -2432,6 +3066,93 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(ecosystems, ["npm", "pypi"]);
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn canonical_external_import_root_collapses_subpaths_and_preserves_specifiers() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flopeek-native-external-import-roots-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let mut connection = open_native_store(&root).unwrap();
+        let project = "project:external-import-roots";
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let payload = json!({
+            "schemaVersion": "native-shadow/v1",
+            "nodes": [
+                { "id": "file:src/client.ts", "kind": "file", "type": "module", "path": "src/client.ts" }
+            ],
+            "edges": [], "flows": [], "diagnosticFlows": []
+        });
+        let batch = json!({
+            "schemaVersion": "flopeek-structural-fact-batch/v1", "projectId": project,
+            "records": [{
+                "recordOrder": 0,
+                "relativePath": "src/client.ts",
+                "language": "typescript",
+                "sourceHash": "b".repeat(64),
+                "result": {
+                    "externalImports": [
+                        { "specifier": "lodash/map", "nodeType": "external", "metadata": {} },
+                        { "specifier": "lodash/get", "nodeType": "external", "metadata": {} }
+                    ]
+                }
+            }],
+            "factsDigest": digest
+        });
+        let candidate =
+            begin_graph_build(&mut connection, project, "material:one", "source:one").unwrap();
+        promote_graph_build(
+            &mut connection,
+            NativeGraphPromotionRequest {
+                project_id: project,
+                graph_version: candidate.graph_version,
+                public_graph_version: 1,
+                payload: &payload,
+                compatibility_digest: &format!("sha256:{}", "d".repeat(64)),
+                adjacent_delta: None,
+                facts_digest: Some(&digest),
+                structural_batch: Some(&batch),
+                changed_record_paths: None,
+                reuse_public_components: false,
+            },
+        )
+        .unwrap();
+
+        let metadata_json = connection
+            .query_row(
+                "SELECT revisions.metadata_json
+                 FROM node_revisions_v2 AS revisions
+                 JOIN nodes_v2 AS nodes ON nodes.node_pk = revisions.node_pk
+                 WHERE nodes.kind = 'external' AND nodes.ecosystem = 'npm'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        let metadata: serde_json::Value = serde_json::from_str(&metadata_json).unwrap();
+        assert_eq!(metadata["canonicalImportRoot"], "lodash");
+        assert_eq!(
+            metadata["observedSpecifiers"],
+            json!(["lodash/get", "lodash/map"])
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM nodes_v2
+                     WHERE kind = 'external' AND ecosystem = 'npm'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
         drop(connection);
         fs::remove_dir_all(root).unwrap();
     }

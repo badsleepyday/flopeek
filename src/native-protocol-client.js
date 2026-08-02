@@ -4,6 +4,7 @@ const { spawn: defaultSpawn } = require("node:child_process");
 const readline = require("node:readline");
 
 const NATIVE_PROTOCOL_VERSION = "flopeek-native-protocol/v1";
+const MAX_STDERR_TAIL_BYTES = 16 * 1024;
 
 class NativeProtocolClientError extends Error {
   constructor(code, message, response = null) {
@@ -30,6 +31,7 @@ class NativeProtocolClient {
     this.lastStartStats = null;
     this.startPromise = null;
     this.closed = false;
+    this.stderrTail = "";
   }
 
   async start() {
@@ -49,6 +51,7 @@ class NativeProtocolClient {
     this.lines?.close();
     this.lines = null;
     this.closed = false;
+    this.stderrTail = "";
     const child = this.spawn(this.command, [...this.args, "--native-serve"], {
       cwd: this.cwd,
       stdio: ["pipe", "pipe", "pipe"],
@@ -57,11 +60,17 @@ class NativeProtocolClient {
     this.child = child;
     this.lines = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
     this.lines.on("line", (line) => this.#handleLine(line));
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
+      this.stderrTail = `${this.stderrTail}${chunk}`.slice(-MAX_STDERR_TAIL_BYTES);
+    });
     child.on("error", (error) => this.#fail(new NativeProtocolClientError("process-error", error.message)));
     child.on("exit", (code, signal) => {
       if (this.child === child) this.child = null;
       this.closed = true;
-      this.#fail(new NativeProtocolClientError("process-exit", `Native protocol process exited (${signal ?? code ?? "unknown"}).`));
+      const diagnostic = this.stderrTail.trim();
+      const suffix = diagnostic ? `\n${diagnostic}` : "";
+      this.#fail(new NativeProtocolClientError("process-exit", `Native protocol process exited (${signal ?? code ?? "unknown"}).${suffix}`));
     });
     await new Promise((resolve, reject) => {
       const onSpawn = () => {

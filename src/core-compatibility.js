@@ -83,7 +83,7 @@ function sourceFiles(root) {
   const files = [];
   const visit = (directory) => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      if (entry.name === ".flopeek" || entry.name === ".flowpeek" || entry.name === "expectations.json") continue;
+      if (entry.name === ".flopeek" || entry.name === "expectations.json") continue;
       const absolute = path.join(directory, entry.name);
       if (entry.isDirectory()) visit(absolute);
       else if (entry.isFile()) files.push(path.relative(root, absolute).replaceAll("\\", "/"));

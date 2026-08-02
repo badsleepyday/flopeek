@@ -28,7 +28,7 @@ function sourceFingerprint(root) {
   const files = [];
   const walk = (directory) => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
-      if (entry.name === ".flopeek" || entry.name === ".flowpeek" || entry.name === "node_modules") continue;
+      if (entry.name === ".flopeek" || entry.name === "node_modules") continue;
       const absolute = path.join(directory, entry.name);
       if (entry.isDirectory()) walk(absolute);
       else if (entry.isFile()) files.push(absolute);

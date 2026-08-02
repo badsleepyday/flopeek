@@ -393,12 +393,12 @@ fn collect(
     b: &BTreeMap<String, (String, String)>,
     f: &mut NativeJsStructuralFacts,
 ) {
-    if n.kind() == "function_definition" && f.methods.len() < 12 {
-        if let Some(method) = name(n, s) {
-            if !f.methods.contains(&method) {
-                f.methods.push(method)
-            }
-        }
+    if n.kind() == "function_definition"
+        && f.methods.len() < 12
+        && let Some(method) = name(n, s)
+        && !f.methods.contains(&method)
+    {
+        f.methods.push(method)
     }
     match n.kind() {
         "import_statement" | "import_from_statement" | "future_import_statement" => {

@@ -22,7 +22,7 @@ test.before(() => {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.cpSync(source, target, {
       recursive: true,
-      filter: (entry) => ![".flopeek", ".flowpeek"].includes(path.basename(entry)),
+      filter: (entry) => path.basename(entry) !== ".flopeek",
     });
   }
   report = evaluateOrientation(suiteRoot, DEFINITION, { condition: "both" });

@@ -200,7 +200,15 @@ test("NativeCoreClient forwards nativeOptions to the session rather than treatin
   assert.equal(client.implementation, "native-experimental");
   assert.equal(client.backendAuthority, "rust-sqlite");
   assert.equal(client.parserHost, "javascript-structural-fact-batch/v1");
+  assert.equal(client.getNodeIdentity, undefined);
+  assert.equal(client.searchNodeIdentities, undefined);
+  assert.equal(client.createContextRefV2, undefined);
+  const experimental = createNativeCoreClient({ experimentalIdentityV2: true });
+  assert.equal(typeof experimental.getNodeIdentity, "function");
+  assert.equal(typeof experimental.searchNodeIdentities, "function");
+  assert.equal(typeof experimental.createContextRefV2, "function");
   await client.close();
+  await experimental.close();
 });
 
 test("NativeCoreClient rejects a JavaScript core authority at its backend boundary", () => {
@@ -697,6 +705,7 @@ for (const persistIdentity of [true, false]) {
         native: nativeClient(),
         sessionId: `${adapter.id}-matrix-${mode}`,
         sourceAuthority: "rust",
+        experimentalIdentityV2: true,
       });
       const javascript = createJsCoreClient();
       const nativeOptions = persistIdentity ? {} : { persistIdentity: false };
@@ -861,7 +870,7 @@ for (const persistIdentity of [true, false]) {
 test("experimental native core owns persistent public graph versions", async (context) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-native-core-client-"));
   fs.cpSync(FIXTURE, root, { recursive: true, filter: (source) => path.basename(source) !== ".flopeek" });
-  const client = createNativeCoreClient({ native: nativeClient() });
+  const client = createNativeCoreClient({ native: nativeClient(), experimentalIdentityV2: true });
   context.after(async () => {
     await client.close();
     fs.rmSync(root, { recursive: true, force: true });
@@ -1349,6 +1358,7 @@ test("native last-complete recovery keeps the StructuralFactBatch in Rust", asyn
   });
 
   const expected = await writer.scan(root);
+  await writer.close();
   const restored = await reader.getLastCompleteGraph(root);
   assert.ok(restored);
   assert.equal(createCoreCompatibilityDigest(restored), createCoreCompatibilityDigest(expected));

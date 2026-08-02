@@ -24,7 +24,7 @@ const ADAPTER_REGISTRY = getAdapterRegistry();
 const RESOLVE_EXTENSIONS = ["", ".js", ".cjs", ".mjs", ".jsx", ".ts", ".tsx", ".svelte", ".vue", ".json"];
 const JS_TS_EXTENSIONS = new Set([".js", ".cjs", ".mjs", ".jsx", ".ts", ".tsx"]);
 const IGNORED_DIRECTORIES = new Set([
-  ".flopeek", ".flowpeek", ".git", ".next", ".nuxt", ".project-flow", ".turbo", "build", "coverage", "dist", "node_modules", "out", "target", "vendor",
+  ".flopeek", ".git", ".next", ".nuxt", ".project-flow", ".turbo", "build", "coverage", "dist", "node_modules", "out", "target", "vendor",
 ]);
 const NODE_BUILTINS = new Set(require("node:module").builtinModules.map((name) => name.replace("node:", "")));
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);

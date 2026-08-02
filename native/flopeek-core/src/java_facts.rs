@@ -137,20 +137,19 @@ fn collect_calls(
     {
         return;
     }
-    if node.kind() == "method_invocation" && node.child_by_field_name("object").is_none() {
-        if let Some(name) = node
+    if node.kind() == "method_invocation"
+        && node.child_by_field_name("object").is_none()
+        && let Some(name) = node
             .child_by_field_name("name")
             .and_then(|name| text(name, context.source))
-        {
-            if context.static_names.contains(&name) {
-                calls.push(NativeJsCall {
-                    name: format!("{}.{name}", context.type_name),
-                    source: Some(context.owner.clone()),
-                    imported: None,
-                    evidence: evidence(context.path, node),
-                });
-            }
-        }
+        && context.static_names.contains(&name)
+    {
+        calls.push(NativeJsCall {
+            name: format!("{}.{name}", context.type_name),
+            source: Some(context.owner.clone()),
+            imported: None,
+            evidence: evidence(context.path, node),
+        });
     }
     for child in children(node) {
         collect_calls(child, method, context, calls);

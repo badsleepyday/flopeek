@@ -18,7 +18,6 @@ pub const MAX_NATIVE_SOURCE_FILE_BYTES: u64 = 1_000_000;
 const MAX_SOURCE_BATCH_BYTES: usize = 32 * 1024 * 1024;
 const IGNORED_DIRECTORIES: &[&str] = &[
     ".flopeek",
-    ".flowpeek",
     ".git",
     ".next",
     ".nuxt",

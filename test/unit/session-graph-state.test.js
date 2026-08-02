@@ -16,7 +16,7 @@ function fixture(t) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.cpSync(SOURCE, root, {
     recursive: true,
-    filter: (source) => ![".flopeek", ".flowpeek"].includes(path.basename(source)),
+    filter: (source) => path.basename(source) !== ".flopeek",
   });
   return root;
 }

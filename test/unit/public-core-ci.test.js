@@ -7,23 +7,28 @@ const test = require("node:test");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const readWorkflow = (name) => fs.readFileSync(path.join(ROOT, ".github", "workflows", name), "utf8");
+const assertThirdPartyActionsPinned = (workflow) => {
+  for (const match of workflow.matchAll(/uses:\s+([^\s]+)@([^\s]+)/gu)) {
+    assert.match(match[2], /^[a-f0-9]{40}$/u, `${match[1]} must use a full commit SHA`);
+  }
+};
 
 test("public Core CI proves package and clean-room behavior on the declared Node and OS matrix", () => {
   const workflow = readWorkflow("ci.yml");
   const publicSourceRunner = fs.readFileSync(path.join(ROOT, "scripts", "run-tests.js"), "utf8");
   assert.match(workflow, /os:\s*\[ubuntu-latest, windows-latest, macos-latest\]/);
-  assert.match(workflow, /node:\s*\[20, 22\]/);
+  assert.match(workflow, /node:\s*\[22, 24\]/);
   assert.match(workflow, /runs-on:\s*\$\{\{ matrix\.os \}\}/);
   assert.match(workflow, /workflow_call:/);
   assert.match(workflow, /ref:\s*\$\{\{ inputs\.source_sha \|\| github\.sha \}\}/);
-  assert.match(workflow, /uses: actions\/checkout@v7/);
-  assert.match(workflow, /uses: actions\/setup-node@v7/);
-  assert.match(workflow, /uses: dtolnay\/rust-toolchain@stable[\s\S]*?toolchain:\s*\$\{\{ steps\.toolchain-contract\.outputs\.rust \}\}/);
-  assert.match(workflow, /uses: actions\/setup-dotnet@v6/);
+  assert.match(workflow, /uses: actions\/checkout@[a-f0-9]{40}/);
+  assert.match(workflow, /uses: actions\/setup-node@[a-f0-9]{40}/);
+  assert.match(workflow, /uses: dtolnay\/rust-toolchain@[a-f0-9]{40}[^\n]*[\s\S]*?toolchain:\s*\$\{\{ steps\.toolchain-contract\.outputs\.rust \}\}/);
+  assert.match(workflow, /uses: actions\/setup-dotnet@[a-f0-9]{40}/);
   assert.match(workflow, /global-json-file:\s*global\.json/);
-  assert.match(workflow, /uses: actions\/setup-go@v7/);
+  assert.match(workflow, /uses: actions\/setup-go@[a-f0-9]{40}/);
   assert.match(workflow, /go-version:\s*'1\.26\.4'/);
-  assert.match(workflow, /setup-go@v7[\s\S]*?cache:\s*false/);
+  assert.match(workflow, /setup-go@[a-f0-9]{40}[^\n]*[\s\S]*?cache:\s*false/);
   assert.match(workflow, /npm run verify:native-adapter-parity -- --output native-adapter-parity\.json/);
   assert.match(workflow, /name: adapter-parity-\$\{\{ matrix\.os \}\}-node-\$\{\{ matrix\.node \}\}/);
   assert.match(publicSourceRunner, /lanes\["public-source"\]\.unshift\("test\/unit\/native-inventory-parity\.test\.js"\)/);
@@ -32,6 +37,7 @@ test("public Core CI proves package and clean-room behavior on the declared Node
   }
   const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
   assert.match(packageJson.scripts["test:native-core"], /node scripts\/smoke-native-release\.js/);
+  assertThirdPartyActionsPinned(workflow);
 });
 
 test("candidate workflow builds each platform once and produces one immutable complete bundle", () => {
@@ -56,6 +62,7 @@ test("candidate workflow builds each platform once and produces one immutable co
   assert.match(workflow, /name: native-candidate-bundle/);
   assert.doesNotMatch(workflow, /npm publish|gh release create|git push/);
   assert.doesNotMatch(workflow, /continue-on-error|\|\|\s*true/);
+  assertThirdPartyActionsPinned(workflow);
 });
 
 test("promotion workflow consumes a cross-run candidate behind protected environments without rebuilding", () => {
@@ -65,7 +72,7 @@ test("promotion workflow consumes a cross-run candidate behind protected environ
     assert.match(workflow, new RegExp(`\\n\\s{6}${input}:`));
   }
   assert.match(workflow, /environment: \$\{\{ inputs\.dry_run && 'native-release-promotion-dry-run' \|\| 'native-release-promotion' \}\}/);
-  assert.match(workflow, /uses: actions\/download-artifact@v8[\s\S]*github-token: \$\{\{ github\.token \}\}[\s\S]*run-id: \$\{\{ inputs\.candidate_run_id \}\}/);
+  assert.match(workflow, /uses: actions\/download-artifact@[a-f0-9]{40}[^\n]*[\s\S]*github-token: \$\{\{ github\.token \}\}[\s\S]*run-id: \$\{\{ inputs\.candidate_run_id \}\}/);
   assert.match(workflow, /--expected-manifest-sha256 "\$\{\{ inputs\.release_manifest_sha256 \}\}"/);
   assert.match(workflow, /actions\/runs\/\$\{\{ inputs\.candidate_run_id \}\}/);
   assert.match(workflow, /run\.path -ne '\.github\/workflows\/native-candidate\.yml'/);
@@ -77,4 +84,6 @@ test("promotion workflow consumes a cross-run candidate behind protected environ
   assert.match(workflow, /gh release create/);
   assert.doesNotMatch(workflow, /cargo (?:build|run)|npm pack/);
   assert.doesNotMatch(workflow, /packaging\/github-release-approval\.json|continue-on-error|\|\|\s*true/);
+  assert.doesNotMatch(workflow, /id-token:\s*write/);
+  assertThirdPartyActionsPinned(workflow);
 });

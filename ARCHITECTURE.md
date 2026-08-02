@@ -595,7 +595,7 @@ explicit unavailable result.
 - agent evidence trace contracts in `test/unit/agent-evidence-trace.test.js`;
 - relationship precision/recall fixture gate in `test/fixture-corpus.test.js`;
 - pinned external-repository audit through `src/real-repository-corpus.js`;
-- GitHub Actions for Node 20/22 pull-request tests;
+- GitHub Actions for Node 22/24 pull-request tests;
 - scheduled and manual external corpus workflow.
 
 The scanner integration suite is large and should be split into faster feedback lanes as the architecture is modularized.

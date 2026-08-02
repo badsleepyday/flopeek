@@ -634,7 +634,6 @@ fn native_js_ignored_path(relative_path: &str) -> bool {
                 || matches!(
                     *segment,
                     ".flopeek"
-                        | ".flowpeek"
                         | ".git"
                         | ".next"
                         | ".nuxt"
@@ -1569,49 +1568,45 @@ fn collect_structural(
             let function = node.child_by_field_name("function");
             if let Some(function) = function
                 && function.kind() == "identifier"
+                && let Some(name) = source_text(function, source)
             {
-                if let Some(name) = source_text(function, source) {
-                    if name == "require" {
-                        if let Some(specifier) = arguments
-                            .first()
-                            .and_then(|item| string_value(*item, source))
-                        {
-                            facts.imports.push(NativeJsImport {
-                                specifier,
-                                standard: None,
-                                evidence: evidence(path, source, node),
-                            });
-                        }
-                    } else if !call_name_is_shadowed(node, &name, source) {
-                        facts.calls.push(NativeJsCall {
-                            imported: bindings.get(&name).cloned(),
-                            source: enclosing_top_level_symbol(node, source),
-                            name: name.clone(),
+                if name == "require" {
+                    if let Some(specifier) = arguments
+                        .first()
+                        .and_then(|item| string_value(*item, source))
+                    {
+                        facts.imports.push(NativeJsImport {
+                            specifier,
+                            standard: None,
                             evidence: evidence(path, source, node),
                         });
-                        if name == "fetch"
-                            && let Some(route) = arguments
-                                .first()
-                                .and_then(|item| string_value(*item, source))
-                            && route.starts_with('/')
-                        {
-                            let method = arguments
-                                .get(1)
-                                .and_then(|item| object_string_property(*item, source, "method"))
-                                .map(|item| item.to_ascii_uppercase())
-                                .filter(|item| {
-                                    matches!(
-                                        item.as_str(),
-                                        "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
-                                    )
-                                })
-                                .unwrap_or_else(|| "GET".to_string());
-                            facts.requests.push(NativeJsRequest {
-                                method,
-                                route,
-                                evidence: evidence(path, source, node),
-                            });
-                        }
+                    }
+                } else if !call_name_is_shadowed(node, &name, source) {
+                    facts.calls.push(NativeJsCall {
+                        imported: bindings.get(&name).cloned(),
+                        source: enclosing_top_level_symbol(node, source),
+                        name: name.clone(),
+                        evidence: evidence(path, source, node),
+                    });
+                    if name == "fetch"
+                        && let Some(route) = arguments
+                            .first()
+                            .and_then(|item| string_value(*item, source))
+                        && route.starts_with('/')
+                    {
+                        let method = arguments
+                            .get(1)
+                            .and_then(|item| object_string_property(*item, source, "method"))
+                            .map(|item| item.to_ascii_uppercase())
+                            .filter(|item| {
+                                matches!(item.as_str(), "GET" | "POST" | "PUT" | "PATCH" | "DELETE")
+                            })
+                            .unwrap_or_else(|| "GET".to_string());
+                        facts.requests.push(NativeJsRequest {
+                            method,
+                            route,
+                            evidence: evidence(path, source, node),
+                        });
                     }
                 }
             }

@@ -11,13 +11,13 @@
     "mcp",
     "static-analysis"
   ],
-  "homepage": "https://github.com/badsleepyday/flopeek#readme",
+  "homepage": "https://github.com/badsleepyday/flopeek-core#readme",
   "bugs": {
-    "url": "https://github.com/badsleepyday/flopeek/issues"
+    "url": "https://github.com/badsleepyday/flopeek-core/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/badsleepyday/flopeek.git"
+    "url": "git+https://github.com/badsleepyday/flopeek-core.git"
   },
   "type": "commonjs",
   "bin": {
@@ -127,7 +127,7 @@
     "prepublishOnly": "npm run verify:npm-publication"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "overrides": {
     "@hono/node-server": "2.0.11"

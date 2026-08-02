@@ -3026,7 +3026,7 @@ test("repository scope defaults keep test and fixture endpoints out of applicati
     write(root, "src/orders.routes.ts", "router.get('/orders', () => ({ ok: true }));");
     write(root, "test/orders.routes.spec.ts", "router.put('/test-orders', () => ({ ok: true }));");
     write(root, "test/fixtures/orders.routes.ts", "router.post('/fixture-orders', () => ({ ok: true }));");
-    write(root, ".flowpeek/legacy.routes.ts", "router.delete('/legacy-cache', () => ({ ok: true }));");
+    write(root, ".flopeek/cache.routes.ts", "router.delete('/cache', () => ({ ok: true }));");
     const graph = scanRepository(root);
     assert.deepEqual(graph.flows.map((flow) => flow.title), ["GET /orders"]);
     assert.deepEqual(graph.diagnosticFlows.map((flow) => flow.title).sort(), ["GET /orders", "POST /fixture-orders", "PUT /test-orders"]);

@@ -145,10 +145,11 @@ fn recover_legacy_types(source: &str) -> Vec<RecoveredType> {
         let mut cursor = open + 1;
         let mut methods = Vec::new();
         while cursor < code.len() && depth > 0 {
-            if depth == 1 && word_at(&code, cursor, b"function") {
-                if let Some((method, _)) = identifier(&code, cursor + b"function".len()) {
-                    methods.push(method);
-                }
+            if depth == 1
+                && word_at(&code, cursor, b"function")
+                && let Some((method, _)) = identifier(&code, cursor + b"function".len())
+            {
+                methods.push(method);
             }
             match code[cursor] {
                 b'{' => depth += 1,
@@ -465,16 +466,17 @@ fn collect_top_level_declarations(
             }
             continue;
         }
-        if type_declaration(child) && top_level(child) {
-            if let Some(name) = function_name(child, source) {
-                symbols.push(NativeJsStructuralSymbol {
-                    symbol_type: "class".into(),
-                    name,
-                    methods: declaration_methods(child, source),
-                    evidence: evidence(path, child),
-                    identity: None,
-                });
-            }
+        if type_declaration(child)
+            && top_level(child)
+            && let Some(name) = function_name(child, source)
+        {
+            symbols.push(NativeJsStructuralSymbol {
+                symbol_type: "class".into(),
+                name,
+                methods: declaration_methods(child, source),
+                evidence: evidence(path, child),
+                identity: None,
+            });
         }
     }
 }
@@ -497,20 +499,19 @@ fn collect_imports(node: Node<'_>, path: &str, source: &str, imports: &mut Vec<N
                             evidence: evidence(path, child),
                         });
                     }
-                } else if child.kind() == "namespace_use_clause" {
-                    if let Some(specifier) = children(child)
+                } else if child.kind() == "namespace_use_clause"
+                    && let Some(specifier) = children(child)
                         .into_iter()
                         .find(|part| {
                             matches!(part.kind(), "name" | "qualified_name" | "relative_name")
                         })
                         .and_then(|part| text(part, source))
-                    {
-                        imports.push(NativeJsImport {
-                            specifier,
-                            standard: None,
-                            evidence: evidence(path, child),
-                        });
-                    }
+                {
+                    imports.push(NativeJsImport {
+                        specifier,
+                        standard: None,
+                        evidence: evidence(path, child),
+                    });
                 }
             }
         }

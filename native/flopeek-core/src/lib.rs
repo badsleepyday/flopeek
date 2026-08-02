@@ -19,5 +19,6 @@ pub mod rust_facts;
 pub mod scope;
 pub mod source_text;
 pub mod store;
+mod structural_contract;
 pub mod structural_graph;
 pub mod svelte_facts;

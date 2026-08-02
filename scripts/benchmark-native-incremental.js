@@ -9,7 +9,7 @@ const path = require("node:path");
 const ROOT = path.resolve(__dirname, "..");
 const JS_RUNNER = path.join(ROOT, "scripts", "run-js-core-scan.js");
 const NATIVE_RUNNER = path.join(ROOT, "scripts", "run-native-incremental-scan.js");
-const IGNORED_DIRECTORIES = new Set([".flowpeek", ".git", ".next", ".nuxt", ".project-flow", ".turbo", "build", "coverage", "dist", "node_modules", "out", "target", "vendor"]);
+const IGNORED_DIRECTORIES = new Set([".flopeek", ".git", ".next", ".nuxt", ".project-flow", ".turbo", "build", "coverage", "dist", "node_modules", "out", "target", "vendor"]);
 const SOURCE_EXTENSIONS = new Set([".asm", ".astro", ".bash", ".c", ".cc", ".cjs", ".cpp", ".cs", ".cxx", ".go", ".h", ".java", ".js", ".jsx", ".kt", ".kts", ".mjs", ".php", ".py", ".rb", ".rs", ".scala", ".sh", ".svelte", ".swift", ".ts", ".tsx", ".vue", ".zsh"]);
 
 function parseArguments(argumentsList) {
