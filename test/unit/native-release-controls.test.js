@@ -380,6 +380,7 @@ test("rollout artifact bindings hash the binary bytes and require one source rev
   const sourceDigest = "b".repeat(64);
   const compiler = { version: "rustc 1.2.3" };
   const byTarball = new Map();
+  const binaryExtractionCalls = [];
   for (const target of NATIVE_PLATFORM_TARGETS) {
     const filename = `${target.packageName.replace("@flopeek/", "flopeek-")}-${version}.tgz`;
     fs.writeFileSync(path.join(assets, filename), `tarball:${target.packageName}`);
@@ -402,9 +403,16 @@ test("rollout artifact bindings hash the binary bytes and require one source rev
       },
     });
   }
-  const execFileSync = (_command, args) => {
+  const execFileSync = (_command, args, options) => {
     const artifact = byTarball.get(args[1]);
-    return args[2] === "package/package.json" ? JSON.stringify(artifact.manifest) : artifact.binary;
+    if (args[0] === "-xOf") return JSON.stringify(artifact.manifest);
+    binaryExtractionCalls.push({ args, options });
+    const workspace = args[3];
+    const entry = args[4];
+    const output = path.join(workspace, ...entry.split("/"));
+    fs.mkdirSync(path.dirname(output), { recursive: true });
+    fs.writeFileSync(output, artifact.binary);
+    return undefined;
   };
   const manifest = {
     version,
@@ -412,6 +420,9 @@ test("rollout artifact bindings hash the binary bytes and require one source rev
   };
   const bindings = platformBinaryBindings(assets, manifest, execFileSync);
   assert.equal(Object.keys(bindings).length, 6);
+  assert.equal(binaryExtractionCalls.length, 6);
+  assert.ok(binaryExtractionCalls.every(({ args, options }) => args[0] === "-xf"
+    && args[2] === "-C" && options.stdio === "ignore"));
   assert.ok(Object.values(bindings).every((binding) => binding.repositoryRevision === revision
     && binding.sourceDigest === sourceDigest && /^[a-f0-9]{64}$/u.test(binding.tarballSha256)));
 

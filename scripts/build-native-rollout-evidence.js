@@ -4,6 +4,7 @@
 const childProcess = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { adapterContractDigest } = require("../src/adapter-registry");
 const { validateNativeAdapterParity } = require("../src/native-rollout-gate");
@@ -26,6 +27,20 @@ const REQUIRED_QUERY_OPERATIONS = Object.freeze([
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+function sha256TarEntry(tarball, entry, execFileSync = childProcess.execFileSync) {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-native-artifact-"));
+  try {
+    execFileSync("tar", ["-xf", tarball, "-C", workspace, entry], { stdio: "ignore" });
+    const extracted = path.join(workspace, ...entry.split("/"));
+    if (!fs.existsSync(extracted) || !fs.statSync(extracted).isFile()) {
+      throw new Error(`Native artifact entry was not extracted as a file: ${entry}.`);
+    }
+    return crypto.createHash("sha256").update(fs.readFileSync(extracted)).digest("hex");
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
 }
 
 function argument(argv, name) {
@@ -344,8 +359,7 @@ function platformBinaryBindings(assets, manifest, execFileSync = childProcess.ex
       throw new Error(`Native artifact target metadata does not match ${packed.name || file}.`);
     }
     const executable = packed.os[0] === "win32" ? "flopeek-native-core.exe" : "flopeek-native-core";
-    const binary = execFileSync("tar", ["-xOf", tarball, `package/bin/${executable}`]);
-    const actualBinarySha256 = crypto.createHash("sha256").update(binary).digest("hex");
+    const actualBinarySha256 = sha256TarEntry(tarball, `package/bin/${executable}`, execFileSync);
     if (actualBinarySha256 !== packed.flopeekNative.binarySha256) {
       throw new Error(`Native artifact binary checksum does not match its manifest: ${packed.name}.`);
     }
@@ -476,6 +490,7 @@ module.exports = {
   buildPacket,
   platformBinaryBindings,
   REQUIRED_QUERY_OPERATIONS,
+  sha256TarEntry,
   validateBenchmark,
   validateProfiles,
   validateSoakEvidence,
