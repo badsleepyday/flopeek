@@ -60,7 +60,7 @@ jobs:
           "release_channel=${{ inputs.release_channel }}" >> $env:GITHUB_OUTPUT
 
   full-ci:
-    name: Full six-cell correctness CI
+    name: Full required correctness CI
     uses: ./.github/workflows/ci.yml
     with:
       source_sha: ${{ inputs.source_sha }}

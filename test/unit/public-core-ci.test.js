@@ -69,6 +69,8 @@ test("dependency automation covers npm and Cargo without auto-merge", () => {
 test("candidate workflow builds each platform once and produces one immutable complete bundle", () => {
   const workflow = readWorkflow("native-candidate.yml");
   assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /name: Full required correctness CI/);
+  assert.doesNotMatch(workflow, /Full six-cell correctness CI/);
   for (const input of ["source_sha", "package_version", "release_channel"]) {
     assert.match(workflow, new RegExp(`\\n\\s{6}${input}:`));
   }
