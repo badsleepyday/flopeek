@@ -5,9 +5,21 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const { sourceFingerprint, writeCleanRoomReport } = require("../../src/clean-room-package");
+const { sameCanonicalFile, sourceFingerprint, writeCleanRoomReport } = require("../../src/clean-room-package");
 
 const ROOT = path.resolve(__dirname, "..", "..");
+
+test("clean-room native identity accepts filesystem aliases only when their canonical file matches", () => {
+  const realpathSync = () => { throw new Error("generic realpath must not be used"); };
+  realpathSync.native = (candidate) => {
+    if (candidate === "/var/folders/native") return "/private/var/folders/native";
+    return candidate;
+  };
+  const fileSystem = { realpathSync };
+
+  assert.equal(sameCanonicalFile("/private/var/folders/native", "/var/folders/native", fileSystem), true);
+  assert.equal(sameCanonicalFile("/private/var/folders/native", "/var/folders/other", fileSystem), false);
+});
 
 test("source fingerprint ignores Flopeek cache while detecting source changes", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-clean-room-fingerprint-"));

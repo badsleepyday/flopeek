@@ -8,6 +8,7 @@ const { spawnSync } = require("node:child_process");
 const { atomicWriteJson } = require("./graph-cache");
 const { npmInvocation, runPackageAudit } = require("./package-policy");
 const { nativePlatformPackageName } = require("./native-platform-targets");
+const { canonicalRealpath } = require("./canonical-path");
 
 const CLEAN_ROOM_REPORT_SCHEMA = "flopeek-clean-room-package-report/v1";
 
@@ -22,6 +23,10 @@ class CleanRoomError extends Error {
 
 function sha256File(file) {
   return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+}
+
+function sameCanonicalFile(left, right, fileSystem = fs) {
+  return canonicalRealpath(left, fileSystem) === canonicalRealpath(right, fileSystem);
 }
 
 function sourceFingerprint(root) {
@@ -314,7 +319,7 @@ async function verifyCleanRoomNativePlatformPackage(root, options = {}) {
       status: "resolved",
       resolvedBinary: resolved.command,
       expectedBinary,
-      checksumVerifiedByResolver: path.resolve(resolved.command) === path.resolve(expectedBinary),
+      checksumVerifiedByResolver: sameCanonicalFile(resolved.command, expectedBinary),
       nativeScan: {
         requestedMode: nativeScan.analysis?.coreRuntime?.requestedMode ?? null,
         selectedImplementation: nativeScan.analysis?.coreRuntime?.selectedImplementation ?? null,
@@ -355,6 +360,7 @@ function writeCleanRoomReport(file, report) {
 module.exports = {
   CLEAN_ROOM_REPORT_SCHEMA,
   CleanRoomError,
+  sameCanonicalFile,
   sha256File,
   sourceFingerprint,
   verifyCleanRoomPackage,
