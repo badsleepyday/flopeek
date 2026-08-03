@@ -1551,10 +1551,9 @@ fn sync_edges_and_placements(
            source_node_pk = excluded.source_node_pk,
            target_node_pk = excluded.target_node_pk,
            relation = excluded.relation,
-           last_graph_version = NULL",
+           last_graph_version = NULL
+         RETURNING edge_pk",
     )?;
-    let mut select_edge_pk = transaction
-        .prepare("SELECT edge_pk FROM edges_v2 WHERE project_pk = ?1 AND edge_uid = ?2")?;
     let mut insert_edge_presence = transaction.prepare(
         "INSERT INTO edge_presence_v2(edge_pk, first_graph_version, last_graph_version)
          SELECT ?1, ?2, NULL
@@ -1566,11 +1565,8 @@ fn sync_edges_and_placements(
         "INSERT INTO node_placements_v2(project_pk, parent_node_pk, child_node_pk, relation,
            ordinal, placement_hash, first_graph_version, last_graph_version)
          VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, NULL)
-         ON CONFLICT(project_pk, placement_hash) DO UPDATE SET last_graph_version = NULL",
-    )?;
-    let mut select_placement_pk = transaction.prepare(
-        "SELECT placement_pk FROM node_placements_v2
-         WHERE project_pk = ?1 AND placement_hash = ?2",
+         ON CONFLICT(project_pk, placement_hash) DO UPDATE SET last_graph_version = NULL
+         RETURNING placement_pk",
     )?;
     let mut insert_placement_presence = transaction.prepare(
         "INSERT INTO placement_presence_v2(
@@ -1620,35 +1616,33 @@ fn sync_edges_and_placements(
         .map_err(conversion_error)?;
         current_edge_uids.insert(uid.as_bytes().to_vec());
         let qualifier_hash = blake3::hash(b"");
-        insert_edge.execute(params![
-            project_pk,
-            uid.as_bytes().as_slice(),
-            source_pk,
-            target_pk,
-            relation,
-            qualifier_hash.as_bytes().as_slice(),
-            graph_version
-        ])?;
-        let edge_pk = select_edge_pk
-            .query_row(params![project_pk, uid.as_bytes().as_slice()], |row| {
-                row.get::<_, i64>(0)
-            })?;
+        let edge_pk = insert_edge.query_row(
+            params![
+                project_pk,
+                uid.as_bytes().as_slice(),
+                source_pk,
+                target_pk,
+                relation,
+                qualifier_hash.as_bytes().as_slice(),
+                graph_version
+            ],
+            |row| row.get::<_, i64>(0),
+        )?;
         insert_edge_presence.execute(params![edge_pk, graph_version])?;
 
         if relation == "contains" {
             current_placement_hashes.insert(uid.as_bytes().to_vec());
-            insert_placement.execute(params![
-                project_pk,
-                source_pk,
-                target_pk,
-                relation,
-                uid.as_bytes().as_slice(),
-                graph_version
-            ])?;
-            let placement_pk = select_placement_pk
-                .query_row(params![project_pk, uid.as_bytes().as_slice()], |row| {
-                    row.get::<_, i64>(0)
-                })?;
+            let placement_pk = insert_placement.query_row(
+                params![
+                    project_pk,
+                    source_pk,
+                    target_pk,
+                    relation,
+                    uid.as_bytes().as_slice(),
+                    graph_version
+                ],
+                |row| row.get::<_, i64>(0),
+            )?;
             insert_placement_presence.execute(params![placement_pk, graph_version])?;
         }
 
