@@ -423,6 +423,27 @@ pub(super) fn remember_persistent_fact_proof(
     });
 }
 
+fn expand_compact_fact_payload(payload: &mut Value) -> Result<(), NativeProtocolError> {
+    let records = payload
+        .get_mut("records")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| NativeProtocolError {
+            code: "store-integrity-failed",
+            message: "Verified native fact cache is missing its records array.".to_string(),
+        })?;
+    for record in records {
+        if let Value::String(raw) = record {
+            *record = serde_json::from_str(raw).map_err(|error| NativeProtocolError {
+                code: "store-integrity-failed",
+                message: format!(
+                    "Verified native fact cache contains invalid record JSON: {error}"
+                ),
+            })?;
+        }
+    }
+    Ok(())
+}
+
 // A persistent query may name an already-promoted StructuralFactBatch instead
 // of serializing it again over JSONL. SQLite remains the authority for this
 // cache: the current complete graph must still have the requested digest, and
@@ -485,6 +506,15 @@ pub(super) fn move_cached_query_batch(
                 code: "store-read-failed",
                 message: "Verified native fact cache was unavailable after lookup.".to_string(),
             })?;
+        if cached.compact_records {
+            // Query handlers consume the typed StructuralFactBatch contract.
+            // Expand the process-local canonical raw records only when a
+            // query actually needs them; the scan/patch path keeps its compact
+            // representation and avoids retaining a second multi-megabyte
+            // object graph during promotion.
+            expand_compact_fact_payload(&mut cached.payload)?;
+            cached.compact_records = false;
+        }
         params
             .as_object_mut()
             .ok_or_else(|| NativeProtocolError {
@@ -547,15 +577,18 @@ pub(super) fn hydrate_cached_query_batch_using_connection(
         }
         return Err(error);
     }
-    let batch = session
+    let cached = session
         .persistent_facts
         .as_ref()
         .filter(|cached| cached.project_id == project_id && cached.facts_digest == facts_digest)
-        .map(|cached| cached.payload.clone())
         .ok_or_else(|| NativeProtocolError {
             code: "store-read-failed",
             message: "Verified native fact cache was unavailable after lookup.".to_string(),
         })?;
+    let mut batch = cached.payload.clone();
+    if cached.compact_records {
+        expand_compact_fact_payload(&mut batch)?;
+    }
     let object = params.as_object_mut().ok_or_else(|| NativeProtocolError {
         code: "invalid-params",
         message: "Cached native query params must be an object.".to_string(),
