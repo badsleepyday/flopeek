@@ -475,6 +475,22 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
 ) -> Result<Value, NativeProtocolError> {
     let root = project_root(params)?;
     let handle_only_public_graph = requests_handle_only_public_graph(params)?;
+    // Retaining public collections is an explicit session-cache choice.
+    // Handle-only callers need it for native queries; materialized CoreClient
+    // callers opt in so the next changed-path refresh can reuse the snapshot
+    // without changing the cold recovery timeout contract.
+    let retain_public_snapshot = match params.get("retainPublicSnapshot") {
+        None => handle_only_public_graph,
+        Some(Value::Bool(value)) => *value,
+        Some(_) => {
+            return Err(NativeProtocolError {
+                code: "invalid-params",
+                message:
+                    "refreshNativePersistentProject params.retainPublicSnapshot must be a boolean."
+                        .to_string(),
+            });
+        }
+    };
     let session_key = root.display().to_string();
     let source_refresh_started = Instant::now();
     let explicit_no_op = params
@@ -658,7 +674,7 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
                                     // is not the only caller that benefits from this cache: the
                                     // benchmark and product CoreClient both retain a materialized
                                     // graph across refreshes.
-                                    retain_public_snapshot: true,
+                                    retain_public_snapshot,
                                 },
                                 connection,
                             )
@@ -716,7 +732,7 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
                             retain_persistent_facts: false,
                             verified_topology_digest: None,
                             changed_record_paths_override: changed_record_paths,
-                            retain_public_snapshot: true,
+                            retain_public_snapshot,
                         },
                         connection,
                     )

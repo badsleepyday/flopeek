@@ -557,6 +557,7 @@ function createNativeCoreClient(options = {}) {
             return requestNativeWithSignal(native, scanOptions.signal, "refreshNativePersistentProject", {
               projectRoot: authorityRoot,
               ...(Array.isArray(changedPaths) ? { changedPaths } : {}),
+              retainPublicSnapshot: true,
               ...(nativeGraphHandleOnly ? { returnPublicGraph: false } : {}),
             });
           };
