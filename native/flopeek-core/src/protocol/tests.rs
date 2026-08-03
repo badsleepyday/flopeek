@@ -1,9 +1,10 @@
 use super::{
     NATIVE_PROTOCOL_VERSION, NativeProtocolSession, NativeRequest, STRUCTURAL_FACT_BATCH_SCHEMA,
-    build_isolated_incremental_graph, get_native_database_open_evidence, handle_request,
-    hydrate_cached_query_batch, hydrate_session_query_batch, isolated_structural_change_path,
-    native_entry_source_nodes, native_query_cache_key, parse_session_history_limit,
-    projection_digest, refresh_native_js_session_graph, refresh_native_persistent_project,
+    STRUCTURAL_FACT_PATCH_SCHEMA, build_isolated_incremental_graph,
+    get_native_database_open_evidence, handle_request, hydrate_cached_query_batch,
+    hydrate_session_query_batch, isolated_structural_change_path, native_entry_source_nodes,
+    native_query_cache_key, parse_session_history_limit, projection_digest,
+    refresh_native_js_session_graph, refresh_native_persistent_project,
     refresh_native_session_graph, same_canonical_json, serve_jsonl,
     structural_facts_canonical_json, structural_facts_digest, structural_topology_digest,
 };
@@ -1214,6 +1215,102 @@ fn native_public_lifecycle_allocates_versions_and_reuses_a_noop() {
         result[3]["result"]["receipt"]["profile"]["incrementalStructuralPath"],
         "src/index.js"
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn structural_fact_patch_accepts_a_new_record_without_full_batch_fallback() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "flopeek-native-structural-patch-added-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+
+    let mut first = structural_facts(json!({
+        "symbols": [{ "type": "function", "name": "stable" }]
+    }));
+    first["publicGraphContext"] = json!({
+        "schemaVersion": 5,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "project": { "projectId": "project:fixture" },
+        "state": {
+            "graphVersion": 0,
+            "materialFingerprint": null,
+            "sourceFingerprint": "sha256:test",
+            "sourceRevision": null,
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "status": "unpersisted"
+        },
+        "analysis": {
+            "coverage": null,
+            "refresh": { "mode": "initial", "analyzedFiles": 1, "reusedFiles": 0, "removedFiles": 0, "changedPaths": [] }
+        },
+        "stats": { "scannedFiles": 1, "parsedFiles": 1, "inventoryOnlyFiles": 0, "parseFailedFiles": 0 }
+    });
+    first["records"][0]["sourceScope"] = json!("application");
+    first["factsDigest"] =
+        Value::String(structural_facts_digest(first.as_object().unwrap()).unwrap());
+    first["projectRoot"] = Value::String(root.to_string_lossy().to_string());
+
+    let mut second = first.clone();
+    second["records"].as_array_mut().unwrap().push(json!({
+        "recordOrder": 1,
+        "relativePath": "src/added.js",
+        "sourceHash": "c".repeat(64),
+        "sourceScope": "application",
+        "result": { "symbols": [{ "type": "function", "name": "added" }] },
+    }));
+    second["lifecycleContext"]["sourceFingerprint"] =
+        Value::String(format!("sha256:{}", "c".repeat(64)));
+    second["lifecycleContext"]["refresh"] = json!({
+        "mode": "incremental",
+        "analyzedFiles": 1,
+        "reusedFiles": 1,
+        "removedFiles": 0,
+        "changedPaths": ["src/added.js"],
+    });
+    second["factsDigest"] =
+        Value::String(structural_facts_digest(second.as_object().unwrap()).unwrap());
+
+    let mut patch_batch = first.clone();
+    patch_batch.as_object_mut().unwrap().remove("records");
+    patch_batch.as_object_mut().unwrap().remove("factsDigest");
+    let manifest = second["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|record| {
+            json!({
+                "relativePath": record["relativePath"],
+                "sourceHash": record["sourceHash"],
+                "sourceScope": "application",
+                "recordOrder": record["recordOrder"],
+            })
+        })
+        .collect::<Vec<_>>();
+    let patch = json!({
+        "schemaVersion": STRUCTURAL_FACT_PATCH_SCHEMA,
+        "projectId": first["projectId"],
+        "baseFactsDigest": first["factsDigest"],
+        "projectRoot": root.to_string_lossy(),
+        "batch": patch_batch,
+        "manifest": manifest,
+        "changedRecords": [second["records"][1]],
+    });
+    let result = responses(&format!(
+        "{}\n{}\n{}\n",
+        request("first", "persistNativePublicGraph", first),
+        request("added", "persistNativePublicGraphPatch", patch),
+        request("stop", "shutdown", json!({})),
+    ));
+    assert_eq!(result[0]["result"]["status"], "promoted");
+    assert_eq!(result[1]["status"], "ok");
+    assert_eq!(result[1]["result"]["status"], "promoted");
+    assert_eq!(result[1]["result"]["publicGraphVersion"], 2);
     fs::remove_dir_all(root).unwrap();
 }
 

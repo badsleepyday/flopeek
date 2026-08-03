@@ -970,20 +970,24 @@ pub(in crate::protocol) fn reconstruct_structural_fact_patch(
             }
             &records[index]
         } else {
-            let cached_record = cached_by_path
-                .remove(path)
-                .ok_or_else(|| NativeProtocolError {
-                    code: "structural-fact-patch-miss",
-                    message: format!(
-                        "Structural fact patch is missing cached record {path}; submit a full batch."
-                    ),
-                })?;
-            records.push(
-                changed_by_path
-                    .remove(path)
-                    .cloned()
-                    .unwrap_or(cached_record),
-            );
+            // A changed-path patch may add a file that had no prior cache row.
+            // Consume its complete changed record directly; unchanged manifest
+            // entries still require an exact cached record. This preserves the
+            // strict cache-miss guard without forcing every new file through a
+            // full-batch fallback.
+            let changed_record = changed_by_path.remove(path).cloned();
+            let record = match changed_record {
+                Some(record) => record,
+                None => cached_by_path.remove(path).ok_or_else(|| {
+                    NativeProtocolError {
+                        code: "structural-fact-patch-miss",
+                        message: format!(
+                            "Structural fact patch is missing cached record {path}; submit a full batch."
+                        ),
+                    }
+                })?,
+            };
+            records.push(record);
             records.last().expect("record was appended")
         };
         if record.get("relativePath").and_then(Value::as_str) != Some(path)
