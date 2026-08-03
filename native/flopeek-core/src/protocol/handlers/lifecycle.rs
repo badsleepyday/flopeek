@@ -1283,8 +1283,7 @@ pub(in crate::protocol) fn persist_native_public_graph_with_receipt_using_connec
     if unchanged {
         let current = current.expect("unchanged requires a complete graph");
         versioned_native_lifecycle_params(params, public_graph_version, &facts_digest)?;
-        let persistent_payload_cache_hit =
-            ensure_persistent_payload(session, connection, &project_id, current.graph_version)?;
+        ensure_persistent_payload(session, connection, &project_id, current.graph_version)?;
         let persistent = session
             .persistent_graph
             .as_ref()
@@ -1294,8 +1293,7 @@ pub(in crate::protocol) fn persist_native_public_graph_with_receipt_using_connec
         // instead of serializing and transferring the whole graph again. A
         // restarted process has no public snapshot and conservatively returns
         // one complete graph so the caller can establish its local baseline.
-        let can_reuse_public_collections =
-            persistent_payload_cache_hit && persistent.public_snapshot.is_some();
+        let can_reuse_public_collections = persistent.public_snapshot.is_some();
         let mut public_graph = if can_reuse_public_collections {
             let mut context =
                 native_public_graph_context(&persistent.payload, params.get("publicGraphContext"))?;

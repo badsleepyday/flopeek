@@ -251,7 +251,12 @@ pub(super) fn ensure_persistent_payload(
     let cache_hit = session.persistent_graph.as_ref().is_some_and(|cached| {
         cached.project_id == project_id && cached.graph_version == graph_version
     });
-    if !cache_hit {
+    let payload_ready = cache_hit
+        && session
+            .persistent_graph
+            .as_ref()
+            .is_some_and(|cached| !cached.payload.is_null());
+    if !payload_ready {
         let stored = complete_graph_payload(connection, project_id, graph_version)
             .map_err(|error| NativeProtocolError {
                 code: "store-read-failed",
@@ -261,11 +266,18 @@ pub(super) fn ensure_persistent_payload(
                 code: "store-read-failed",
                 message: "Current complete native graph payload is unavailable.".to_string(),
             })?;
+        let public_snapshot = session
+            .persistent_graph
+            .as_ref()
+            .filter(|cached| {
+                cached.project_id == project_id && cached.graph_version == graph_version
+            })
+            .and_then(|cached| cached.public_snapshot.clone());
         session.persistent_graph = Some(NativePersistentGraph {
             project_id: project_id.to_string(),
             graph_version,
             payload: stored.payload,
-            public_snapshot: None,
+            public_snapshot,
         });
     }
     Ok(cache_hit)
