@@ -16,6 +16,21 @@ const NATIVE_PUBLIC_GRAPH_COLLECTIONS: [(&str, bool); 4] = [
     ("diagnosticFlows", false),
 ];
 
+fn native_promotion_error(error: rusqlite::Error) -> NativeProtocolError {
+    let message = error.to_string();
+    // A completed newer graph is authoritative.  The older in-flight writer
+    // is rejected at the locked SQLite boundary and must not be retried as a
+    // full batch or allowed to move the pointer backwards.  `native-error`
+    // is the established bounded-protocol conflict surface consumed by the
+    // cross-process recovery contract.
+    let code = if message.contains("concurrent native graph candidate superseded") {
+        "native-error"
+    } else {
+        "store-promote-failed"
+    };
+    NativeProtocolError { code, message }
+}
+
 pub(in crate::protocol) fn native_public_graph_envelope(public_graph: &Value) -> Value {
     let object = public_graph
         .as_object()
@@ -324,10 +339,7 @@ pub(in crate::protocol) fn persist_reused_structural_projection(
             reuse_public_components: true,
         },
     )
-    .map_err(|error| NativeProtocolError {
-        code: "store-promote-failed",
-        message: error.to_string(),
-    })?;
+    .map_err(native_promotion_error)?;
     let persistence_ms = elapsed_ms(persistence_started);
     Ok(PersistedStructuralGraph {
         receipt: json!({
@@ -659,10 +671,7 @@ pub(in crate::protocol) fn persist_structural_graph_internal(
             reuse_public_components: false,
         },
     )
-    .map_err(|error| NativeProtocolError {
-        code: "store-promote-failed",
-        message: error.to_string(),
-    })?;
+    .map_err(native_promotion_error)?;
     let projection_consumed = consume_cold_projection_into_public && previous.is_none();
     if projection_consumed {
         let materialization_started = Instant::now();

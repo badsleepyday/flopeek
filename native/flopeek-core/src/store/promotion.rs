@@ -368,7 +368,14 @@ pub fn begin_graph_build(
     material_fingerprint: &str,
     source_fingerprint: &str,
 ) -> rusqlite::Result<NativeGraphVersion> {
-    let transaction = connection.transaction()?;
+    // Graph version allocation is part of the cross-process write protocol.
+    // A deferred transaction can let two cold writers read the same MAX()
+    // snapshot before either candidate is committed, producing duplicate
+    // building versions or a stale current-pointer promotion.  Reserve the
+    // SQLite writer slot before reading the project lineage so every caller
+    // observes the immediately preceding durable graph version.
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let project_pk = project_pk(&transaction, project_id)?;
     let graph_version = transaction.query_row(
         "SELECT COALESCE(MAX(graph_version), 0) + 1 FROM graph_versions WHERE project_pk = ?1",
@@ -426,13 +433,41 @@ pub fn promote_graph_build_with_changed_records(
         }
     }
     let transaction_started = Instant::now();
-    let transaction = connection.transaction()?;
+    // The promotion transaction is the single cross-process authority
+    // boundary.  It must acquire the writer slot before reading the current
+    // pointer; otherwise a slower older candidate can observe a newer pointer
+    // only after it has already opened identity intervals and move the pointer
+    // backwards.
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let project_pk = project_pk(&transaction, request.project_id)?;
     let previous_graph_version: Option<i64> = transaction.query_row(
         "SELECT current_graph_version FROM projects WHERE project_pk = ?1",
         [project_pk],
         |row| row.get(0),
     )?;
+    if previous_graph_version.is_some_and(|current| current >= request.graph_version) {
+        // A candidate may finish assembly after another process has already
+        // promoted a newer graph.  It is a bounded writer conflict, not a
+        // reason to mutate identity intervals or move the current pointer
+        // backwards.  Remove this still-building candidate inside the same
+        // locked transaction and surface an explicit protocol-level conflict.
+        transaction.execute(
+            "DELETE FROM graph_versions
+             WHERE project_pk = ?1 AND graph_version = ?2 AND status = 'building'",
+            rusqlite::params![project_pk, request.graph_version],
+        )?;
+        transaction.commit()?;
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::new(
+                io::ErrorKind::WouldBlock,
+                format!(
+                    "concurrent native graph candidate superseded by current graph version {}",
+                    previous_graph_version.unwrap_or_default()
+                ),
+            ),
+        )));
+    }
     let changed = transaction.execute(
         "UPDATE graph_versions SET status = 'complete', compatibility_digest = ?1, public_graph_version = ?2, completed_at_ms = ?3
          WHERE project_pk = ?4 AND graph_version = ?5 AND status = 'building'",

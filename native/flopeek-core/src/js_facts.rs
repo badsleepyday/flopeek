@@ -16,7 +16,7 @@ use icu_collator::{Collator, CollatorBorrowed};
 use icu_locale_core::locale;
 use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
-use rusqlite::params;
+use rusqlite::{TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
@@ -2260,8 +2260,15 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
     // transactions per parsed file. This keeps the inventory's cache contract
     // intact while avoiding WAL/fsync amplification on a cold scan.
     let removed_facts = {
+        // Multiple native processes can parse the same cold repository before
+        // either one reaches this cache write.  Acquire the SQLite write
+        // reservation before reading/writing parser_facts so the second
+        // writer observes the first writer's rows instead of racing on the
+        // unique (project, path, hash, adapter) key.  The cache is derived and
+        // deterministic; an identical concurrent miss is therefore an
+        // idempotent no-op, never a source-facts failure.
         let transaction = connection
-            .transaction()
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| error.to_string())?;
         for (path, source_hash, payload) in &parser_cache_misses {
             transaction
@@ -2274,7 +2281,9 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
             transaction
                 .execute(
                     "INSERT INTO parser_facts(project_pk, path, source_hash, adapter_version, payload_json)
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                     VALUES (?1, ?2, ?3, ?4, ?5)
+                     ON CONFLICT(project_pk, path, source_hash, adapter_version)
+                     DO UPDATE SET payload_json = excluded.payload_json",
                     params![project_pk, path, source_hash, NATIVE_JS_ADAPTER_VERSION, payload],
                 )
                 .map_err(|error| error.to_string())?;
