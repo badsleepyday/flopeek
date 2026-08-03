@@ -590,7 +590,10 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
     let (mut result, facts_digest, used_fact_patch, envelope_build_ms, persistent_promotion_ms) =
         if let Some(base_digest) = cached_base_digest {
             let envelope_started = Instant::now();
-            let patch = native_js_structural_fact_patch(&status, &base_digest, &git_metadata)?;
+            let mut patch = native_js_structural_fact_patch(&status, &base_digest, &git_metadata)?;
+            if retain_public_snapshot {
+                patch["retainPublicSnapshot"] = Value::Bool(true);
+            }
             let envelope_build_ms = elapsed_ms(envelope_started);
             let promotion_started = Instant::now();
             // `patch` now owns the changed records needed by promotion. Drop
@@ -663,7 +666,7 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
                                 &mut batch,
                                 receipt,
                                 PersistNativePublicGraphOptions {
-                                    retain_persistent_facts: false,
+                                    retain_persistent_facts: retain_public_snapshot,
                                     verified_topology_digest: None,
                                     changed_record_paths_override: Some(changed_record_paths),
                                     // The normal compatibility lifecycle also retains the
@@ -729,7 +732,7 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
                         &mut batch,
                         receipt,
                         PersistNativePublicGraphOptions {
-                            retain_persistent_facts: false,
+                            retain_persistent_facts: retain_public_snapshot,
                             verified_topology_digest: None,
                             changed_record_paths_override: changed_record_paths,
                             retain_public_snapshot,
