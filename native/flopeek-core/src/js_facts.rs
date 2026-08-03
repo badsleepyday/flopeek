@@ -435,12 +435,33 @@ pub fn evict_native_js_source_cache(status: &mut NativeJsFactsStatus) {
     // one so the long-lived session retains only their compact JSON form; a
     // later refresh hydrates them while computing the validated affected set.
     if !status.facts.is_empty() {
-        let facts = std::mem::take(&mut status.facts);
-        status.compacted_facts.clear();
-        for (path, fact) in facts {
-            let payload = serde_json::to_string(&fact)
-                .expect("native parser facts must remain JSON serializable");
-            status.compacted_facts.insert(path, payload);
+        if status.compacted_facts.is_empty() {
+            let facts = std::mem::take(&mut status.facts);
+            for (path, fact) in facts {
+                let payload = serde_json::to_string(&fact)
+                    .expect("native parser facts must remain JSON serializable");
+                status.compacted_facts.insert(path, payload);
+            }
+        } else {
+            // An incremental refresh hydrates the complete compact map only
+            // to run exact resolver invalidation. Re-serializing every
+            // unchanged fact here would recreate the very cold cost this
+            // cache is meant to remove; rewrite only direct source events.
+            let changed_fact_paths = status
+                .changed_paths
+                .iter()
+                .chain(status.removed_paths.iter())
+                .collect::<BTreeSet<_>>();
+            for path in changed_fact_paths {
+                if let Some(fact) = status.facts.get(path) {
+                    let payload = serde_json::to_string(fact)
+                        .expect("native parser facts must remain JSON serializable");
+                    status.compacted_facts.insert(path.clone(), payload);
+                } else {
+                    status.compacted_facts.remove(path);
+                }
+            }
+            status.facts.clear();
         }
     }
     if status.structural_records_complete {
