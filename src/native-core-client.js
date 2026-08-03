@@ -3,21 +3,15 @@
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const { CORE_CLIENT_SCHEMA, assertCoreClient } = require("./core-client");
-const { createContextPacket, parseContextRef } = require("./context-card");
 const { assertNativeCoreExtensionAdapter, createNativeCoreExtensionAdapter } = require("./native-core-extension-adapter");
-const { createNativeIncrementalSession } = require("./native-incremental-coordinator");
 const { resolveProjectIdentity } = require("./project-identity");
-const { createRepositoryScanner } = require("./scanner");
 const { readRepositoryScope } = require("./scope");
 const { canonicalRealpath } = require("./canonical-path");
-const {
-  createStructuralFactBatchFromPrepared,
-  createStructuralFactPatch,
-  createStructuralFactPatchFromPrepared,
-  materializeStructuralFactPatch,
-  prepareStructuralFactBatch,
-  withNativePublicGraphVersion,
-} = require("./structural-fact-adapter-host");
+let loadedStructuralFacts = null;
+function structuralFacts() {
+  loadedStructuralFacts ||= require("./structural-fact-adapter-host");
+  return loadedStructuralFacts;
+}
 
 function queryOption(options, ...names) {
   for (const name of names) {
@@ -383,7 +377,8 @@ function createNativeCoreClient(options = {}) {
     throw new TypeError("NativeCoreClient does not accept a JavaScript core authority; configure rollout fallback outside the native backend.");
   }
   const extensions = assertNativeCoreExtensionAdapter(options.extensions || createNativeCoreExtensionAdapter());
-  const native = options.native || createNativeIncrementalSession(null, options.nativeOptions);
+  const native = options.native
+    || require("./native-incremental-coordinator").createNativeIncrementalSession(null, options.nativeOptions);
   if (!native || typeof native.start !== "function" || typeof native.request !== "function") {
     throw new TypeError("Native core client requires a JSONL native protocol session.");
   }
@@ -495,7 +490,7 @@ function createNativeCoreClient(options = {}) {
       let scanner = sourceAuthority === "rust" ? null : scanners.get(key);
       const scannerReused = sourceAuthority === "rust" ? nativeSourceStates.has(key) : Boolean(scanner);
       if (sourceAuthority !== "rust" && !scanner) {
-        scanner = createRepositoryScanner(root, {
+        scanner = require("./scanner").createRepositoryScanner(root, {
         ...scanOptions,
         persistIdentity: !cacheDisabled,
         ...(cacheDisabled ? { sessionProjectId: cacheDisabledProjectId(root) } : {}),
@@ -620,7 +615,7 @@ function createNativeCoreClient(options = {}) {
           ? previous && Array.isArray(scanOptions.changedPaths) && scanOptions.changedPaths.length === 0
             ? reuseRustNativeBatch(previous)
             : await prepareRustNativeBatch(native, authorityRoot, { previous, changedPaths: scanOptions.changedPaths })
-          : prepareStructuralFactBatch(scanner, scanOptions.changedPaths, {
+          : structuralFacts().prepareStructuralFactBatch(scanner, scanOptions.changedPaths, {
             onProfile: profile,
             buildBatch: cacheDisabled || !previous,
           });
@@ -655,8 +650,8 @@ function createNativeCoreClient(options = {}) {
       } else {
         const patch = previous
           ? sourceAuthority === "rust"
-            ? createStructuralFactPatch(previous.batch, batch)
-            : createStructuralFactPatchFromPrepared(previous.batch, publicEnvelope, prepared, preparedFacts, {
+            ? structuralFacts().createStructuralFactPatch(previous.batch, batch)
+            : structuralFacts().createStructuralFactPatchFromPrepared(previous.batch, publicEnvelope, prepared, preparedFacts, {
               graphContextUnchanged: previous.graphContext === prepared.graphContext,
             })
           : null;
@@ -665,7 +660,7 @@ function createNativeCoreClient(options = {}) {
             usedFactPatch = true;
             persistentMutationStarted = true;
             result = await requestNativeWithSignal(native, scanOptions.signal, "persistNativePublicGraphPatch", { ...patch, projectRoot: authorityRoot });
-            batch = materializeStructuralFactPatch(previous.batch, patch, result?.factsDigest);
+            batch = structuralFacts().materializeStructuralFactPatch(previous.batch, patch, result?.factsDigest);
           } catch (error) {
             // A cache miss is safe and expected after a cache clear, native
             // upgrade, or another process promotes a different graph.  Only
@@ -674,12 +669,12 @@ function createNativeCoreClient(options = {}) {
             if (!["structural-fact-patch-miss", "unsupported-structural-fact-patch", "unknown-method"].includes(error?.code)) throw error;
             usedFactPatch = false;
             profile?.({ phase: "native-core-fact-patch-fallback", milliseconds: 0, reason: error.code });
-            batch = createStructuralFactBatchFromPrepared(publicEnvelope, prepared, preparedFacts);
+            batch = structuralFacts().createStructuralFactBatchFromPrepared(publicEnvelope, prepared, preparedFacts);
             persistentMutationStarted = true;
             result = await requestNativeWithSignal(native, scanOptions.signal, "persistNativePublicGraph", { ...batch, projectRoot: authorityRoot });
           }
         } else {
-          if (!batch) batch = createStructuralFactBatchFromPrepared(publicEnvelope, prepared, preparedFacts);
+          if (!batch) batch = structuralFacts().createStructuralFactBatchFromPrepared(publicEnvelope, prepared, preparedFacts);
           persistentMutationStarted = true;
           result = await requestNativeWithSignal(native, scanOptions.signal, "persistNativePublicGraph", { ...batch, projectRoot: authorityRoot });
         }
@@ -792,7 +787,7 @@ function createNativeCoreClient(options = {}) {
         ? nativeGraphHandle(result)
         : batch?.schemaVersion === "flopeek-native-session-graph-handle/v1"
           ? batch
-          : withNativePublicGraphVersion(batch, result.publicGraphVersion);
+          : structuralFacts().withNativePublicGraphVersion(batch, result.publicGraphVersion);
       batches.set(result.graph, queryBatch);
       roots.set(result.graph, cacheDisabled ? null : authorityRoot);
       const state = { batch: queryBatch, graphContext: prepared.graphContext, graph: result.graph };
@@ -818,7 +813,7 @@ function createNativeCoreClient(options = {}) {
     const lens = await requestNativeQuery("getNativeFlowLensCore", graph, { flowId, maxSteps });
     const metadataGraph = nativeFlowMetadataGraph(graph, lens);
     const card = extensions.attachFlowContextCard(metadataGraph, coreCard, extensions.attachFlowExtensions(metadataGraph, lens));
-    return createContextPacket(card, format);
+    return require("./context-card").createContextPacket(card, format);
   };
 
   return assertCoreClient(Object.freeze({
@@ -1027,14 +1022,14 @@ function createNativeCoreClient(options = {}) {
         return extensions.getFormattedContextCard(graph, id, format);
       }
       const card = await requestNativeQuery("getNativeNodeContextCard", graph, { nodeId: id });
-      return createContextPacket(card, format);
+      return require("./context-card").createContextPacket(card, format);
     },
     resolveContextRef: async (graph, contextRef) => {
       const root = roots.get(graph);
       if (!root) return extensions.resolveUnsupportedContextRef(graph, contextRef);
       let parsed;
       try {
-        parsed = parseContextRef(contextRef);
+        parsed = require("./context-card").parseContextRef(contextRef);
       } catch {
         return extensions.resolveUnsupportedContextRef(graph, contextRef);
       }

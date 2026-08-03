@@ -577,6 +577,12 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
             let patch = native_js_structural_fact_patch(&status, &base_digest, &git_metadata)?;
             let envelope_build_ms = elapsed_ms(envelope_started);
             let promotion_started = Instant::now();
+            // `patch` now owns the changed records needed by promotion. Drop
+            // the parser/source cache before graph assembly so one-file
+            // refresh does not retain two copies of those facts at peak. A
+            // concurrent SQLite advance is rare and reacquires a complete
+            // verified source status below before attempting the full batch.
+            evict_native_js_source_cache(&mut status);
             match persist_native_public_graph_patch(session, &patch) {
                 Ok(result) => {
                     let facts_digest = result
@@ -601,12 +607,7 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
                 // malformed internal patches stay loud rather than being hidden by
                 // a full-batch retry.
                 Err(error) if error.code == "structural-fact-patch-miss" => {
-                    hydrate_native_js_source_facts(&mut status).map_err(|message| {
-                        NativeProtocolError {
-                            code: "native-source-facts-failed",
-                            message,
-                        }
-                    })?;
+                    status = load_native_js_facts_status(session, params)?;
                     ensure_complete_native_js_structural_records(&mut status).map_err(
                         |message| NativeProtocolError {
                             code: "native-source-facts-failed",
@@ -757,6 +758,13 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
     // cache; SQLite and the retained record digests remain the durable lineage.
     evict_native_js_source_cache(&mut status);
     session.persistent_sources.insert(session_key, status);
+    // The promoted payload is a rebuildable SQLite derivative. Keeping it
+    // alive after the response duplicates the public graph already retained
+    // by Node and makes steady-state memory scale with repository size. The
+    // persistent connection remains open, and the next mutating refresh can
+    // hydrate this cache from the verified current pointer when it needs an
+    // adjacent delta.
+    session.persistent_graph = None;
     Ok(result)
 }
 

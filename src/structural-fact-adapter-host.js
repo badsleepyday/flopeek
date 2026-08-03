@@ -3,7 +3,12 @@
 const crypto = require("node:crypto");
 const path = require("node:path");
 const { stableJson } = require("./core-compatibility");
-const { createPublicGraphEnvelope, createRepositoryScanner, readDescriptions, structuralEntryFacts, structuralFileFacts, structuralImportFacts } = require("./scanner");
+
+let loadedScanner = null;
+function scannerApi() {
+  loadedScanner ||= require("./scanner");
+  return loadedScanner;
+}
 
 const STRUCTURAL_FACT_BATCH_SCHEMA = "flopeek-structural-fact-batch/v1";
 const STRUCTURAL_FACT_PATCH_SCHEMA = "flopeek-structural-fact-patch/v1";
@@ -262,7 +267,7 @@ function manualDescriptions(graph) {
 }
 
 function structuralManualDescriptions(root, sourceRecords) {
-  const descriptions = readDescriptions(root);
+  const descriptions = scannerApi().readDescriptions(root);
   const allowed = new Set();
   for (const record of sourceRecords) {
     for (const symbol of record.result?.symbols || []) {
@@ -566,9 +571,9 @@ function createStructuralFactBatchFromPrepared(graph, prepared, preparedFacts = 
     throw new TypeError("StructuralFactBatch/v1 prepared input requires scanner root, sourceRecords, and graphContext.");
   }
   const facts = preparedFacts || {
-    importFacts: structuralImportFacts(prepared.sourceRecords, prepared.graphContext),
-    entryFacts: structuralEntryFacts(prepared.root, prepared.sourceRecords),
-    fileFacts: structuralFileFacts(prepared.root, prepared.sourceRecords),
+    importFacts: scannerApi().structuralImportFacts(prepared.sourceRecords, prepared.graphContext),
+    entryFacts: scannerApi().structuralEntryFacts(prepared.root, prepared.sourceRecords),
+    fileFacts: scannerApi().structuralFileFacts(prepared.root, prepared.sourceRecords),
     manualDescriptions: structuralManualDescriptions(prepared.root, prepared.sourceRecords),
   };
   const records = prepared.sourceRecords.map((record, recordOrder) => projectPreparedRecord(record, recordOrder, facts));
@@ -601,7 +606,7 @@ function prepareStructuralFactBatch(scanner, changedPaths = null, options = {}) 
     const importFacts = reusableImports
       ? timed("native-fact-import-resolution", () => {
         const facts = new Map(cached.importFacts);
-        const changedFacts = structuralImportFacts(
+        const changedFacts = scannerApi().structuralImportFacts(
           reusableImports.changedRecords,
           prepared.graphContext,
           { knownPaths: new Set(prepared.sourceRecords.map((record) => record.relativePath)), onProfile: profile },
@@ -613,7 +618,7 @@ function prepareStructuralFactBatch(scanner, changedPaths = null, options = {}) 
         recomputedFiles: reusableImports.changedRecords.length,
         reusedFiles: prepared.sourceRecords.length - reusableImports.changedRecords.length,
       })
-      : timed("native-fact-import-resolution", () => structuralImportFacts(prepared.sourceRecords, prepared.graphContext, { onProfile: profile }), { cache: "miss" });
+      : timed("native-fact-import-resolution", () => scannerApi().structuralImportFacts(prepared.sourceRecords, prepared.graphContext, { onProfile: profile }), { cache: "miss" });
     const reusableEntryFacts = canReuseEntryFacts(cached, reusableImports);
     const entryFacts = reusableEntryFacts
       ? timed("native-fact-entry-analysis", () => cached.preparedFacts.entryFacts, {
@@ -621,11 +626,11 @@ function prepareStructuralFactBatch(scanner, changedPaths = null, options = {}) 
         recomputedFiles: 0,
         reusedFiles: prepared.sourceRecords.length,
       })
-      : timed("native-fact-entry-analysis", () => structuralEntryFacts(prepared.root, prepared.sourceRecords), { cache: "miss" });
+      : timed("native-fact-entry-analysis", () => scannerApi().structuralEntryFacts(prepared.root, prepared.sourceRecords), { cache: "miss" });
     preparedFacts = {
       importFacts,
       entryFacts,
-      fileFacts: timed("native-fact-file-metadata", () => structuralFileFacts(prepared.root, prepared.sourceRecords), { cache: "miss" }),
+      fileFacts: timed("native-fact-file-metadata", () => scannerApi().structuralFileFacts(prepared.root, prepared.sourceRecords), { cache: "miss" }),
       manualDescriptions: timed("native-fact-manual-descriptions", () => structuralManualDescriptions(prepared.root, prepared.sourceRecords), { cache: "miss" }),
     };
     PREPARED_FACTS_CACHE.set(scanner, {
@@ -637,7 +642,7 @@ function prepareStructuralFactBatch(scanner, changedPaths = null, options = {}) 
     });
   }
   const { entryFacts } = preparedFacts;
-  const publicEnvelope = timed("native-fact-public-envelope", () => createPublicGraphEnvelope(prepared, entryFacts));
+  const publicEnvelope = timed("native-fact-public-envelope", () => scannerApi().createPublicGraphEnvelope(prepared, entryFacts));
   const batch = options.buildBatch === false
     ? null
     : timed("native-fact-batch-serialization", () => createStructuralFactBatchFromPrepared(publicEnvelope, prepared, preparedFacts));
@@ -645,7 +650,7 @@ function prepareStructuralFactBatch(scanner, changedPaths = null, options = {}) 
 }
 
 async function submitStructuralFactBatch(client, root, options = {}) {
-  const scanner = createRepositoryScanner(root, options.scanner || {});
+  const scanner = scannerApi().createRepositoryScanner(root, options.scanner || {});
   const { prepared, batch, publicEnvelope } = prepareStructuralFactBatch(scanner, options.changedPaths);
   const receipt = await client.request("submitStructuralFacts", batch);
   // Native consumes the prepared envelope before JavaScript assembly. Shadow

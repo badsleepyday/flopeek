@@ -4,8 +4,6 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { atomicWriteJson, readGraphCacheResult } = require("./graph-cache");
-const { listGraphDeltaHistory } = require("./graph-state");
-const { sourceBasis } = require("./durable-brief");
 
 const ARTIFACT_CACHE_SCHEMA = "flopeek-derived-artifact/v1";
 const ARTIFACT_CACHE_REGISTRY_SCHEMA = "flopeek-derived-artifact-registry/v1";
@@ -141,7 +139,7 @@ function getOrCreateArtifact(root, graph, type, key, compute, options = {}) {
   const value = compute();
   const dependencyPaths = normalizeDependencies(typeof options.dependencyPaths === "function" ? options.dependencyPaths(value) : options.dependencyPaths);
   const valueHash = fingerprint(value);
-  const basis = sourceBasis(graph);
+  const basis = require("./durable-brief").sourceBasis(graph);
   const recordBase = {
     schemaVersion: ARTIFACT_CACHE_SCHEMA,
     type,
@@ -207,7 +205,7 @@ function listArtifactCacheAudit(root, graph) {
     schemaVersion: ARTIFACT_CACHE_AUDIT_SCHEMA,
     status: "available",
     projectIdentity: { projectId: graph.project.projectId },
-    sourceBasis: sourceBasis(graph),
+    sourceBasis: require("./durable-brief").sourceBasis(graph),
     graphVersion: graph.state.graphVersion,
     counts,
     totalArtifacts: records.length,
@@ -263,7 +261,7 @@ function cacheHygiene(root, graph = null) {
   const expectedProjectId = activeGraph?.project?.projectId || null;
   const read = readArtifactCacheRegistry(root, expectedProjectId);
   const all = collectCacheFiles(root);
-  const deltaHistory = listGraphDeltaHistory(root);
+  const deltaHistory = require("./graph-state").listGraphDeltaHistory(root);
   const paths = {
     graph: ".flopeek/graph.json",
     state: ".flopeek/state.json",

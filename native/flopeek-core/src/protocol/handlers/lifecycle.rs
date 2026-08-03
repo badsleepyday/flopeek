@@ -591,6 +591,12 @@ pub(in crate::protocol) fn persist_structural_graph_internal(
             )
         })
         .transpose()?;
+    // The compact public patch and adjacent delta now own every value needed
+    // from the previous public snapshot. Release that full derived graph
+    // before SQLite component promotion so an incremental refresh does not
+    // hold previous projection + previous public graph + next public graph at
+    // the same peak.
+    drop(previous_public_snapshot);
     let delta_ms = elapsed_ms(persistence_started);
     let candidate =
         begin_graph_build(connection, project_id, facts_digest, facts_digest).map_err(|error| {

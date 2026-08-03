@@ -148,15 +148,21 @@ fn promote_native_public_graph_cache(
     // Components absent from the active set may be new or merely historical;
     // the SQL conflict clause preserves both cases without changing public
     // graph IDs or history semantics.
-    let active_digests = active
-        .values()
-        .map(|(_, digest)| digest.as_str())
-        .collect::<HashSet<_>>();
     let mut inserted_digests = HashSet::new();
-    let mut incoming = HashMap::new();
     let mut component = transaction.prepare(
         "INSERT INTO native_public_graph_components(component_digest, component_kind, payload_json)
          VALUES (?1, ?2, ?3) ON CONFLICT(component_digest) DO NOTHING",
+    )?;
+    let previous_graph_version = previous_graph_version.unwrap_or(graph_version.saturating_sub(1));
+    let mut close = transaction.prepare(
+        "UPDATE native_public_graph_component_history
+         SET last_graph_version = ?1
+         WHERE project_pk = ?2 AND component_kind = ?3 AND component_id = ?4
+           AND last_graph_version IS NULL",
+    )?;
+    let mut open = transaction.prepare(
+        "INSERT INTO native_public_graph_component_history(project_pk, component_kind, component_id, first_graph_version, last_graph_version, ordinal, component_digest)
+         VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6)",
     )?;
     for (field, kind) in NATIVE_PUBLIC_GRAPH_COMPONENT_KINDS {
         let Some(values) = payload.get(field) else {
@@ -183,53 +189,38 @@ fn promote_native_public_graph_cache(
                 format!("{base_id}@{ordinal}")
             };
             let ordinal = i64::try_from(ordinal).map_err(|_| rusqlite::Error::InvalidQuery)?;
-            incoming.insert((kind.to_string(), id), (ordinal, digest.clone()));
-            if active_digests.contains(digest.as_str()) || !inserted_digests.insert(digest.clone())
+            let key = (kind.to_string(), id);
+            let previous = active.remove(&key);
+            if previous
+                .as_ref()
+                .is_some_and(|(active_ordinal, active_digest)| {
+                    active_ordinal == &ordinal && active_digest == &digest
+                })
             {
                 continue;
             }
-            component.execute(rusqlite::params![digest, kind, payload_json])?;
-        }
-    }
-    drop(component);
-    let previous_graph_version = previous_graph_version.unwrap_or(graph_version.saturating_sub(1));
-    let mut close = transaction.prepare(
-        "UPDATE native_public_graph_component_history
-         SET last_graph_version = ?1
-         WHERE project_pk = ?2 AND component_kind = ?3 AND component_id = ?4
-           AND last_graph_version IS NULL",
-    )?;
-    let mut open = transaction.prepare(
-        "INSERT INTO native_public_graph_component_history(project_pk, component_kind, component_id, first_graph_version, last_graph_version, ordinal, component_digest)
-         VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6)",
-    )?;
-    for (key, (ordinal, digest)) in &incoming {
-        if active
-            .get(key)
-            .is_some_and(|(active_ordinal, active_digest)| {
-                active_ordinal == ordinal && active_digest == digest
-            })
-        {
-            continue;
-        }
-        if active.contains_key(key) {
-            close.execute(rusqlite::params![
-                previous_graph_version,
+            if previous.is_some() {
+                close.execute(rusqlite::params![
+                    previous_graph_version,
+                    project_pk,
+                    key.0,
+                    key.1
+                ])?;
+            }
+            if inserted_digests.insert(digest.clone()) {
+                component.execute(rusqlite::params![digest, kind, payload_json])?;
+            }
+            open.execute(rusqlite::params![
                 project_pk,
                 key.0,
-                key.1
+                key.1,
+                graph_version,
+                ordinal,
+                digest
             ])?;
         }
-        open.execute(rusqlite::params![
-            project_pk,
-            key.0,
-            key.1,
-            graph_version,
-            ordinal,
-            digest
-        ])?;
     }
-    for key in active.keys().filter(|key| !incoming.contains_key(*key)) {
+    for key in active.keys() {
         close.execute(rusqlite::params![
             previous_graph_version,
             project_pk,
