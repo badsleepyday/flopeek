@@ -1144,7 +1144,9 @@ pub(in crate::protocol) fn persist_native_public_graph_patch_using_connection(
     };
     let native_lifecycle_ms = elapsed_ms(native_lifecycle_started);
     let session_cache_started = Instant::now();
-    session.persistent_facts = None;
+    if !retain_persistent_facts {
+        session.persistent_facts = None;
+    }
     let session_cache_ms = elapsed_ms(session_cache_started);
     let persistence_ms = elapsed_ms(persistence_started);
     if let Some(profile) = result
