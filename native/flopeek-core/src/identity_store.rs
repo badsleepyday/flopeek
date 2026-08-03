@@ -363,7 +363,16 @@ pub(crate) fn sync_identity_v2(
     let facts = public_nodes(payload)?;
     let owners = lexical_owners(payload, &facts);
     let source_hashes = source_hashes(structural_batch)?;
-    let content_hashes = content_hashes(transaction, project_pk)?;
+    let identity_store_empty = transaction.query_row(
+        "SELECT NOT EXISTS (SELECT 1 FROM nodes_v2 WHERE project_pk = ?1)",
+        [project_pk],
+        |row| row.get::<_, bool>(0),
+    )?;
+    let content_hashes = if identity_store_empty {
+        BTreeMap::new()
+    } else {
+        content_hashes(transaction, project_pk)?
+    };
     let external_ids = existing_external_ids(transaction, project_pk)?;
     // Reserve every exact current external-ID match before considering move
     // candidates. Otherwise a lexically earlier same-content copy could steal
@@ -384,7 +393,7 @@ pub(crate) fn sync_identity_v2(
     for fact in facts {
         let existing = if let Some(existing) = external_ids.get(fact.public_id).copied() {
             Some(existing)
-        } else if fact.kind == "file" {
+        } else if fact.kind == "file" && !identity_store_empty {
             let content = fact.path.and_then(|path| content_hashes.get(path));
             let source = fact.path.and_then(|path| source_hashes.get(path));
             unique_file_move_candidate(transaction, project_pk, content, source, &claimed)?
@@ -418,10 +427,14 @@ pub(crate) fn sync_identity_v2(
     // Resolve semantic identities through one prepared lookup. Preparing the
     // same statement for every public node made a cold promotion pay SQLite
     // parse/compile work thousands of times before any identity row changed.
-    let mut semantic_candidates = transaction.prepare(
-        "SELECT node_pk, node_uid, current_canonical_identity
-         FROM nodes_v2 WHERE project_pk = ?1 AND current_semantic_hash = ?2",
-    )?;
+    let mut semantic_candidates = if identity_store_empty {
+        None
+    } else {
+        Some(transaction.prepare(
+            "SELECT node_pk, node_uid, current_canonical_identity
+             FROM nodes_v2 WHERE project_pk = ?1 AND current_semantic_hash = ?2",
+        )?)
+    };
     for node_index in order {
         let owner_uid = resolved[node_index]
             .owner_public_id
@@ -452,18 +465,22 @@ pub(crate) fn sync_identity_v2(
 
         // A semantic digest collision is never trusted. Exact canonical bytes
         // may be reused only when there is one unclaimed candidate.
-        let candidates = semantic_candidates
-            .query_map(
-                params![project_pk, semantic.hash().as_bytes().as_slice()],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, Vec<u8>>(1)?,
-                        row.get::<_, Vec<u8>>(2)?,
-                    ))
-                },
-            )?
-            .collect::<Result<Vec<_>, _>>()?;
+        let candidates = if let Some(semantic_candidates) = semantic_candidates.as_mut() {
+            semantic_candidates
+                .query_map(
+                    params![project_pk, semantic.hash().as_bytes().as_slice()],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, Vec<u8>>(1)?,
+                            row.get::<_, Vec<u8>>(2)?,
+                        ))
+                    },
+                )?
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            Vec::new()
+        };
         if candidates
             .iter()
             .any(|(_, _, canonical)| canonical != semantic.canonical())
@@ -925,21 +942,34 @@ fn sync_canonical_symbols(
     } = sync;
     let mut current_node_pks = HashSet::new();
     let mut current_external_ids = HashSet::new();
+    let identity_store_empty = transaction.query_row(
+        "SELECT NOT EXISTS (SELECT 1 FROM nodes_v2 WHERE project_pk = ?1)",
+        [project_pk],
+        |row| row.get::<_, bool>(0),
+    )?;
     // Canonical symbols perform the same identity lookups and revision writes
     // for every parser symbol. Compile those statements once per promotion so
     // symbol-heavy repositories spend time on identity work, not SQL parsing.
-    let mut symbol_collision = transaction.prepare(
-        "SELECT current_canonical_identity FROM nodes_v2
-         WHERE project_pk = ?1 AND current_semantic_hash = ?2
-           AND current_canonical_identity <> ?3 LIMIT 1",
-    )?;
-    let mut symbol_existing = transaction.prepare(
-        "SELECT nodes.node_pk, nodes.current_canonical_identity
-         FROM node_external_ids_v2 AS external
-         JOIN nodes_v2 AS nodes ON nodes.node_pk = external.node_pk
-         WHERE external.project_pk = ?1 AND external.scheme = ?2
-           AND external.external_id = ?3 AND external.last_graph_version IS NULL",
-    )?;
+    let mut symbol_collision = if identity_store_empty {
+        None
+    } else {
+        Some(transaction.prepare(
+            "SELECT current_canonical_identity FROM nodes_v2
+             WHERE project_pk = ?1 AND current_semantic_hash = ?2
+               AND current_canonical_identity <> ?3 LIMIT 1",
+        )?)
+    };
+    let mut symbol_existing = if identity_store_empty {
+        None
+    } else {
+        Some(transaction.prepare(
+            "SELECT nodes.node_pk, nodes.current_canonical_identity
+             FROM node_external_ids_v2 AS external
+             JOIN nodes_v2 AS nodes ON nodes.node_pk = external.node_pk
+             WHERE external.project_pk = ?1 AND external.scheme = ?2
+               AND external.external_id = ?3 AND external.last_graph_version IS NULL",
+        )?)
+    };
     let mut symbol_bind_external = transaction.prepare(
         "INSERT INTO node_external_ids_v2(project_pk, node_pk, scheme, external_id,
            first_graph_version, last_graph_version)
@@ -1079,24 +1109,36 @@ fn sync_canonical_symbols(
             let external_id = semantic.hash().to_string();
             current_external_ids.insert(external_id.clone());
             let collision = symbol_collision
-                .query_row(
-                    params![
-                        project_pk,
-                        semantic.hash().as_bytes().as_slice(),
-                        semantic.canonical()
-                    ],
-                    |row| row.get::<_, Vec<u8>>(0),
-                )
-                .optional()?;
+                .as_mut()
+                .map(|statement| {
+                    statement
+                        .query_row(
+                            params![
+                                project_pk,
+                                semantic.hash().as_bytes().as_slice(),
+                                semantic.canonical()
+                            ],
+                            |row| row.get::<_, Vec<u8>>(0),
+                        )
+                        .optional()
+                })
+                .transpose()?
+                .flatten();
             if collision.is_some() {
                 return Err(invalid_query("fatal parser symbol semantic hash collision"));
             }
             let existing = symbol_existing
-                .query_row(
-                    params![project_pk, PARSER_SYMBOL_ID_SCHEME, external_id],
-                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
-                )
-                .optional()?;
+                .as_mut()
+                .map(|statement| {
+                    statement
+                        .query_row(
+                            params![project_pk, PARSER_SYMBOL_ID_SCHEME, external_id],
+                            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+                        )
+                        .optional()
+                })
+                .transpose()?
+                .flatten();
             let node_pk = if let Some(public_node_pk) = public_candidate_pk {
                 if existing
                     .as_ref()
@@ -1340,6 +1382,11 @@ fn sync_canonical_external_import_roots(
 ) -> rusqlite::Result<HashSet<i64>> {
     let mut current_node_pks = HashSet::new();
     let mut current_external_ids = HashSet::new();
+    let identity_store_empty = transaction.query_row(
+        "SELECT NOT EXISTS (SELECT 1 FROM nodes_v2 WHERE project_pk = ?1)",
+        [project_pk],
+        |row| row.get::<_, bool>(0),
+    )?;
     let mut packages = BTreeMap::<(String, String), BTreeSet<String>>::new();
     for record in structural_batch
         .and_then(|batch| batch.get("records"))
@@ -1384,17 +1431,21 @@ fn sync_canonical_external_import_roots(
             discriminator: Some("import-root"),
         })
         .map_err(conversion_error)?;
-        let existing = transaction
-            .query_row(
-                "SELECT nodes.node_pk, nodes.current_canonical_identity
-                     FROM node_external_ids_v2 AS external
-                     JOIN nodes_v2 AS nodes ON nodes.node_pk = external.node_pk
-                     WHERE external.project_pk = ?1 AND external.scheme = ?2
-                       AND external.external_id = ?3 AND external.last_graph_version IS NULL",
-                params![project_pk, EXTERNAL_IMPORT_ROOT_ID_SCHEME, external_id],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
-            )
-            .optional()?;
+        let existing = if identity_store_empty {
+            None
+        } else {
+            transaction
+                .query_row(
+                    "SELECT nodes.node_pk, nodes.current_canonical_identity
+                         FROM node_external_ids_v2 AS external
+                         JOIN nodes_v2 AS nodes ON nodes.node_pk = external.node_pk
+                         WHERE external.project_pk = ?1 AND external.scheme = ?2
+                           AND external.external_id = ?3 AND external.last_graph_version IS NULL",
+                    params![project_pk, EXTERNAL_IMPORT_ROOT_ID_SCHEME, external_id],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+                )
+                .optional()?
+        };
         let node_pk = if let Some((node_pk, canonical)) = existing {
             if canonical != semantic.canonical() {
                 return Err(invalid_query(
