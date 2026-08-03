@@ -762,9 +762,7 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
     // SQLite remains authoritative: lifecycle code gates every reuse by project
     // and graph version, while this process-local cache avoids reconstructing
     // the previous public collections during the next refresh.
-    let committed_graph_version = result
-        .get("nativeGraphVersion")
-        .and_then(Value::as_i64);
+    let committed_graph_version = result.get("nativeGraphVersion").and_then(Value::as_i64);
     if let Some(cached) = session.persistent_graph.as_mut()
         && cached.project_id == project_id
         && committed_graph_version == Some(cached.graph_version)

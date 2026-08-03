@@ -191,7 +191,8 @@ pub(in crate::protocol) fn persist_reused_structural_projection(
     params: &Value,
     connection: &mut rusqlite::Connection,
     receipt: Value,
-    previous_projection: &Value,
+    previous_projection: Option<&Value>,
+    previous_projection_owned: Option<Value>,
     previous_public_snapshot: Option<&Value>,
     changed_record_paths: Option<&BTreeSet<String>>,
 ) -> Result<PersistedStructuralGraph, NativeProtocolError> {
@@ -220,9 +221,22 @@ pub(in crate::protocol) fn persist_reused_structural_projection(
                 "StructuralFactBatch/v1 flowContext.graphVersion must be a non-negative integer."
                     .to_string(),
         })?;
+    // A persistent handle-only refresh already retains the public snapshot.
+    // Move the SQLite-hydrated projection out of the session cache instead of
+    // cloning the complete JSON projection; on errors the cache is deliberately
+    // left empty and the next refresh rehydrates the verified SQLite payload.
+    let projection_was_owned = previous_projection_owned.is_some();
     let projection_clone_started = Instant::now();
-    let mut projection = previous_projection.clone();
-    let projection_clone_ms = elapsed_ms(projection_clone_started);
+    let mut projection = previous_projection_owned.unwrap_or_else(|| {
+        previous_projection
+            .expect("reused projection has an owned or borrowed previous payload")
+            .clone()
+    });
+    let projection_clone_ms = if projection_was_owned {
+        0
+    } else {
+        elapsed_ms(projection_clone_started)
+    };
     projection["flowContext"] = batch["flowContext"].clone();
     projection["lifecycleContext"] = batch["lifecycleContext"].clone();
     projection["publicGraphContext"] = batch["publicGraphContext"].clone();
@@ -241,12 +255,32 @@ pub(in crate::protocol) fn persist_reused_structural_projection(
         // `cached` supplies the exact public collections for affected-node and
         // flow evidence; the independently built envelopes retain current
         // source/version/refresh semantics for the adjacent delta.
-        let previous_context = native_public_graph_context(previous_projection, None)?;
+        let fallback_previous_context = if previous_public_snapshot.is_none() {
+            Some(native_public_graph_context(
+                previous_projection.expect("reused projection has a previous payload"),
+                None,
+            )?)
+        } else {
+            None
+        };
+        // `flowLenses` is part of the static projection and is unchanged on
+        // this source-only reuse path. Borrow it from the moved projection
+        // instead of cloning another lens-sized JSON value. The cached public
+        // snapshot is the exact previous envelope, so it is also the previous
+        // delta context without reconstructing a cloned context object.
+        let previous_delta_payload = if projection_was_owned {
+            &projection
+        } else {
+            previous_projection.expect("reused projection has a previous payload")
+        };
+        let previous_context = previous_public_snapshot
+            .or(fallback_previous_context.as_ref())
+            .expect("previous public context");
         let mut current_context = native_public_graph_context(&projection, None)?;
         current_context["stats"] = cached["stats"].clone();
         let delta = native_public_graph_delta_with_reused_collections(
-            previous_projection,
-            &previous_context,
+            previous_delta_payload,
+            previous_context,
             &projection,
             &current_context,
             cached,
@@ -254,6 +288,8 @@ pub(in crate::protocol) fn persist_reused_structural_projection(
         (current_context, delta)
     } else {
         let public_snapshot = native_public_graph_snapshot(&projection)?;
+        let previous_projection =
+            previous_projection.expect("reused projection has a previous payload");
         let previous_public = native_public_graph_snapshot(previous_projection)?;
         let delta = native_public_graph_delta_from_public_snapshots(
             previous_projection,
@@ -339,6 +375,7 @@ pub(in crate::protocol) fn persist_reused_structural_projection(
 pub(in crate::protocol) struct PersistStructuralGraphOptions<'a> {
     validated_receipt: Option<Value>,
     previous_projection: Option<&'a Value>,
+    previous_projection_owned: Option<Value>,
     previous_public_snapshot: Option<&'a Value>,
     reuse_previous_projection: bool,
     isolated_incremental_path: Option<&'a str>,
@@ -363,20 +400,21 @@ pub(in crate::protocol) fn persist_structural_graph_internal(
         None => submit_structural_facts(params)?,
     };
     if options.reuse_previous_projection {
-        let previous =
-            options.previous_projection.ok_or_else(|| {
-                NativeProtocolError {
-            code: "store-integrity-failed",
-            message:
-                "A structural projection reuse request requires the current complete projection."
-                    .to_string(),
+        let previous_projection_owned = options.previous_projection_owned;
+        if options.previous_projection.is_none() && previous_projection_owned.is_none() {
+            return Err(NativeProtocolError {
+                code: "store-integrity-failed",
+                message:
+                    "A structural projection reuse request requires the current complete projection."
+                        .to_string(),
+            });
         }
-            })?;
         return persist_reused_structural_projection(
             params,
             connection,
             receipt,
-            previous,
+            options.previous_projection,
+            previous_projection_owned,
             options.previous_public_snapshot,
             options.changed_record_paths,
         );
@@ -680,6 +718,7 @@ pub(in crate::protocol) fn persist_structural_graph(
         PersistStructuralGraphOptions {
             validated_receipt: None,
             previous_projection: None,
+            previous_projection_owned: None,
             previous_public_snapshot: None,
             reuse_previous_projection: false,
             isolated_incremental_path: None,
@@ -1415,23 +1454,42 @@ pub(in crate::protocol) fn persist_native_public_graph_with_receipt_using_connec
         })
     };
     let mut persistent_payload_cache_hit = false;
-    let previous_projection = if let Some(previous) = current.as_ref() {
+    if let Some(previous) = current.as_ref() {
         let cache_hit =
             ensure_persistent_payload(session, connection, &project_id, previous.graph_version)?;
         persistent_payload_cache_hit = cache_hit;
-        Some(
+    }
+    // `cached_or_load_persistent_payload` above may replace the cache. Read
+    // its public snapshot only afterwards, when both references are immutable
+    // and guaranteed to point at the SQLite-selected prior graph version.
+    let has_previous_public_snapshot = current.as_ref().is_some_and(|previous| {
+        session
+            .persistent_graph
+            .as_ref()
+            .filter(|cached| {
+                cached.project_id == project_id && cached.graph_version == previous.graph_version
+            })
+            .is_some_and(|cached| cached.public_snapshot.is_some())
+    });
+    let previous_projection_owned = if reuse_previous_projection && has_previous_public_snapshot {
+        session
+            .persistent_graph
+            .as_mut()
+            .map(|cached| std::mem::take(&mut cached.payload))
+    } else {
+        None
+    };
+    let previous_projection = if previous_projection_owned.is_none() {
+        current.as_ref().map(|_| {
             &session
                 .persistent_graph
                 .as_ref()
                 .expect("persistent payload is ensured")
-                .payload,
-        )
+                .payload
+        })
     } else {
         None
     };
-    // `cached_or_load_persistent_payload` above may replace the cache. Read
-    // its public snapshot only afterwards, when both references are immutable
-    // and guaranteed to point at the SQLite-selected prior graph version.
     let previous_public_snapshot = current.as_ref().and_then(|previous| {
         session
             .persistent_graph
@@ -1450,6 +1508,7 @@ pub(in crate::protocol) fn persist_native_public_graph_with_receipt_using_connec
         PersistStructuralGraphOptions {
             validated_receipt: Some(receipt),
             previous_projection,
+            previous_projection_owned,
             previous_public_snapshot,
             reuse_previous_projection,
             isolated_incremental_path: isolated_incremental_path.as_deref(),
