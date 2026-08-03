@@ -234,6 +234,13 @@ pub struct NativeJsFactsStatus {
     /// reverse index.
     pub importer_targets: BTreeMap<String, BTreeSet<String>>,
     pub structural_records: Vec<serde_json::Value>,
+    /// Persistent sessions compact this to changed records after a complete
+    /// batch is retained separately. Ephemeral and freshly reconciled statuses
+    /// keep the complete ordered record set.
+    pub structural_records_complete: bool,
+    /// Compact headers and file metadata retained when complete record results
+    /// move to the verified persistent fact cache.
+    pub structural_record_manifest: Vec<serde_json::Value>,
     pub entry_facts: serde_json::Value,
 }
 
@@ -335,7 +342,10 @@ fn update_native_resolution_indexes(
 /// refresh telemetry must not see cold-scan parse counts after `changedPaths`
 /// explicitly declared that nothing changed.
 pub fn reuse_native_js_facts_session(previous: &NativeJsFactsStatus) -> NativeJsFactsStatus {
-    let mut next = previous.clone();
+    reuse_native_js_facts_session_owned(previous.clone())
+}
+
+pub fn reuse_native_js_facts_session_owned(mut next: NativeJsFactsStatus) -> NativeJsFactsStatus {
     next.initial_scan = false;
     next.parsed_files = 0;
     next.reused_files = next.facts.len();
@@ -360,8 +370,21 @@ pub fn refresh_native_js_facts_session(
     previous: &NativeJsFactsStatus,
     changed_paths: &[String],
 ) -> Result<NativeJsFactsStatus, String> {
+    refresh_native_js_facts_session_owned(previous.clone(), changed_paths)
+}
+
+pub fn refresh_native_js_facts_session_owned(
+    previous: NativeJsFactsStatus,
+    changed_paths: &[String],
+) -> Result<NativeJsFactsStatus, String> {
     let scope = read_native_scope(&previous.project_root)?;
-    let mut next = previous.clone();
+    let excluded_count = previous
+        .source_scope_counts
+        .get("excluded")
+        .copied()
+        .unwrap_or(0);
+    let records_were_complete = previous.structural_records_complete;
+    let mut next = previous;
     next.initial_scan = false;
     // Package manifests are never admitted to this changed-path fast path:
     // their events require reconciliation above.  Therefore package-command
@@ -402,8 +425,8 @@ pub fn refresh_native_js_facts_session(
         if !native_fact_supported_path(&normalized) {
             return Err(format!("native-session-reconcile-required:{normalized}"));
         }
-        let absolute = previous.project_root.join(&normalized);
-        let was_candidate = previous.candidate_paths.contains(&normalized);
+        let absolute = next.project_root.join(&normalized);
+        let was_candidate = next.candidate_paths.contains(&normalized);
         let is_candidate = native_js_incremental_candidate(&scope, &normalized, &absolute)?;
         // Watchers can report ignored directories and a stale delete event for
         // a path that was never in the graph. Those events are safe no-ops;
@@ -417,8 +440,8 @@ pub fn refresh_native_js_facts_session(
     let mut removed_paths = Vec::new();
     let mut added_paths = BTreeSet::new();
     for path in &changed {
-        let absolute = previous.project_root.join(path);
-        entry_facts_affected |= previous
+        let absolute = next.project_root.join(path);
+        entry_facts_affected |= next
             .facts
             .get(path)
             .is_some_and(native_js_fact_affects_entry_projection);
@@ -524,21 +547,46 @@ pub fn refresh_native_js_facts_session(
         &refreshed_paths,
         membership_changed || !resolution_manifests.is_empty(),
     );
-    next.structural_records.retain(|record| {
-        match record
-            .get("relativePath")
-            .and_then(serde_json::Value::as_str)
-        {
-            Some(path) => {
-                !refreshed_paths.contains(path)
-                    && !removed_paths.iter().any(|removed| removed == path)
+    if records_were_complete {
+        next.structural_records.retain(|record| {
+            match record
+                .get("relativePath")
+                .and_then(serde_json::Value::as_str)
+            {
+                Some(path) => {
+                    !refreshed_paths.contains(path)
+                        && !removed_paths.iter().any(|removed| removed == path)
+                }
+                None => true,
             }
-            None => true,
-        }
-    });
+        });
+    } else {
+        next.structural_records.clear();
+    }
+    if !records_were_complete {
+        let refreshed_manifest = refreshed_records
+            .iter()
+            .map(compact_structural_record)
+            .collect::<Vec<_>>();
+        next.structural_record_manifest.retain(|record| {
+            record
+                .get("relativePath")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|path| {
+                    !refreshed_paths.contains(path)
+                        && !removed_paths.iter().any(|removed| removed == path)
+                })
+        });
+        next.structural_record_manifest.extend(refreshed_manifest);
+        normalize_structural_record_orders(&mut next.structural_record_manifest);
+    }
     next.structural_records.extend(refreshed_records);
     normalize_structural_record_orders(&mut next.structural_records);
+    next.structural_records_complete = records_were_complete;
     if entry_facts_affected || !added_paths.is_empty() || !removed_paths.is_empty() {
+        if !next.structural_records_complete {
+            ensure_complete_native_js_structural_records(&mut next)?;
+        }
         next.entry_facts =
             build_native_js_entry_facts(&next.project_root, &next.facts, &next.structural_records);
     }
@@ -573,11 +621,6 @@ pub fn refresh_native_js_facts_session(
     // Excluded files are intentionally absent from candidate_paths. Preserve
     // their full-discovery count across ordinary source events; only a scope
     // reconciliation is allowed to replace it.
-    let excluded_count = previous
-        .source_scope_counts
-        .get("excluded")
-        .copied()
-        .unwrap_or(0);
     next.source_scope_counts = ["application", "test", "fixture", "generated", "excluded"]
         .into_iter()
         .map(|name| {
@@ -598,6 +641,78 @@ pub fn refresh_native_js_facts_session(
     next.flow_entries_tests = scope.flow_entries_tests;
     next.flow_entries_fixtures = scope.flow_entries_fixtures;
     Ok(next)
+}
+
+pub fn ensure_complete_native_js_structural_records(
+    status: &mut NativeJsFactsStatus,
+) -> Result<(), String> {
+    if status.structural_records_complete {
+        return Ok(());
+    }
+    let scope = read_native_scope(&status.project_root)?;
+    let known_records = status
+        .candidate_paths
+        .iter()
+        .map(|path| (path.clone(), scope.classify(path).as_str().to_string()))
+        .collect::<Vec<_>>();
+    let source_scopes = known_records.iter().cloned().collect::<BTreeMap<_, _>>();
+    let record_orders = known_records
+        .iter()
+        .enumerate()
+        .map(|(order, (path, _))| (path.clone(), order))
+        .collect::<BTreeMap<_, _>>();
+    status.structural_records = build_native_js_structural_records_with_source_hashes(
+        &status.project_root,
+        &status.facts,
+        &status.resolution,
+        &source_scopes,
+        &record_orders,
+        Some(&status.source_hashes),
+    )?;
+    normalize_structural_record_orders(&mut status.structural_records);
+    status.structural_records_complete = true;
+    status.structural_record_manifest.clear();
+    Ok(())
+}
+
+pub fn compact_native_js_structural_records(status: &mut NativeJsFactsStatus) {
+    if !status.structural_records_complete {
+        return;
+    }
+    status.structural_record_manifest = status
+        .structural_records
+        .iter()
+        .map(compact_structural_record)
+        .collect();
+    status.structural_records.clear();
+    status.structural_records.shrink_to_fit();
+    status.structural_records_complete = false;
+}
+
+pub fn take_complete_native_js_structural_records(
+    status: &mut NativeJsFactsStatus,
+) -> Result<Vec<serde_json::Value>, String> {
+    if !status.structural_records_complete {
+        return Err("Complete native structural records are unavailable.".to_string());
+    }
+    status.structural_record_manifest = status
+        .structural_records
+        .iter()
+        .map(compact_structural_record)
+        .collect();
+    status.structural_records_complete = false;
+    Ok(std::mem::take(&mut status.structural_records))
+}
+
+fn compact_structural_record(record: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "relativePath": record["relativePath"],
+        "sourceHash": record["sourceHash"],
+        "sourceScope": record["sourceScope"],
+        "recordOrder": record["recordOrder"],
+        "language": record["language"],
+        "fileMetadata": record["fileMetadata"],
+    })
 }
 
 fn native_js_fact_affects_entry_projection(fact: &NativeJsFacts) -> bool {
@@ -2120,6 +2235,8 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
         reverse_importers,
         importer_targets,
         structural_records,
+        structural_records_complete: true,
+        structural_record_manifest: Vec::new(),
         entry_facts,
     })
 }
@@ -2243,6 +2360,8 @@ pub fn scan_native_js_facts_ephemeral(
         reverse_importers,
         importer_targets,
         structural_records,
+        structural_records_complete: true,
+        structural_record_manifest: Vec::new(),
         entry_facts,
     })
 }
@@ -2356,6 +2475,8 @@ pub fn scan_native_js_facts_ephemeral_bounded(
         reverse_importers,
         importer_targets,
         structural_records,
+        structural_records_complete: true,
+        structural_record_manifest: Vec::new(),
         entry_facts,
     };
     Ok((status, discovery))

@@ -2,10 +2,10 @@ use super::{
     NATIVE_PROTOCOL_VERSION, NativeProtocolSession, NativeRequest, STRUCTURAL_FACT_BATCH_SCHEMA,
     build_isolated_incremental_graph, get_native_database_open_evidence, handle_request,
     hydrate_cached_query_batch, hydrate_session_query_batch, isolated_structural_change_path,
-    native_entry_source_nodes, parse_session_history_limit, refresh_native_js_session_graph,
-    refresh_native_persistent_project, refresh_native_session_graph, same_canonical_json,
-    serve_jsonl, structural_facts_canonical_json, structural_facts_digest,
-    structural_topology_digest,
+    native_entry_source_nodes, native_query_cache_key, parse_session_history_limit,
+    refresh_native_js_session_graph, refresh_native_persistent_project,
+    refresh_native_session_graph, same_canonical_json, serve_jsonl,
+    structural_facts_canonical_json, structural_facts_digest, structural_topology_digest,
 };
 use crate::store::open_native_store;
 use crate::structural_graph::build_structural_graph;
@@ -45,6 +45,105 @@ fn request(request_id: &str, method: &str, params: Value) -> String {
         "params": params,
     }))
     .unwrap()
+}
+
+#[test]
+fn immutable_query_memo_is_digest_bound_and_precedes_fact_hydration() {
+    let params = json!({
+        "projectRoot": "/definitely/not/a/repository",
+        "projectId": "project:memo",
+        "factsDigest": format!("sha256:{}", "a".repeat(64)),
+        "query": "cached",
+    });
+    let key = native_query_cache_key("findNodes", &params).unwrap();
+    let changed_key = native_query_cache_key(
+        "findNodes",
+        &json!({
+            "projectRoot": "/definitely/not/a/repository",
+            "projectId": "project:memo",
+            "factsDigest": format!("sha256:{}", "b".repeat(64)),
+            "query": "cached",
+        }),
+    )
+    .unwrap();
+    assert_ne!(key, changed_key);
+
+    let mut session = NativeProtocolSession::default();
+    session.retain_query_result(
+        key,
+        super::success_response(
+            "original-request".to_string(),
+            json!({ "query": "cached", "results": [] }),
+        ),
+    );
+    let response = handle_request(
+        &mut session,
+        NativeRequest {
+            protocol_version: NATIVE_PROTOCOL_VERSION.to_string(),
+            request_id: "memo-hit".to_string(),
+            method: "findNodes".to_string(),
+            params,
+        },
+    )
+    .0;
+    let response = serde_json::to_value(response).unwrap();
+    assert_eq!(response["status"], "ok");
+    assert_eq!(response["requestId"], "memo-hit");
+    assert_eq!(
+        response["result"],
+        json!({ "query": "cached", "results": [] })
+    );
+
+    let missing_params = json!({
+        "projectRoot": "/definitely/not/a/repository",
+        "projectId": "project:memo",
+        "factsDigest": format!("sha256:{}", "a".repeat(64)),
+        "flowId": "flow:missing",
+    });
+    let missing_key = native_query_cache_key("getNativeFlowLensCore", &missing_params).unwrap();
+    session.retain_query_result(
+        missing_key,
+        super::error_response(
+            Some("original-missing".to_string()),
+            "missing-flow",
+            "No native flow matches params.flowId.",
+        ),
+    );
+    let missing = handle_request(
+        &mut session,
+        NativeRequest {
+            protocol_version: NATIVE_PROTOCOL_VERSION.to_string(),
+            request_id: "memo-missing-hit".to_string(),
+            method: "getNativeFlowLensCore".to_string(),
+            params: missing_params,
+        },
+    )
+    .0;
+    let missing = serde_json::to_value(missing).unwrap();
+    assert_eq!(missing["requestId"], "memo-missing-hit");
+    assert_eq!(missing["status"], "error");
+    assert_eq!(missing["error"]["code"], "missing-flow");
+}
+
+#[test]
+fn immutable_query_memo_remains_strictly_bounded() {
+    let mut session = NativeProtocolSession::default();
+    for index in 0..300 {
+        session.retain_query_result(
+            format!("query-{index:03}"),
+            super::success_response(format!("request-{index}"), json!(index)),
+        );
+    }
+    assert!(session.query_result("query-000").is_none());
+    assert!(session.query_result("query-043").is_none());
+    assert_eq!(
+        serde_json::to_value(session.query_result("query-044").unwrap()).unwrap()["result"],
+        json!(44)
+    );
+    assert_eq!(
+        serde_json::to_value(session.query_result("query-299").unwrap()).unwrap()["result"],
+        json!(299)
+    );
 }
 
 #[test]
@@ -345,6 +444,7 @@ fn persistent_native_project_reuses_one_sqlite_connection_for_changed_path_refre
     fs::create_dir_all(root.join("src")).unwrap();
     let source = root.join("src/main.ts");
     fs::write(&source, "export const initial = true;\n").unwrap();
+    fs::write(root.join("src/stable.ts"), "export const stable = true;\n").unwrap();
     let mut session = NativeProtocolSession::default();
     let initial =
         refresh_native_persistent_project(&mut session, &json!({ "projectRoot": root })).unwrap();
@@ -360,7 +460,28 @@ fn persistent_native_project_reuses_one_sqlite_connection_for_changed_path_refre
     assert!(query["batch"].is_object());
     assert_eq!(session.persistent_connections.len(), 1);
     assert_eq!(session.persistent_git_metadata.len(), 1);
-    fs::write(&source, "export const changed = true;\n").unwrap();
+    let (changed_revisions_before, stable_revisions_before) = {
+        let connection = session.persistent_connections.values().next().unwrap();
+        (
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM node_revisions_v2 WHERE path = 'src/main.ts'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM node_revisions_v2 WHERE path = 'src/stable.ts'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+        )
+    };
+    // Preserve every structural identity while changing the source-backed
+    // revision. This selects the verified changed-record identity fast path.
+    fs::write(&source, "export const initial = false;\n").unwrap();
     let refreshed = refresh_native_persistent_project(
         &mut session,
         &json!({
@@ -384,7 +505,39 @@ fn persistent_native_project_reuses_one_sqlite_connection_for_changed_path_refre
         1
     );
     assert_eq!(refreshed["receipt"]["profile"]["usedFactPatch"], true);
+    assert_eq!(
+        refreshed["receipt"]["profile"]["reusedStructuralProjection"],
+        true
+    );
     assert!(refreshed["receipt"]["profile"]["factPatchReconstructionMs"].is_number());
+    let connection = session.persistent_connections.values().next().unwrap();
+    let changed_revisions_after = connection
+        .query_row(
+            "SELECT COUNT(*) FROM node_revisions_v2 WHERE path = 'src/main.ts'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap();
+    let stable_revisions_after = connection
+        .query_row(
+            "SELECT COUNT(*) FROM node_revisions_v2 WHERE path = 'src/stable.ts'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap();
+    assert!(changed_revisions_after > changed_revisions_before);
+    assert_eq!(stable_revisions_after, stable_revisions_before);
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM edge_presence_v2 WHERE last_graph_version IS NOT NULL",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0,
+        "source-only refresh must not churn edge membership intervals"
+    );
     drop(session);
     fs::remove_dir_all(root).unwrap();
 }

@@ -267,16 +267,21 @@ pub(in crate::protocol) fn load_native_js_facts_status(
                 .map(str::to_string)
                 .collect::<Vec<_>>()
         });
+    // Move the process-local source cache into the refresh. Keeping the old
+    // status in the map while cloning a complete replacement doubled facts,
+    // resolution, and structural records across the promotion peak. SQLite is
+    // still authoritative; a failed refresh deliberately leaves this derived
+    // cache empty so the next request reconciles from durable state.
+    let previous = (!ephemeral)
+        .then(|| session.persistent_sources.remove(&session_key))
+        .flatten();
     let status = (if ephemeral {
         scan_native_js_facts_ephemeral(&root, session_project_id)
-    } else if let (Some(previous), Some(paths)) = (
-        session.persistent_sources.get(&session_key),
-        changed_paths.as_deref(),
-    ) {
+    } else if let (Some(previous), Some(paths)) = (previous, changed_paths.as_deref()) {
         if paths.is_empty() {
-            Ok(reuse_native_js_facts_session(previous))
+            Ok(reuse_native_js_facts_session_owned(previous))
         } else {
-            refresh_native_js_facts_session(previous, paths)
+            refresh_native_js_facts_session_owned(previous, paths)
         }
     } else {
         scan_native_js_facts(&root)
@@ -289,11 +294,6 @@ pub(in crate::protocol) fn load_native_js_facts_status(
         },
         message,
     })?;
-    if !ephemeral {
-        session
-            .persistent_sources
-            .insert(session_key, status.clone());
-    }
     Ok(status)
 }
 
@@ -314,7 +314,7 @@ pub(in crate::protocol) fn native_js_structural_facts(
         .cloned()
         .collect::<Vec<_>>();
     let native_envelope = native_js_batch_envelope(&status)?;
-    Ok(json!({
+    let result = json!({
         "schemaVersion": "flopeek-native-source-facts/v1",
         "adapterVersion": status.adapter_version,
         "persistence": if ephemeral { "session-memory" } else { "sqlite" },
@@ -341,7 +341,13 @@ pub(in crate::protocol) fn native_js_structural_facts(
         "records": status.structural_records,
         "entryFacts": status.entry_facts,
         "nativeEnvelope": native_envelope,
-    }))
+    });
+    if !ephemeral {
+        session
+            .persistent_sources
+            .insert(status.project_root.display().to_string(), status);
+    }
+    Ok(result)
 }
 
 // A caller that explicitly supplies an empty changed-path list is asserting
@@ -439,7 +445,7 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
         .and_then(Value::as_array)
         .is_some_and(Vec::is_empty)
         && session.persistent_sources.contains_key(&session_key);
-    let status = load_native_js_facts_status(session, params)?;
+    let mut status = load_native_js_facts_status(session, params)?;
     let source_refresh_ms = elapsed_ms(source_refresh_started);
     if explicit_no_op
         && let Some(mut response) = reuse_native_persistent_project_no_op(session, &root, &status)?
@@ -462,6 +468,7 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
         if handle_only_public_graph {
             replace_public_graph_with_handle_envelope(&mut response)?;
         }
+        session.persistent_sources.insert(session_key, status);
         return Ok(response);
     }
     let supported_paths = status.facts.keys().cloned().collect::<BTreeSet<_>>();
@@ -543,8 +550,17 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
                 // malformed internal patches stay loud rather than being hidden by
                 // a full-batch retry.
                 Err(error) if error.code == "structural-fact-patch-miss" => {
+                    ensure_complete_native_js_structural_records(&mut status).map_err(
+                        |message| NativeProtocolError {
+                            code: "native-source-facts-failed",
+                            message,
+                        },
+                    )?;
                     let full_envelope_started = Instant::now();
-                    let mut batch = native_js_batch_envelope_with_git(&status, &git_metadata)?;
+                    let mut batch = native_js_batch_envelope_with_git_owned_records(
+                        &mut status,
+                        &git_metadata,
+                    )?;
                     batch["projectRoot"] = Value::String(root.to_string_lossy().to_string());
                     let facts_digest = batch
                     .get("factsDigest")
@@ -589,8 +605,15 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
                 Err(error) => return Err(error),
             }
         } else {
+            ensure_complete_native_js_structural_records(&mut status).map_err(|message| {
+                NativeProtocolError {
+                    code: "native-source-facts-failed",
+                    message,
+                }
+            })?;
             let envelope_started = Instant::now();
-            let mut batch = native_js_batch_envelope_with_git(&status, &git_metadata)?;
+            let mut batch =
+                native_js_batch_envelope_with_git_owned_records(&mut status, &git_metadata)?;
             batch["projectRoot"] = Value::String(root.to_string_lossy().to_string());
             let facts_digest = batch
                 .get("factsDigest")
@@ -663,6 +686,8 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
     if handle_only_public_graph {
         replace_public_graph_with_handle_envelope(&mut result)?;
     }
+    compact_native_js_structural_records(&mut status);
+    session.persistent_sources.insert(session_key, status);
     Ok(result)
 }
 
@@ -840,11 +865,28 @@ pub(in crate::protocol) fn native_js_batch_envelope(
     native_js_batch_envelope_for_package(status, None)
 }
 
-pub(in crate::protocol) fn native_js_batch_envelope_with_git(
-    status: &crate::js_facts::NativeJsFactsStatus,
+pub(in crate::protocol) fn native_js_batch_envelope_with_git_owned_records(
+    status: &mut crate::js_facts::NativeJsFactsStatus,
     git_metadata: &Value,
 ) -> Result<Value, NativeProtocolError> {
-    native_js_batch_envelope_for_package_with_records(status, None, true, Some(git_metadata))
+    let mut batch =
+        native_js_batch_envelope_for_package_with_records(status, None, false, Some(git_metadata))?;
+    let records = take_complete_native_js_structural_records(status).map_err(|message| {
+        NativeProtocolError {
+            code: "native-source-facts-incomplete",
+            message,
+        }
+    })?;
+    batch["records"] = Value::Array(records);
+    let facts_digest = structural_facts_digest(
+        batch.as_object().expect("native batch is an object"),
+    )
+    .map_err(|message| NativeProtocolError {
+        code: "native-source-facts-failed",
+        message,
+    })?;
+    batch["factsDigest"] = Value::String(facts_digest);
+    Ok(batch)
 }
 
 pub(in crate::protocol) fn native_js_structural_fact_patch(
@@ -858,8 +900,12 @@ pub(in crate::protocol) fn native_js_structural_fact_patch(
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
-    let manifest = status
-        .structural_records
+    let record_manifest = if status.structural_records_complete {
+        &status.structural_records
+    } else {
+        &status.structural_record_manifest
+    };
+    let manifest = record_manifest
         .iter()
         .map(|record| {
             json!({
@@ -921,6 +967,13 @@ pub(in crate::protocol) fn native_js_batch_envelope_for_package_with_records(
     include_records: bool,
     git_metadata: Option<&Value>,
 ) -> Result<Value, NativeProtocolError> {
+    if include_records && !status.structural_records_complete {
+        return Err(NativeProtocolError {
+            code: "native-source-facts-incomplete",
+            message: "A complete StructuralFactBatch requires complete native source records."
+                .to_string(),
+        });
+    }
     let scope = read_native_scope(&status.project_root).map_err(|message| NativeProtocolError {
         code: "native-source-facts-failed",
         message,
@@ -956,7 +1009,12 @@ pub(in crate::protocol) fn native_js_batch_envelope_for_package_with_records(
     let mut summary = json!({"scannedFiles":0,"parsedFiles":0,"parsedWithDiagnosticsFiles":0,"inventoryOnlyFiles":0,"parseFailedFiles":0});
     let mut by_language =
         BTreeMap::<String, (usize, usize, usize, usize, usize, BTreeSet<String>)>::new();
-    for record in &status.structural_records {
+    let record_view = if status.structural_records_complete {
+        &status.structural_records
+    } else {
+        &status.structural_record_manifest
+    };
+    for record in record_view {
         let language = record
             .get("language")
             .and_then(Value::as_str)
@@ -999,7 +1057,7 @@ pub(in crate::protocol) fn native_js_batch_envelope_for_package_with_records(
     }
     let by_language = by_language.into_iter().map(|(language, (files, parsed, parsed_with_diagnostics, inventory_only, parse_failed, parsers))| json!({"language":language,"files":files,"parsed":parsed,"parsedWithDiagnostics":parsed_with_diagnostics,"inventoryOnly":inventory_only,"parseFailed":parse_failed,"parsers":parsers})).collect::<Vec<_>>();
     let coverage = json!({"summary":summary,"byLanguage":by_language,"interpretation":"Coverage counts syntax-tree analysis status, not runtime execution coverage or relationship precision."});
-    let source_fingerprint = native_js_source_fingerprint(&status.structural_records);
+    let source_fingerprint = native_js_source_fingerprint(record_view);
     // Inventory and parser status are the source of lifecycle telemetry. Do
     // not label every persistent refresh as an initial full scan merely
     // because graph assembly receives a complete compatibility envelope.
@@ -1051,7 +1109,7 @@ pub(in crate::protocol) fn native_js_batch_envelope_for_package_with_records(
         }
     }
     let mut batch = json!({
-        "schemaVersion":STRUCTURAL_FACT_BATCH_SCHEMA,"projectId":status.project_identity.project_id,"packageCommands":status.entry_facts["packageCommands"],"entryMetadata":status.entry_facts["entryMetadata"],"entryEdgeMetadata":status.entry_facts["edgeMetadata"],"manualDescriptions":native_manual_descriptions(&status.project_root, &status.structural_records),
+        "schemaVersion":STRUCTURAL_FACT_BATCH_SCHEMA,"projectId":status.project_identity.project_id,"packageCommands":status.entry_facts["packageCommands"],"entryMetadata":status.entry_facts["entryMetadata"],"entryEdgeMetadata":status.entry_facts["edgeMetadata"],"manualDescriptions":native_manual_descriptions(&status.project_root, record_view),
         "flowContext":{"graphVersion":0,"sourceRevision":git["revision"]},"flowEntries":{"primary":{"tests":scope.flow_entries_tests,"fixtures":scope.flow_entries_fixtures},"diagnostic":{"tests":true,"fixtures":true}},
         "lifecycleContext":{"sourceFingerprint":source_fingerprint,"sourceRevision":git["revision"],"updatedAt":generated_at,"refresh":refresh,"coverage":coverage},"publicGraphContext":public_graph_context
     });

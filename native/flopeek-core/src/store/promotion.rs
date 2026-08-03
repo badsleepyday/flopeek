@@ -63,8 +63,7 @@ fn native_public_graph_cache(
         })
         .map(|(field, value)| (field.clone(), value.clone()))
         .collect::<serde_json::Map<_, _>>();
-    let mut components = Vec::new();
-    for (field, kind) in NATIVE_PUBLIC_GRAPH_COMPONENT_KINDS {
+    for (field, _) in NATIVE_PUBLIC_GRAPH_COMPONENT_KINDS {
         let Some(values) = payload.get(field) else {
             continue;
         };
@@ -85,44 +84,10 @@ fn native_public_graph_cache(
         if reuse_public_components {
             continue;
         }
-        let mut ids = BTreeSet::new();
-        for (ordinal, value) in values.iter().enumerate() {
-            let payload_json = serde_json::to_string(value)
-                .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-            let digest = format!(
-                "blake3:{}",
-                blake3::hash(format!("{kind}\0{payload_json}").as_bytes()).to_hex()
-            );
-            // Public edge objects intentionally have no `id`. Membership IDs
-            // are therefore internal keys; use a public id where available,
-            // otherwise the internal component digest. A duplicate gets an
-            // ordinal suffix without altering the serialized array.
-            let base_id = value
-                .get("id")
-                .and_then(serde_json::Value::as_str)
-                .filter(|id| !id.is_empty())
-                .map(ToString::to_string)
-                .unwrap_or_else(|| digest.clone());
-            let id = if ids.insert(base_id.clone()) {
-                base_id
-            } else {
-                format!("{base_id}@{ordinal}")
-            };
-            components.push(NativePublicGraphComponent {
-                kind,
-                id,
-                ordinal: i64::try_from(ordinal).map_err(|_| rusqlite::Error::InvalidQuery)?,
-                digest,
-                payload_json,
-            });
-        }
     }
     let envelope_json = serde_json::to_string(&serde_json::Value::Object(envelope))
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-    Ok(NativePublicGraphCache {
-        envelope_json,
-        components,
-    })
+    Ok(NativePublicGraphCache { envelope_json })
 }
 
 fn promote_native_public_graph_cache(
@@ -131,6 +96,7 @@ fn promote_native_public_graph_cache(
     graph_version: i64,
     previous_graph_version: Option<i64>,
     cache: &NativePublicGraphCache,
+    payload: &serde_json::Value,
     reuse_public_components: bool,
 ) -> rusqlite::Result<()> {
     transaction.execute(
@@ -144,7 +110,7 @@ fn promote_native_public_graph_cache(
     // any component/history writes.  Reject an impossible first-version reuse
     // rather than silently creating an envelope with no public collections.
     if reuse_public_components {
-        if previous_graph_version.is_none() || !cache.components.is_empty() {
+        if previous_graph_version.is_none() {
             return Err(rusqlite::Error::InvalidQuery);
         }
         return Ok(());
@@ -171,16 +137,6 @@ fn promote_native_public_graph_cache(
             active.insert((kind, id), (ordinal, digest));
         }
     }
-    let incoming = cache
-        .components
-        .iter()
-        .map(|entry| {
-            (
-                (entry.kind.to_string(), entry.id.clone()),
-                (entry.ordinal, entry.digest.clone()),
-            )
-        })
-        .collect::<HashMap<_, _>>();
     // The interval table is the current-version membership index.  Do not
     // issue a no-op INSERT OR IGNORE for every unchanged component on an
     // incremental refresh: a large graph can otherwise turn one local edit
@@ -193,21 +149,43 @@ fn promote_native_public_graph_cache(
         .map(|(_, digest)| digest.as_str())
         .collect::<HashSet<_>>();
     let mut inserted_digests = HashSet::new();
+    let mut incoming = HashMap::new();
     let mut component = transaction.prepare(
         "INSERT INTO native_public_graph_components(component_digest, component_kind, payload_json)
          VALUES (?1, ?2, ?3) ON CONFLICT(component_digest) DO NOTHING",
     )?;
-    for entry in &cache.components {
-        if active_digests.contains(entry.digest.as_str())
-            || !inserted_digests.insert(entry.digest.as_str())
-        {
+    for (field, kind) in NATIVE_PUBLIC_GRAPH_COMPONENT_KINDS {
+        let Some(values) = payload.get(field) else {
             continue;
+        };
+        let values = values.as_array().ok_or(rusqlite::Error::InvalidQuery)?;
+        let mut ids = BTreeSet::new();
+        for (ordinal, value) in values.iter().enumerate() {
+            let payload_json = serde_json::to_string(value)
+                .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+            let digest = format!(
+                "blake3:{}",
+                blake3::hash(format!("{kind}\0{payload_json}").as_bytes()).to_hex()
+            );
+            let base_id = value
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .filter(|id| !id.is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| digest.clone());
+            let id = if ids.insert(base_id.clone()) {
+                base_id
+            } else {
+                format!("{base_id}@{ordinal}")
+            };
+            let ordinal = i64::try_from(ordinal).map_err(|_| rusqlite::Error::InvalidQuery)?;
+            incoming.insert((kind.to_string(), id), (ordinal, digest.clone()));
+            if active_digests.contains(digest.as_str()) || !inserted_digests.insert(digest.clone())
+            {
+                continue;
+            }
+            component.execute(rusqlite::params![digest, kind, payload_json])?;
         }
-        component.execute(rusqlite::params![
-            entry.digest,
-            entry.kind,
-            entry.payload_json
-        ])?;
     }
     drop(component);
     let previous_graph_version = previous_graph_version.unwrap_or(graph_version.saturating_sub(1));
@@ -463,6 +441,7 @@ pub fn promote_graph_build_with_changed_records(
         request.graph_version,
         previous_graph_version,
         &public_graph_cache,
+        request.payload,
         request.reuse_public_components,
     )?;
     crash_at_test_boundary("after-graph-payload-write");
@@ -513,14 +492,37 @@ pub fn promote_graph_build_with_changed_records(
     // Identity v2 is an additive dual-write in schema v11. It participates in
     // the same transaction as the compatibility graph, so invalid canonical
     // identity input can never advance the project pointer independently.
-    sync_identity_v2(
-        &transaction,
-        project_pk,
-        request.project_id,
-        request.graph_version,
-        request.payload,
-        request.structural_batch,
-    )?;
+    if request.reuse_public_components {
+        if let Some(changed_record_paths) = request.changed_record_paths {
+            sync_identity_v2_changed_records(
+                &transaction,
+                project_pk,
+                request.project_id,
+                request.graph_version,
+                request.payload,
+                request.structural_batch,
+                changed_record_paths,
+            )?;
+        } else {
+            sync_identity_v2(
+                &transaction,
+                project_pk,
+                request.project_id,
+                request.graph_version,
+                request.payload,
+                request.structural_batch,
+            )?;
+        }
+    } else {
+        sync_identity_v2(
+            &transaction,
+            project_pk,
+            request.project_id,
+            request.graph_version,
+            request.payload,
+            request.structural_batch,
+        )?;
+    }
     crash_at_test_boundary("after-fact-storage");
     let project_pointer_started = Instant::now();
     crash_at_test_boundary("before-current-pointer-promotion");

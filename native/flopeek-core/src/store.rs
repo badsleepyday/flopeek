@@ -1,4 +1,4 @@
-use crate::identity_store::sync_identity_v2;
+use crate::identity_store::{sync_identity_v2, sync_identity_v2_changed_records};
 use rusqlite::{Connection, OptionalExtension};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -128,17 +128,8 @@ pub struct NativeDeltaPruneResult {
 // references. Component payloads are content-addressed internally; these
 // BLAKE3 identities never leave SQLite and never replace public JavaScript
 // node, edge, or flow IDs.
-struct NativePublicGraphComponent {
-    kind: &'static str,
-    id: String,
-    ordinal: i64,
-    digest: String,
-    payload_json: String,
-}
-
 struct NativePublicGraphCache {
     envelope_json: String,
-    components: Vec<NativePublicGraphComponent>,
 }
 
 const NATIVE_PUBLIC_GRAPH_COMPONENT_KINDS: [(&str, &str); 4] = [

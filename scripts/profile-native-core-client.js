@@ -157,6 +157,12 @@ async function profileQueries(core, graph, nativeProtocol = null) {
     const transport = [];
     for (let index = 0; index < QUERY_SAMPLES; index += 1) {
       const measurement = await elapsed(operation);
+      if (targetStatus === "present") {
+        assert.notEqual(measurement.result, null, `${name} declared a present profile target but returned null.`);
+        assert.notEqual(measurement.result, undefined, `${name} declared a present profile target but returned undefined.`);
+      } else if (name === "flowProjection") {
+        assert.equal(measurement.result, null, "Absent Flow Projection profile targets must retain the CoreClient null contract.");
+      }
       samples.push(measurement.milliseconds);
       const stats = nativeProtocol?.getLastResponseStats?.();
       if (stats && Number.isFinite(stats.roundTripMilliseconds)) transport.push(stats);

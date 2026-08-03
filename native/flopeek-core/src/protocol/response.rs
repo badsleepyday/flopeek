@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct NativeResponse {
     pub(super) protocol_version: &'static str,
@@ -12,14 +12,14 @@ pub(super) struct NativeResponse {
     pub(super) error: Option<NativeProtocolError>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub(super) enum NativeProtocolResult {
     Value(Value),
     Raw(Box<RawValue>),
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub(super) struct NativeProtocolError {
     pub(super) code: &'static str,
     pub(super) message: String,

@@ -7,8 +7,11 @@ use crate::inventory::{
 };
 use crate::js_batch::native_manual_descriptions;
 use crate::js_facts::{
-    NativeJsFactsStatus, refresh_native_js_facts_session, reuse_native_js_facts_session,
-    scan_native_js_facts, scan_native_js_facts_ephemeral, scan_native_js_facts_ephemeral_bounded,
+    NativeJsFactsStatus, compact_native_js_structural_records,
+    ensure_complete_native_js_structural_records, refresh_native_js_facts_session,
+    refresh_native_js_facts_session_owned, reuse_native_js_facts_session,
+    reuse_native_js_facts_session_owned, scan_native_js_facts, scan_native_js_facts_ephemeral,
+    scan_native_js_facts_ephemeral_bounded, take_complete_native_js_structural_records,
 };
 use crate::project_identity::ProjectIdentity;
 use crate::record_cache::{handle_native_js_record_cache_value, load_native_js_record_cache_raw};
@@ -33,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -59,6 +62,8 @@ use response::{
     success_raw_response, success_response,
 };
 use router::handle_request;
+#[cfg(test)]
+use router::native_query_cache_key;
 use session::*;
 pub use transport::serve_jsonl;
 

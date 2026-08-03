@@ -80,9 +80,17 @@ pub(super) struct NativeProtocolSession {
     // lineage. Reuse this bounded snapshot to avoid spawning `git status` on
     // every changed file; a reconciled source acquisition refreshes it.
     pub(super) persistent_git_metadata: BTreeMap<String, Value>,
+    // Query results are immutable for an exact graph handle. Keep a bounded
+    // process-local memo so repeated MCP/HTTP reads do not clone the complete
+    // fact batch and rebuild the same structural graph on every request.
+    // The key includes the verified facts digest (or session graph handle),
+    // so advancing a graph can never return a result from an older authority.
+    query_results: BTreeMap<String, NativeResponse>,
+    query_result_order: VecDeque<String>,
 }
 
 pub(super) const DEFAULT_NATIVE_SESSION_HISTORY: usize = 2;
+const MAX_NATIVE_QUERY_RESULTS: usize = 256;
 const MAX_NATIVE_SESSION_HISTORY: usize = 1_000;
 
 pub(super) fn parse_session_history_limit(value: Option<&str>) -> Result<usize, String> {
@@ -113,7 +121,28 @@ impl NativeProtocolSession {
             persistent_graph: None,
             persistent_facts: None,
             persistent_git_metadata: BTreeMap::new(),
+            query_results: BTreeMap::new(),
+            query_result_order: VecDeque::new(),
         }
+    }
+
+    pub(super) fn query_result(&self, key: &str) -> Option<NativeResponse> {
+        self.query_results.get(key).cloned()
+    }
+
+    pub(super) fn retain_query_result(&mut self, key: String, result: NativeResponse) {
+        if self.query_results.contains_key(&key) {
+            self.query_results.insert(key, result);
+            return;
+        }
+        while self.query_results.len() >= MAX_NATIVE_QUERY_RESULTS {
+            let Some(expired) = self.query_result_order.pop_front() else {
+                break;
+            };
+            self.query_results.remove(&expired);
+        }
+        self.query_result_order.push_back(key.clone());
+        self.query_results.insert(key, result);
     }
 
     pub(super) fn from_env() -> Result<Self, String> {
