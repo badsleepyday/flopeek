@@ -40,8 +40,14 @@ fn evidence(path: &str, source: &str, start: usize, end: usize) -> NativeJsEvide
 }
 
 fn diagnostics(node: Node<'_>) -> usize {
-    usize::from(node.is_error() || node.is_missing())
-        + children(node).into_iter().map(diagnostics).sum::<usize>()
+    let mut count = 0;
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        count += usize::from(current.is_error() || current.is_missing());
+        let mut cursor = current.walk();
+        stack.extend(current.named_children(&mut cursor));
+    }
+    count
 }
 
 fn script_uses_typescript(script: Node<'_>, source: &str) -> bool {

@@ -179,11 +179,14 @@ fn children(node: Node<'_>) -> Vec<Node<'_>> {
 }
 
 fn tree_diagnostics(node: Node<'_>) -> usize {
-    usize::from(node.is_error() || node.is_missing())
-        + children(node)
-            .into_iter()
-            .map(tree_diagnostics)
-            .sum::<usize>()
+    let mut count = 0;
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        count += usize::from(current.is_error() || current.is_missing());
+        let mut cursor = current.walk();
+        stack.extend(current.named_children(&mut cursor));
+    }
+    count
 }
 
 fn text(node: Node<'_>, source: &str) -> Option<String> {

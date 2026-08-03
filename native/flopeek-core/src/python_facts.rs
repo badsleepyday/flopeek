@@ -173,7 +173,14 @@ fn endpoint(n: Node<'_>, p: &str, s: &str) -> Option<NativeJsEndpoint> {
     })
 }
 fn diag(n: Node<'_>) -> usize {
-    usize::from(n.is_error() || n.is_missing()) + kids(n).into_iter().map(diag).sum::<usize>()
+    let mut count = 0;
+    let mut stack = vec![n];
+    while let Some(current) = stack.pop() {
+        count += usize::from(current.is_error() || current.is_missing());
+        let mut cursor = current.walk();
+        stack.extend(current.named_children(&mut cursor));
+    }
+    count
 }
 fn owner(n: Node<'_>, s: &str) -> Option<NativeJsSymbolReference> {
     let mut x = n.parent();

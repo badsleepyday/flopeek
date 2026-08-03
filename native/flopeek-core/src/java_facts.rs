@@ -38,8 +38,18 @@ fn evidence(path: &str, node: Node<'_>) -> NativeJsEvidence {
 }
 
 fn diagnostics(node: Node<'_>) -> usize {
-    usize::from(node.is_error() || node.is_missing())
-        + children(node).into_iter().map(diagnostics).sum::<usize>()
+    // Walk the tree with one reusable stack.  Building a temporary `Vec` for
+    // every AST node made diagnostics checking dominate cold Java scans on
+    // large repositories even though the result is only a count of recovery
+    // nodes.
+    let mut count = 0;
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        count += usize::from(current.is_error() || current.is_missing());
+        let mut cursor = current.walk();
+        stack.extend(current.named_children(&mut cursor));
+    }
+    count
 }
 
 fn type_body(node: Node<'_>) -> Option<Node<'_>> {

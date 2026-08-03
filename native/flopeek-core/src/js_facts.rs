@@ -1921,13 +1921,17 @@ fn typescript_tolerates_tree_sitter_error(node: Node<'_>, source: &str) -> bool 
 }
 
 fn diagnostic_count(node: Node<'_>, source: &str) -> usize {
-    usize::from(
-        (node.is_error() || node.is_missing())
-            && !typescript_tolerates_tree_sitter_error(node, source),
-    ) + named_children(node)
-        .into_iter()
-        .map(|child| diagnostic_count(child, source))
-        .sum::<usize>()
+    let mut count = 0;
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        count += usize::from(
+            (current.is_error() || current.is_missing())
+                && !typescript_tolerates_tree_sitter_error(current, source),
+        );
+        let mut cursor = current.walk();
+        stack.extend(current.named_children(&mut cursor));
+    }
+    count
 }
 
 fn structural_facts(path: &str, source: &str, root: Node<'_>) -> NativeJsStructuralFacts {
