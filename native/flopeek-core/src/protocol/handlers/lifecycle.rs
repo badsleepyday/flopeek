@@ -838,7 +838,7 @@ pub(in crate::protocol) fn reconstruct_structural_fact_patch(
                 .to_string(),
         });
     }
-    ensure_persistent_facts(session, connection, &project_id, &base_digest)?;
+    ensure_persistent_facts_for_patch(session, connection, &project_id, &base_digest)?;
     let mut batch = patch
         .get("batch")
         .and_then(Value::as_object)

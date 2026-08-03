@@ -289,6 +289,30 @@ pub(super) fn ensure_persistent_facts(
     project_id: &str,
     facts_digest: &str,
 ) -> Result<(), NativeProtocolError> {
+    ensure_persistent_facts_inner(session, connection, project_id, facts_digest, true)
+}
+
+// A compact fact patch validates the reconstructed complete batch immediately
+// before promotion. Loading its verified base into the process cache must not
+// hash and validate the same unchanged records a second time; the final patch
+// validation remains the single integrity proof for both unchanged and changed
+// records.
+pub(super) fn ensure_persistent_facts_for_patch(
+    session: &mut NativeProtocolSession,
+    connection: &rusqlite::Connection,
+    project_id: &str,
+    facts_digest: &str,
+) -> Result<(), NativeProtocolError> {
+    ensure_persistent_facts_inner(session, connection, project_id, facts_digest, false)
+}
+
+fn ensure_persistent_facts_inner(
+    session: &mut NativeProtocolSession,
+    connection: &rusqlite::Connection,
+    project_id: &str,
+    facts_digest: &str,
+    validate_payload: bool,
+) -> Result<(), NativeProtocolError> {
     let current =
         current_complete_graph(connection, project_id).map_err(|error| NativeProtocolError {
             code: "store-read-failed",
@@ -316,26 +340,31 @@ pub(super) fn ensure_persistent_facts(
             message: "The current complete graph has no matching cached StructuralFactBatch; submit a full batch."
                 .to_string(),
             })?;
-        let receipt = submit_structural_facts(&payload)?;
-        if receipt.get("factsDigest").and_then(Value::as_str) != Some(facts_digest) {
-            return Err(NativeProtocolError {
-                code: "store-integrity-failed",
-                message: "The cached StructuralFactBatch digest does not match its complete graph."
-                    .to_string(),
-            });
-        }
-        let topology_digest = payload
-            .as_object()
-            .ok_or_else(|| NativeProtocolError {
-                code: "store-integrity-failed",
-                message: "The cached StructuralFactBatch is not an object.".to_string(),
-            })
-            .and_then(|batch| {
-                structural_topology_digest(batch).map_err(|message| NativeProtocolError {
+        let topology_digest = if validate_payload {
+            let receipt = submit_structural_facts(&payload)?;
+            if receipt.get("factsDigest").and_then(Value::as_str) != Some(facts_digest) {
+                return Err(NativeProtocolError {
                     code: "store-integrity-failed",
-                    message,
+                    message:
+                        "The cached StructuralFactBatch digest does not match its complete graph."
+                            .to_string(),
+                });
+            }
+            payload
+                .as_object()
+                .ok_or_else(|| NativeProtocolError {
+                    code: "store-integrity-failed",
+                    message: "The cached StructuralFactBatch is not an object.".to_string(),
                 })
-            })?;
+                .and_then(|batch| {
+                    structural_topology_digest(batch).map_err(|message| NativeProtocolError {
+                        code: "store-integrity-failed",
+                        message,
+                    })
+                })?
+        } else {
+            String::new()
+        };
         session.persistent_facts = Some(NativePersistentFacts {
             project_id: project_id.to_string(),
             facts_digest: facts_digest.to_string(),
