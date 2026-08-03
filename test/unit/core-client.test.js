@@ -1118,6 +1118,10 @@ test("strict Rust source authority parses and resolves a TypeScript graph withou
   assert.equal(createCoreCompatibilityDigest(unchanged), createCoreCompatibilityDigest(unchangedOracle));
   assert.equal(unchanged.state.graphVersion, refreshed.state.graphVersion);
   assert.deepEqual(unchanged.analysis.refresh, unchangedOracle.analysis.refresh);
+  assert.equal(unchanged.state.status, "native-current");
+  assert.equal(unchanged.analysis.graphState.status, "unchanged");
+  assert.equal(unchanged.analysis.graphState.persistence, "sqlite");
+  assert.equal(fs.existsSync(path.join(root, ".flopeek", "graph.json")), false);
 });
 
 test("strict Rust source authority preserves registered inventory-only files in mixed repositories", async (context) => {

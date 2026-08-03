@@ -428,10 +428,24 @@ pub(in crate::protocol) fn reuse_native_persistent_project_no_op(
         "removedFiles": 0,
         "changedPaths": [],
     });
+    envelope["state"]["status"] = Value::String("native-current".to_string());
     envelope["analysis"]["latestDelta"] = Value::Null;
     let public_graph_version = current
         .public_graph_version
         .expect("positive public graph version was checked");
+    envelope["analysis"]["graphState"] = json!({
+        "schemaVersion": "flopeek-native-graph-state/v1",
+        "status": "unchanged",
+        "persistence": "sqlite",
+        "nativeGraphVersion": current.graph_version,
+        "graphVersion": public_graph_version,
+        "materialFingerprint": expected_facts_digest,
+        "sourceFingerprint": envelope["state"]["sourceFingerprint"].clone(),
+        "sourceRevision": envelope["state"]["sourceRevision"].clone(),
+        "updatedAt": envelope["state"]["updatedAt"].clone(),
+        "latestDelta": Value::Null,
+        "limitation": "Native graph versions are retained in the repository-local SQLite store. They identify static graph state and do not prove runtime behavior.",
+    });
     Ok(Some(json!({
         "schemaVersion": "flopeek-native-public-lifecycle/v1",
         "status": "reused",

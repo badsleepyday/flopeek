@@ -647,6 +647,18 @@ fn persistent_native_project_explicit_no_op_reuses_the_session_snapshot_without_
     assert_eq!(reused["receipt"]["stored"], false);
     assert_eq!(reused["sourceRefresh"]["mode"], "no-op-session");
     assert_eq!(reused["sourceRefresh"]["parsedFiles"], 0);
+    assert_eq!(
+        reused["publicGraphReuse"]["envelope"]["state"]["status"],
+        "native-current"
+    );
+    assert_eq!(
+        reused["publicGraphReuse"]["envelope"]["analysis"]["graphState"]["status"],
+        "unchanged"
+    );
+    assert_eq!(
+        reused["publicGraphReuse"]["envelope"]["analysis"]["graphState"]["persistence"],
+        "sqlite"
+    );
     assert_eq!(session.persistent_connections.len(), 1);
     drop(session);
     fs::remove_dir_all(root).unwrap();
