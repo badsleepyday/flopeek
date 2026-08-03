@@ -157,13 +157,12 @@ pub fn open_native_store(root: &Path) -> rusqlite::Result<Connection> {
         PRAGMA journal_mode = WAL;
         PRAGMA synchronous = NORMAL;
         PRAGMA busy_timeout = 5000;
-        -- Keep the complete identity/public projection hot during one
-        -- promotion. The default SQLite page cache is intentionally small
-        -- for general workloads, but a Flopeek graph transaction repeatedly
-        -- reads the same repository-local identity indexes while it writes
-        -- them. This is an in-memory performance hint; it does not weaken
-        -- WAL durability or alter the authoritative schema.
-        PRAGMA cache_size = -32768;
+        -- Keep a bounded repository-local page cache during one promotion.
+        -- Identity writes revisit the same indexes, but the cache must not
+        -- dominate the native process peak on large graphs. This is an
+        -- in-memory performance hint; it does not weaken WAL durability or
+        -- alter the authoritative schema.
+        PRAGMA cache_size = -8192;
         PRAGMA temp_store = MEMORY;
         ",
     )?;
