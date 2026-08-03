@@ -1008,9 +1008,18 @@ pub(in crate::protocol) fn reconstruct_structural_fact_patch(
                 code: "invalid-structural-fact-patch",
                 message: format!(
                     "Structural fact patch record header disagrees for {path}: expected sourceHash={source_hash} sourceScope={source_scope} recordOrder={record_order}, got sourceHash={} sourceScope={} recordOrder={}",
-                    record.get("sourceHash").and_then(Value::as_str).unwrap_or("<missing>"),
-                    record.get("sourceScope").and_then(Value::as_str).unwrap_or("<missing>"),
-                    record.get("recordOrder").and_then(Value::as_u64).map_or_else(|| "<missing>".to_string(), |value| value.to_string()),
+                    record
+                        .get("sourceHash")
+                        .and_then(Value::as_str)
+                        .unwrap_or("<missing>"),
+                    record
+                        .get("sourceScope")
+                        .and_then(Value::as_str)
+                        .unwrap_or("<missing>"),
+                    record
+                        .get("recordOrder")
+                        .and_then(Value::as_u64)
+                        .map_or_else(|| "<missing>".to_string(), |value| value.to_string()),
                 ),
             });
         }

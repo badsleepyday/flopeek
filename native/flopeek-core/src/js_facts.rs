@@ -696,7 +696,13 @@ pub fn refresh_native_js_facts_session_owned(
         normalize_structural_record_orders(&mut next.structural_record_manifest);
     }
     next.structural_records.extend(refreshed_records);
-    normalize_structural_record_orders(&mut next.structural_records);
+    if records_were_complete {
+        // A complete refresh owns the entire collection and may safely
+        // normalize its order. In a compact persistent session this vector
+        // contains only affected records; their recordOrder is already the
+        // global order and must not be renumbered from zero.
+        normalize_structural_record_orders(&mut next.structural_records);
+    }
     // A compact persistent session keeps only changed full records plus
     // headers for the unchanged set. Update the durable equality checkpoint
     // from those changed records so a later reconciliation can still identify
