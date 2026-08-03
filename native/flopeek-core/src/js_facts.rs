@@ -428,22 +428,32 @@ pub fn compact_native_js_source_facts(status: &mut NativeJsFactsStatus) -> Resul
 /// keeping them beside the promoted StructuralFactBatch would create a second
 /// in-memory authority for the same repository state.
 pub fn evict_native_js_source_cache(status: &mut NativeJsFactsStatus) {
+    // Keep a compact, process-local source session after promotion. The old
+    // implementation dropped every parser fact and resolver index, forcing
+    // the next one-file event through a full repository reparse even though
+    // SQLite already held the exact complete batch. Serialize facts one by
+    // one so the long-lived session retains only their compact JSON form; a
+    // later refresh hydrates them while computing the validated affected set.
+    if !status.facts.is_empty() {
+        let facts = std::mem::take(&mut status.facts);
+        status.compacted_facts.clear();
+        for (path, fact) in facts {
+            let payload = serde_json::to_string(&fact)
+                .expect("native parser facts must remain JSON serializable");
+            status.compacted_facts.insert(path, payload);
+        }
+    }
     if status.structural_records_complete {
         status.structural_record_digests =
             native_structural_record_digests(&status.structural_records);
+        let records = std::mem::take(&mut status.structural_records);
+        status.structural_record_manifest = records.iter().map(compact_structural_record).collect();
+    } else {
+        status.structural_records.clear();
     }
-    status.facts.clear();
-    status.compacted_facts.clear();
-    status.resolution.clear();
-    status.reverse_importers.clear();
-    status.importer_targets.clear();
-    status.structural_records.clear();
     status.structural_records.shrink_to_fit();
     status.structural_records_complete = false;
-    status.structural_record_manifest.clear();
     status.structural_record_manifest.shrink_to_fit();
-    status.source_hashes.clear();
-    status.entry_facts = serde_json::Value::Null;
 }
 
 // Refresh one already-initialized no-cache session without re-walking the
@@ -666,6 +676,15 @@ pub fn refresh_native_js_facts_session_owned(
     }
     next.structural_records.extend(refreshed_records);
     normalize_structural_record_orders(&mut next.structural_records);
+    // A compact persistent session keeps only changed full records plus
+    // headers for the unchanged set. Update the durable equality checkpoint
+    // from those changed records so a later reconciliation can still identify
+    // exactly which paths moved without rebuilding every record first.
+    next.structural_record_digests
+        .extend(native_structural_record_digests(&next.structural_records));
+    for path in &removed_paths {
+        next.structural_record_digests.remove(path);
+    }
     next.structural_records_complete = records_were_complete;
     if entry_facts_affected || !added_paths.is_empty() || !removed_paths.is_empty() {
         if !next.structural_records_complete {
