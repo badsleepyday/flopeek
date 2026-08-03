@@ -13,7 +13,7 @@ icu_locale_core = "=2.1.1"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 rayon = "1.11.0"
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = { version = "1.0.149", features = ["raw_value"] }
+serde_json = { version = "1.0.149", features = ["raw_value", "preserve_order"] }
 sha2 = "0.10.9"
 syn = { version = "2.0.117", features = ["full", "visit"] }
 tree-sitter = "0.25.10"

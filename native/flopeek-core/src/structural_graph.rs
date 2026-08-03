@@ -250,6 +250,39 @@ pub struct StructuralGraphProjection {
     pub limitation: &'static str,
 }
 
+/// Convert an assembled graph into its persistent JSON projection while
+/// consuming nodes and edges one at a time. Serde's ordinary borrowed
+/// `to_value(&graph)` keeps the complete typed graph alive while allocating a
+/// second complete JSON graph; this transfer bounds that overlap.
+pub fn structural_graph_projection_into_value(
+    graph: StructuralGraphProjection,
+) -> Result<Value, String> {
+    let StructuralGraphProjection {
+        schema_version,
+        nodes,
+        edges,
+        canonical_json,
+        limitation,
+    } = graph;
+    let nodes = nodes
+        .into_iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let edges = edges
+        .into_iter()
+        .map(serde_json::to_value)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    Ok(json!({
+        "schemaVersion": schema_version,
+        "nodes": nodes,
+        "edges": edges,
+        "canonicalJson": canonical_json,
+        "limitation": limitation,
+    }))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct StructuralGraphSnapshot {
     pub nodes: Vec<StructuralGraphNode>,
@@ -556,46 +589,61 @@ fn integration_metadata(
     Value::Object(metadata)
 }
 
-type EdgeMetadataFacts = BTreeMap<String, (Option<Value>, Option<Value>)>;
+#[derive(Clone, Copy)]
+enum EdgeConfidence<'a> {
+    Static(&'static str),
+    Borrowed(&'a Value),
+}
+
+#[derive(Clone, Copy)]
+struct EdgeMetadataFact<'a> {
+    confidence: Option<EdgeConfidence<'a>>,
+    evidence: Option<&'a Value>,
+}
+
+type EdgeMetadataFacts<'a> = BTreeMap<String, EdgeMetadataFact<'a>>;
 
 fn edge_metadata_key(source: &str, target: &str, edge_type: &str) -> String {
     format!("{source}\0{target}\0{edge_type}")
 }
 
-fn add_edge_metadata(
-    facts: &mut EdgeMetadataFacts,
+fn add_edge_metadata<'a>(
+    facts: &mut EdgeMetadataFacts<'a>,
     source: String,
     target: String,
     edge_type: &str,
-    confidence: Option<Value>,
-    evidence: Option<Value>,
+    confidence: Option<EdgeConfidence<'a>>,
+    evidence: Option<&'a Value>,
 ) {
     facts.insert(
         edge_metadata_key(&source, &target, edge_type),
-        (confidence, evidence),
+        EdgeMetadataFact {
+            confidence,
+            evidence,
+        },
     );
 }
 
-fn exact_edge_metadata(evidence: Option<&Value>) -> (Option<Value>, Option<Value>) {
-    (Some(Value::String("exact".to_string())), evidence.cloned())
+fn exact_edge_metadata(evidence: Option<&Value>) -> (Option<EdgeConfidence<'_>>, Option<&Value>) {
+    (Some(EdgeConfidence::Static("exact")), evidence)
 }
 
 // Most edge metadata is already attached to the parser fact that creates the
 // edge. Reconstruct its key locally instead of receiving a second global map
 // whose long source/target IDs and repeated evidence dominate JSONL payloads.
 // Entry adapters remain exceptional and are supplied through entryEdgeMetadata.
-fn record_edge_metadata(batch: &serde_json::Map<String, Value>) -> EdgeMetadataFacts {
+fn record_edge_metadata(batch: &serde_json::Map<String, Value>) -> EdgeMetadataFacts<'_> {
     let mut facts = EdgeMetadataFacts::new();
     let records = batch
         .get("records")
         .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
     let mut symbols = BTreeMap::new();
     let mut runtime_nodes = BTreeMap::new();
     let mut endpoints = BTreeMap::new();
 
-    for record in &records {
+    for record in records {
         let (Some(_record), Some(relative_path), Some(result)) = (
             record.as_object(),
             record
@@ -667,16 +715,16 @@ fn record_edge_metadata(batch: &serde_json::Map<String, Value>) -> EdgeMetadataF
             );
             let confidence = symbol
                 .get("confidence")
-                .cloned()
-                .unwrap_or_else(|| Value::String("exact".to_string()));
-            let evidence = symbol.get("evidence").cloned();
+                .map(EdgeConfidence::Borrowed)
+                .unwrap_or(EdgeConfidence::Static("exact"));
+            let evidence = symbol.get("evidence");
             add_edge_metadata(
                 &mut facts,
                 symbol_id.clone(),
                 file_id.clone(),
                 "declares",
-                Some(confidence.clone()),
-                evidence.clone(),
+                Some(confidence),
+                evidence,
             );
             add_edge_metadata(
                 &mut facts,
@@ -690,7 +738,7 @@ fn record_edge_metadata(batch: &serde_json::Map<String, Value>) -> EdgeMetadataF
     }
 
     let mut introduced_go_packages = BTreeSet::new();
-    for record in &records {
+    for record in records {
         let (Some(_record), Some(relative_path), Some(result)) = (
             record.as_object(),
             record
@@ -781,8 +829,8 @@ fn record_edge_metadata(batch: &serde_json::Map<String, Value>) -> EdgeMetadataF
                             package_id.clone(),
                             public_file_node_id(path),
                             "contains",
-                            confidence.clone(),
-                            evidence.clone(),
+                            confidence,
+                            evidence,
                         );
                     }
                 }
@@ -840,19 +888,24 @@ fn record_edge_metadata(batch: &serde_json::Map<String, Value>) -> EdgeMetadataF
                 endpoint_id,
                 target,
                 "handles",
-                Some(endpoint.get("confidence").cloned().unwrap_or_else(|| {
-                    Value::String(if optional(endpoint, "handlerName").is_some() {
-                        "exact".to_string()
-                    } else {
-                        "likely".to_string()
-                    })
-                })),
-                endpoint.get("evidence").cloned(),
+                Some(
+                    endpoint
+                        .get("confidence")
+                        .map(EdgeConfidence::Borrowed)
+                        .unwrap_or(EdgeConfidence::Static(
+                            if optional(endpoint, "handlerName").is_some() {
+                                "exact"
+                            } else {
+                                "likely"
+                            },
+                        )),
+                ),
+                endpoint.get("evidence"),
             );
         }
     }
 
-    for record in &records {
+    for record in records {
         let (Some(_record), Some(relative_path), Some(result)) = (
             record.as_object(),
             record
@@ -1030,7 +1083,7 @@ fn record_edge_metadata(batch: &serde_json::Map<String, Value>) -> EdgeMetadataF
 
 fn edge_metadata(
     batch: &serde_json::Map<String, Value>,
-    facts: &EdgeMetadataFacts,
+    facts: &EdgeMetadataFacts<'_>,
     source: &str,
     target: &str,
     edge_type: &str,
@@ -1048,7 +1101,13 @@ fn edge_metadata(
         );
     }
     if let Some(metadata) = facts.get(&key) {
-        return metadata.clone();
+        return (
+            metadata.confidence.map(|confidence| match confidence {
+                EdgeConfidence::Static(value) => Value::String(value.to_string()),
+                EdgeConfidence::Borrowed(value) => value.clone(),
+            }),
+            metadata.evidence.cloned(),
+        );
     }
     let Some(metadata) = batch
         .get("entryEdgeMetadata")
@@ -2179,30 +2238,48 @@ pub fn structural_graph_projection_from_parts(
         let right_key = format!("{}\0{}\0{}", right.source, right.target, right.edge_type);
         javascript_ascii_cmp(&left_key, &right_key)
     });
-    let canonical_nodes: Vec<Value> = nodes
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CanonicalNode<'a> {
+        id: &'a str,
+        kind: &'a str,
+        node_type: &'a str,
+        path: &'a Option<String>,
+    }
+    #[derive(Serialize)]
+    struct CanonicalEdge<'a> {
+        source: &'a str,
+        target: &'a str,
+        #[serde(rename = "type")]
+        edge_type: &'a str,
+    }
+    #[derive(Serialize)]
+    struct CanonicalGraph<'a> {
+        edges: Vec<CanonicalEdge<'a>>,
+        nodes: Vec<CanonicalNode<'a>>,
+    }
+    let canonical_nodes = nodes
         .iter()
-        .map(|node| {
-            json!({
-                "id": &node.id,
-                "kind": &node.kind,
-                "nodeType": &node.node_type,
-                "path": &node.path,
-            })
+        .map(|node| CanonicalNode {
+            id: &node.id,
+            kind: &node.kind,
+            node_type: &node.node_type,
+            path: &node.path,
         })
-        .collect();
-    let canonical_edges: Vec<Value> = edges
+        .collect::<Vec<_>>();
+    let canonical_edges = edges
         .iter()
-        .map(|edge| {
-            json!({
-                "source": &edge.source,
-                "target": &edge.target,
-                "type": &edge.edge_type,
-            })
+        .map(|edge| CanonicalEdge {
+            source: &edge.source,
+            target: &edge.target,
+            edge_type: &edge.edge_type,
         })
-        .collect();
-    let canonical_json =
-        serde_json::to_string(&json!({ "edges": canonical_edges, "nodes": canonical_nodes }))
-            .map_err(|error| format!("Unable to canonicalize native structural graph: {error}"))?;
+        .collect::<Vec<_>>();
+    let canonical_json = serde_json::to_string(&CanonicalGraph {
+        edges: canonical_edges,
+        nodes: canonical_nodes,
+    })
+    .map_err(|error| format!("Unable to canonicalize native structural graph: {error}"))?;
     Ok(StructuralGraphProjection {
         schema_version: STRUCTURAL_GRAPH_SCHEMA,
         nodes,

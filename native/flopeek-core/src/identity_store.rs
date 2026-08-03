@@ -422,7 +422,7 @@ pub(crate) fn sync_identity_v2(
             .and_then(|owner| index.get(owner))
             .map(|owner_index| resolved[*owner_index].uid);
         let fact = &resolved[node_index].fact;
-        let discriminator = fact.node_type.as_deref().filter(|value| {
+        let discriminator = fact.node_type.filter(|value| {
             !value.is_empty()
                 && value.bytes().all(|byte| {
                     byte.is_ascii_lowercase()
@@ -432,15 +432,13 @@ pub(crate) fn sync_identity_v2(
         });
         let semantic = semantic_identity(SemanticIdentityInput {
             project_uid: &project_uid,
-            kind: &fact.kind,
-            language: fact.language.as_deref(),
+            kind: fact.kind,
+            language: fact.language,
             ecosystem: None,
-            path: fact.path.as_deref().filter(|path| *path != "."),
-            qualified_name: (fact.kind != "file")
-                .then_some(fact.label.as_deref())
-                .flatten(),
+            path: fact.path.filter(|path| *path != "."),
+            qualified_name: (fact.kind != "file").then_some(fact.label).flatten(),
             owner_uid: owner_uid.as_ref(),
-            signature: fact.signature.as_deref(),
+            signature: fact.signature,
             discriminator,
         })
         .map_err(conversion_error)?;
@@ -519,7 +517,7 @@ pub(crate) fn sync_identity_v2(
             continue;
         }
         let fact = &resolved[node_index].fact;
-        let discriminator = fact.node_type.as_deref().filter(|value| {
+        let discriminator = fact.node_type.filter(|value| {
             !value.is_empty()
                 && value.bytes().all(|byte| {
                     byte.is_ascii_lowercase()
@@ -530,13 +528,13 @@ pub(crate) fn sync_identity_v2(
         resolved[node_index].semantic = Some(
             semantic_identity(SemanticIdentityInput {
                 project_uid: &project_uid,
-                kind: &fact.kind,
-                language: fact.language.as_deref(),
+                kind: fact.kind,
+                language: fact.language,
                 ecosystem: None,
-                path: fact.path.as_deref().filter(|path| *path != "."),
-                qualified_name: fact.label.as_deref(),
+                path: fact.path.filter(|path| *path != "."),
+                qualified_name: fact.label,
                 owner_uid: owner_uid.as_ref(),
-                signature: fact.signature.as_deref(),
+                signature: fact.signature,
                 discriminator,
             })
             .map_err(conversion_error)?,
@@ -626,7 +624,7 @@ pub(crate) fn sync_identity_v2(
         let revision = revision_hash(RevisionIdentityInput {
             semantic,
             lexical_owner_uid: owner_uid,
-            display_name: fact.label.as_deref(),
+            display_name: fact.label,
             source_sha256,
             content_blake3,
             evidence: fact.evidence,
@@ -663,7 +661,7 @@ pub(crate) fn sync_identity_v2(
              VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![node_pk, graph_version, semantic.hash().as_bytes().as_slice(), semantic.canonical(), revision.as_bytes().as_slice(),
                 source_sha256.map(<[u8; 32]>::as_slice), content_blake3.map(<[u8; 32]>::as_slice), fact.path,
-                (fact.kind != "file").then_some(fact.label.as_deref()).flatten(), fact.label, fact.signature,
+                (fact.kind != "file").then_some(fact.label).flatten(), fact.label, fact.signature,
                 node.owner_public_id.as_ref().and_then(|owner| public_to_pk.get(owner)).copied(),
                 start_line, start_column, end_line, end_column, metadata_json],
         )?;
@@ -671,13 +669,15 @@ pub(crate) fn sync_identity_v2(
 
     let canonical_node_pks = sync_canonical_symbols(
         transaction,
-        project_pk,
-        &project_uid,
-        graph_version,
-        structural_batch,
-        &public_to_pk,
-        &public_to_uid,
-        None,
+        CanonicalSymbolSync {
+            project_pk,
+            project_uid: &project_uid,
+            graph_version,
+            structural_batch,
+            public_to_pk: &public_to_pk,
+            public_to_uid: &public_to_uid,
+            changed_record_paths: None,
+        },
     )?;
     let canonical_external_pks = sync_canonical_external_import_roots(
         transaction,
@@ -772,15 +772,22 @@ pub(crate) fn sync_identity_v2_changed_records(
         public_to_pk.insert(fact.public_id.to_string(), node_pk);
         public_to_uid.insert(fact.public_id.to_string(), uid);
     }
+    // Parser symbols share the public node ID but their durable semantic
+    // identity is canonicalized by `sync_canonical_symbols` below (class,
+    // method, overload owner, language). Comparing those rows against the
+    // coarser public `kind: symbol` projection is invalid. Update public file
+    // revisions here and let the canonical-symbol pass own symbol revisions.
     for fact in facts.into_iter().filter(|fact| {
-        fact.path
-            .as_ref()
-            .is_some_and(|path| changed_record_paths.contains(*path))
+        fact.kind == "file"
+            && fact
+                .path
+                .as_ref()
+                .is_some_and(|path| changed_record_paths.contains(*path))
     }) {
         let node_pk = public_to_pk[fact.public_id];
         let owner_public_id = owners.get(fact.public_id);
         let owner_uid = owner_public_id.and_then(|owner| public_to_uid.get(owner));
-        let discriminator = fact.node_type.as_deref().filter(|value| {
+        let discriminator = fact.node_type.filter(|value| {
             !value.is_empty()
                 && value.bytes().all(|byte| {
                     byte.is_ascii_lowercase()
@@ -790,15 +797,13 @@ pub(crate) fn sync_identity_v2_changed_records(
         });
         let semantic = semantic_identity(SemanticIdentityInput {
             project_uid: &project_uid,
-            kind: &fact.kind,
-            language: fact.language.as_deref(),
+            kind: fact.kind,
+            language: fact.language,
             ecosystem: None,
-            path: fact.path.as_deref().filter(|path| *path != "."),
-            qualified_name: (fact.kind != "file")
-                .then_some(fact.label.as_deref())
-                .flatten(),
+            path: fact.path.filter(|path| *path != "."),
+            qualified_name: (fact.kind != "file").then_some(fact.label).flatten(),
             owner_uid,
-            signature: fact.signature.as_deref(),
+            signature: fact.signature,
             discriminator,
         })
         .map_err(conversion_error)?;
@@ -818,9 +823,13 @@ pub(crate) fn sync_identity_v2_changed_records(
             || stored_identity.1 != semantic.canonical()
             || stored_identity.2 != "active"
         {
-            return Err(invalid_query(
-                "source-only identity refresh changed a durable node identity",
-            ));
+            return Err(invalid_query(format!(
+                "source-only identity refresh changed durable file identity {} (hashMatch={}, canonicalMatch={}, status={})",
+                fact.public_id,
+                stored_identity.0.as_slice() == semantic.hash().as_bytes(),
+                stored_identity.1 == semantic.canonical(),
+                stored_identity.2,
+            )));
         }
         let source_sha256 = fact.path.and_then(|path| source_hashes.get(path));
         let content_blake3 = (fact.kind == "file")
@@ -830,7 +839,7 @@ pub(crate) fn sync_identity_v2_changed_records(
         let revision = revision_hash(RevisionIdentityInput {
             semantic: &semantic,
             lexical_owner_uid: owner_uid,
-            display_name: fact.label.as_deref(),
+            display_name: fact.label,
             source_sha256,
             content_blake3,
             evidence: fact.evidence,
@@ -867,34 +876,49 @@ pub(crate) fn sync_identity_v2_changed_records(
              VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![node_pk, graph_version, semantic.hash().as_bytes().as_slice(), semantic.canonical(), revision.as_bytes().as_slice(),
                 source_sha256.map(<[u8; 32]>::as_slice), content_blake3.map(<[u8; 32]>::as_slice), fact.path,
-                (fact.kind != "file").then_some(fact.label.as_deref()).flatten(), fact.label, fact.signature,
+                (fact.kind != "file").then_some(fact.label).flatten(), fact.label, fact.signature,
                 owner_public_id.and_then(|owner| public_to_pk.get(owner)).copied(),
                 start_line, start_column, end_line, end_column, metadata_json],
         )?;
     }
     sync_canonical_symbols(
         transaction,
-        project_pk,
-        &project_uid,
-        graph_version,
-        structural_batch,
-        &public_to_pk,
-        &public_to_uid,
-        Some(changed_record_paths),
+        CanonicalSymbolSync {
+            project_pk,
+            project_uid: &project_uid,
+            graph_version,
+            structural_batch,
+            public_to_pk: &public_to_pk,
+            public_to_uid: &public_to_uid,
+            changed_record_paths: Some(changed_record_paths),
+        },
     )?;
     Ok(())
 }
 
+struct CanonicalSymbolSync<'a> {
+    project_pk: i64,
+    project_uid: &'a ProjectUid,
+    graph_version: i64,
+    structural_batch: Option<&'a Value>,
+    public_to_pk: &'a HashMap<String, i64>,
+    public_to_uid: &'a HashMap<String, NodeUid>,
+    changed_record_paths: Option<&'a BTreeSet<String>>,
+}
+
 fn sync_canonical_symbols(
     transaction: &Transaction<'_>,
-    project_pk: i64,
-    project_uid: &ProjectUid,
-    graph_version: i64,
-    structural_batch: Option<&Value>,
-    public_to_pk: &HashMap<String, i64>,
-    public_to_uid: &HashMap<String, NodeUid>,
-    changed_record_paths: Option<&BTreeSet<String>>,
+    sync: CanonicalSymbolSync<'_>,
 ) -> rusqlite::Result<HashSet<i64>> {
+    let CanonicalSymbolSync {
+        project_pk,
+        project_uid,
+        graph_version,
+        structural_batch,
+        public_to_pk,
+        public_to_uid,
+        changed_record_paths,
+    } = sync;
     let mut current_node_pks = HashSet::new();
     let mut current_external_ids = HashSet::new();
     for record in structural_batch

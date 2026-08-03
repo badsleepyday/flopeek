@@ -14,9 +14,11 @@ use crate::source_text::read_source_text;
 use crate::store::open_native_store;
 use icu_collator::{Collator, CollatorBorrowed};
 use icu_locale_core::locale;
+use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -27,6 +29,22 @@ use tree_sitter::{Language, Node, Parser};
 pub const NATIVE_JS_FACTS_SCHEMA: &str = "flopeek-native-js-facts/v2";
 // This must advance when a cached fact's observable structural semantics change.
 pub const NATIVE_JS_ADAPTER_VERSION: &str = "native-tree-sitter-source/v19";
+
+fn with_native_parser_pool<Operation, Output>(operation: Operation) -> Result<Output, String>
+where
+    Operation: FnOnce() -> Output + Send,
+    Output: Send,
+{
+    // Parser work owns its syntax tree and source buffer on the heap and does
+    // not require Rayon's multi-megabyte default worker stacks. Use a bounded,
+    // operation-local pool so parser threads and their stacks are gone before
+    // the long-lived JSONL session reaches its steady state.
+    let pool = ThreadPoolBuilder::new()
+        .stack_size(512 * 1024)
+        .build()
+        .map_err(|error| format!("Unable to create native parser worker pool: {error}"))?;
+    Ok(pool.install(operation))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeJsFacts {
@@ -218,7 +236,16 @@ pub struct NativeJsFactsStatus {
     pub scope_source: String,
     pub flow_entries_tests: bool,
     pub flow_entries_fixtures: bool,
+    /// Digest of the last batch atomically promoted for this source session.
+    /// The complete batch remains authoritative in SQLite and is loaded only
+    /// while reconstructing a verified incremental patch.
+    pub promoted_facts_digest: Option<String>,
+    /// Compact equality checkpoint for durable source-cache reconciliation.
+    pub structural_record_digests: BTreeMap<String, String>,
     pub facts: BTreeMap<String, NativeJsFacts>,
+    /// Compact derived cache used between persistent refreshes. SQLite remains
+    /// authoritative for promoted graph state.
+    pub compacted_facts: BTreeMap<String, String>,
     /// Public SHA-256 hashes already read during this process. Unlike the
     /// inventory's durable BLAKE3 detector, these are session-local graph
     /// contract values and avoid reopening unchanged sources on refresh.
@@ -348,18 +375,75 @@ pub fn reuse_native_js_facts_session(previous: &NativeJsFactsStatus) -> NativeJs
 pub fn reuse_native_js_facts_session_owned(mut next: NativeJsFactsStatus) -> NativeJsFactsStatus {
     next.initial_scan = false;
     next.parsed_files = 0;
-    next.reused_files = next.facts.len();
-    next.failed_files = next
-        .facts
-        .values()
-        .filter(|fact| fact.status == "parse-failed")
-        .count();
+    next.reused_files = next.candidate_paths.len();
     next.removed_facts = 0;
     next.changed_paths.clear();
     next.reused_paths = next.candidate_paths.clone();
     next.removed_paths.clear();
     next.changed_record_paths.clear();
     next
+}
+
+pub fn hydrate_native_js_source_facts(status: &mut NativeJsFactsStatus) -> Result<(), String> {
+    if status.facts.len() == status.candidate_paths.len() {
+        return Ok(());
+    }
+    for (path, payload) in std::mem::take(&mut status.compacted_facts) {
+        let fact = serde_json::from_str(&payload)
+            .map_err(|error| format!("Invalid compacted native parser fact for {path}: {error}"))?;
+        status.facts.insert(path, fact);
+    }
+    let missing = status
+        .candidate_paths
+        .iter()
+        .filter(|path| !status.facts.contains_key(*path))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(format!(
+            "Persistent source cache is missing facts for: {}.",
+            missing.join(", ")
+        ));
+    }
+    Ok(())
+}
+
+pub fn compact_native_js_source_facts(status: &mut NativeJsFactsStatus) -> Result<(), String> {
+    status.compacted_facts = status
+        .facts
+        .iter()
+        .map(|(path, fact)| {
+            serde_json::to_string(fact)
+                .map(|payload| (path.clone(), payload))
+                .map_err(|error| error.to_string())
+        })
+        .collect::<Result<_, _>>()?;
+    status.facts.clear();
+    Ok(())
+}
+
+/// Retain only the lightweight lineage needed to recognize this process's
+/// promoted source session. Parser facts, resolution indexes, and record
+/// manifests are durable derivatives of SQLite-backed inventory/fact caches;
+/// keeping them beside the promoted StructuralFactBatch would create a second
+/// in-memory authority for the same repository state.
+pub fn evict_native_js_source_cache(status: &mut NativeJsFactsStatus) {
+    if status.structural_records_complete {
+        status.structural_record_digests =
+            native_structural_record_digests(&status.structural_records);
+    }
+    status.facts.clear();
+    status.compacted_facts.clear();
+    status.resolution.clear();
+    status.reverse_importers.clear();
+    status.importer_targets.clear();
+    status.structural_records.clear();
+    status.structural_records.shrink_to_fit();
+    status.structural_records_complete = false;
+    status.structural_record_manifest.clear();
+    status.structural_record_manifest.shrink_to_fit();
+    status.source_hashes.clear();
+    status.entry_facts = serde_json::Value::Null;
 }
 
 // Refresh one already-initialized no-cache session without re-walking the
@@ -700,8 +784,20 @@ pub fn take_complete_native_js_structural_records(
         .iter()
         .map(compact_structural_record)
         .collect();
+    status.structural_record_digests = native_structural_record_digests(&status.structural_records);
     status.structural_records_complete = false;
     Ok(std::mem::take(&mut status.structural_records))
+}
+
+pub fn native_structural_record_digests(records: &[serde_json::Value]) -> BTreeMap<String, String> {
+    records
+        .iter()
+        .filter_map(|record| {
+            let path = record.get("relativePath")?.as_str()?.to_string();
+            let bytes = serde_json::to_vec(record).ok()?;
+            Some((path, format!("sha256:{:x}", Sha256::digest(bytes))))
+        })
+        .collect()
 }
 
 fn compact_structural_record(record: &serde_json::Value) -> serde_json::Value {
@@ -2116,29 +2212,32 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
     // collection order deterministic by first collecting the indexed Rayon
     // results and merging them in candidate order below; SQLite remains a
     // single writer transaction after the parallel work completes.
-    let parsed_candidates = candidates
-        .par_iter()
-        .map(|(path, source_hash)| {
-            let cached = cached_facts
-                .get(&(path.clone(), source_hash.clone()))
-                .cloned();
-            if let Some(payload) = cached {
-                let fact = serde_json::from_str(&payload).map_err(|error| {
-                    format!("Invalid cached native JavaScript parser fact for {path}: {error}")
-                })?;
-                Ok((path.clone(), source_hash.clone(), fact, None))
-            } else {
-                let source = read_source_text(project_root.join(path)).map_err(|error| {
-                    format!("Unable to read JavaScript/TypeScript source {path}: {error}")
-                })?;
-                let fact = parse_native_js_facts(path, &source).ok_or_else(|| {
-                    format!("No native JavaScript/TypeScript parser is registered for {path}.")
-                })?;
-                let payload = serde_json::to_string(&fact).map_err(|error| error.to_string())?;
-                Ok((path.clone(), source_hash.clone(), fact, Some(payload)))
-            }
-        })
-        .collect::<Vec<Result<(String, String, NativeJsFacts, Option<String>), String>>>();
+    let parsed_candidates = with_native_parser_pool(|| {
+        candidates
+            .par_iter()
+            .map(|(path, source_hash)| {
+                let cached = cached_facts
+                    .get(&(path.clone(), source_hash.clone()))
+                    .cloned();
+                if let Some(payload) = cached {
+                    let fact = serde_json::from_str(&payload).map_err(|error| {
+                        format!("Invalid cached native JavaScript parser fact for {path}: {error}")
+                    })?;
+                    Ok((path.clone(), source_hash.clone(), fact, None))
+                } else {
+                    let source = read_source_text(project_root.join(path)).map_err(|error| {
+                        format!("Unable to read JavaScript/TypeScript source {path}: {error}")
+                    })?;
+                    let fact = parse_native_js_facts(path, &source).ok_or_else(|| {
+                        format!("No native JavaScript/TypeScript parser is registered for {path}.")
+                    })?;
+                    let payload =
+                        serde_json::to_string(&fact).map_err(|error| error.to_string())?;
+                    Ok((path.clone(), source_hash.clone(), fact, Some(payload)))
+                }
+            })
+            .collect::<Vec<Result<(String, String, NativeJsFacts, Option<String>), String>>>()
+    })?;
     let mut parsed_files = 0;
     let mut reused_files = 0;
     let mut failed_files = 0;
@@ -2221,7 +2320,10 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
         scope_source: inventory.scope_source,
         flow_entries_tests: scope.flow_entries_tests,
         flow_entries_fixtures: scope.flow_entries_fixtures,
+        promoted_facts_digest: None,
+        structural_record_digests: BTreeMap::new(),
         facts,
+        compacted_facts: BTreeMap::new(),
         source_hashes: structural_records
             .iter()
             .filter_map(|record| {
@@ -2246,28 +2348,32 @@ fn parse_native_js_paths_parallel(
     paths: &[String],
     prefetched_sources: &BTreeMap<String, String>,
 ) -> Result<Vec<(String, String, NativeJsFacts)>, String> {
-    let parsed = paths
-        .par_iter()
-        .map(|path| {
-            let parse = |source: &str| -> Result<(String, String, NativeJsFacts), String> {
-                let fact = parse_native_js_facts(path, source).ok_or_else(|| {
-                    format!("No native JavaScript/TypeScript parser is registered for {path}.")
-                })?;
-                Ok((path.clone(), native_public_source_hash(source), fact))
-            };
-            match prefetched_sources.get(path) {
-                // The inventory already owns this text. Parse/hash it by reference so
-                // cold no-cache scans do not duplicate every source buffer per worker.
-                Some(source) => parse(source),
-                None => {
-                    let source = read_source_text(project_root.join(path)).map_err(|error| {
-                        format!("Unable to read JavaScript/TypeScript source {path}: {error}")
+    let parsed =
+        with_native_parser_pool(|| {
+            paths
+                .par_iter()
+                .map(|path| {
+                    let parse =
+                        |source: &str| -> Result<(String, String, NativeJsFacts), String> {
+                            let fact = parse_native_js_facts(path, source).ok_or_else(|| {
+                        format!("No native JavaScript/TypeScript parser is registered for {path}.")
                     })?;
-                    parse(&source)
-                }
-            }
-        })
-        .collect::<Vec<Result<(String, String, NativeJsFacts), String>>>();
+                            Ok((path.clone(), native_public_source_hash(source), fact))
+                        };
+                    match prefetched_sources.get(path) {
+                        // The inventory already owns this text. Parse/hash it by reference so
+                        // cold no-cache scans do not duplicate every source buffer per worker.
+                        Some(source) => parse(source),
+                        None => {
+                            let source = read_source_text(project_root.join(path)).map_err(|error| {
+                            format!("Unable to read JavaScript/TypeScript source {path}: {error}")
+                        })?;
+                            parse(&source)
+                        }
+                    }
+                })
+                .collect::<Vec<Result<(String, String, NativeJsFacts), String>>>()
+        })?;
     parsed.into_iter().collect()
 }
 
@@ -2354,7 +2460,10 @@ pub fn scan_native_js_facts_ephemeral(
         scope_source: inventory.scope_source,
         flow_entries_tests: scope.flow_entries_tests,
         flow_entries_fixtures: scope.flow_entries_fixtures,
+        promoted_facts_digest: None,
+        structural_record_digests: BTreeMap::new(),
         facts,
+        compacted_facts: BTreeMap::new(),
         source_hashes,
         resolution,
         reverse_importers,
@@ -2469,7 +2578,10 @@ pub fn scan_native_js_facts_ephemeral_bounded(
         scope_source: scope.source,
         flow_entries_tests: scope.flow_entries_tests,
         flow_entries_fixtures: scope.flow_entries_fixtures,
+        promoted_facts_digest: None,
+        structural_record_digests: BTreeMap::new(),
         facts,
+        compacted_facts: BTreeMap::new(),
         source_hashes,
         resolution,
         reverse_importers,

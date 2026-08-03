@@ -3,7 +3,7 @@ use super::{
     build_isolated_incremental_graph, get_native_database_open_evidence, handle_request,
     hydrate_cached_query_batch, hydrate_session_query_batch, isolated_structural_change_path,
     native_entry_source_nodes, native_query_cache_key, parse_session_history_limit,
-    refresh_native_js_session_graph, refresh_native_persistent_project,
+    projection_digest, refresh_native_js_session_graph, refresh_native_persistent_project,
     refresh_native_session_graph, same_canonical_json, serve_jsonl,
     structural_facts_canonical_json, structural_facts_digest, structural_topology_digest,
 };
@@ -14,6 +14,34 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Cursor;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+// Independent Rust oracle for JavaScript core-compatibility `stableJson`:
+// object keys sort recursively, while array order and JSON scalar encoding stay
+// unchanged. Do not depend on serde_json Map's compile-time storage policy.
+fn stable_json(value: &Value) -> String {
+    match value {
+        Value::Array(values) => format!(
+            "[{}]",
+            values.iter().map(stable_json).collect::<Vec<_>>().join(",")
+        ),
+        Value::Object(entries) => {
+            let mut keys = entries.keys().collect::<Vec<_>>();
+            keys.sort_unstable();
+            format!(
+                "{{{}}}",
+                keys.into_iter()
+                    .map(|key| format!(
+                        "{}:{}",
+                        serde_json::to_string(key).expect("object key serializes"),
+                        stable_json(&entries[key])
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        }
+        scalar => serde_json::to_string(scalar).expect("JSON scalar serializes"),
+    }
+}
 
 fn responses(input: &str) -> Vec<Value> {
     let mut output = Vec::new();
@@ -644,7 +672,23 @@ fn canonical_json_equality_ignores_object_member_order_but_not_array_order() {
 }
 
 #[test]
-fn structural_fact_digest_serialization_matches_the_legacy_material_projection() {
+fn projection_digest_survives_sqlite_envelope_component_reassembly_order() {
+    let assembled: Value = serde_json::from_str(
+        r#"{"schemaVersion":"snapshot/v1","nodes":[{"label":"A","id":"a"}],"state":{"status":"complete","version":2}}"#,
+    )
+    .unwrap();
+    let reconstructed: Value = serde_json::from_str(
+        r#"{"state":{"version":2,"status":"complete"},"schemaVersion":"snapshot/v1","nodes":[{"id":"a","label":"A"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        projection_digest(&assembled).unwrap(),
+        projection_digest(&reconstructed).unwrap()
+    );
+}
+
+#[test]
+fn structural_fact_digest_serialization_matches_the_javascript_stable_json_contract() {
     let mut batch = structural_facts(json!({
         "symbols": [{ "type": "function", "name": "checkout" }]
     }));
@@ -668,7 +712,7 @@ fn structural_fact_digest_serialization_matches_the_legacy_material_projection()
         .and_then(Value::as_object_mut)
         .unwrap()
         .remove("graphVersion");
-    let expected = serde_json::to_string(&Value::Object(legacy)).unwrap();
+    let expected = stable_json(&Value::Object(legacy));
     let actual = structural_facts_canonical_json(batch.as_object().unwrap()).unwrap();
     assert_eq!(actual, expected);
     assert_eq!(
@@ -678,7 +722,7 @@ fn structural_fact_digest_serialization_matches_the_legacy_material_projection()
 }
 
 #[test]
-fn structural_topology_digest_serialization_matches_the_legacy_projection() {
+fn structural_topology_digest_serialization_matches_the_stable_json_projection() {
     let mut batch = structural_facts(json!({
         "symbols": [{ "type": "function", "name": "checkout" }]
     }));
@@ -720,7 +764,7 @@ fn structural_topology_digest_serialization_matches_the_legacy_projection() {
     {
         record.as_object_mut().unwrap().remove("sourceHash");
     }
-    let expected = serde_json::to_string(&Value::Object(legacy)).unwrap();
+    let expected = stable_json(&Value::Object(legacy));
     assert_eq!(
         structural_topology_digest(batch.as_object().unwrap()).unwrap(),
         format!("sha256:{:x}", Sha256::digest(expected)),

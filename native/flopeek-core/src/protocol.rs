@@ -7,11 +7,12 @@ use crate::inventory::{
 };
 use crate::js_batch::native_manual_descriptions;
 use crate::js_facts::{
-    NativeJsFactsStatus, compact_native_js_structural_records,
-    ensure_complete_native_js_structural_records, refresh_native_js_facts_session,
-    refresh_native_js_facts_session_owned, reuse_native_js_facts_session,
-    reuse_native_js_facts_session_owned, scan_native_js_facts, scan_native_js_facts_ephemeral,
-    scan_native_js_facts_ephemeral_bounded, take_complete_native_js_structural_records,
+    NativeJsFactsStatus, ensure_complete_native_js_structural_records,
+    evict_native_js_source_cache, hydrate_native_js_source_facts, native_structural_record_digests,
+    refresh_native_js_facts_session, refresh_native_js_facts_session_owned,
+    reuse_native_js_facts_session, reuse_native_js_facts_session_owned, scan_native_js_facts,
+    scan_native_js_facts_ephemeral, scan_native_js_facts_ephemeral_bounded,
+    take_complete_native_js_structural_records,
 };
 use crate::project_identity::ProjectIdentity;
 use crate::record_cache::{handle_native_js_record_cache_value, load_native_js_record_cache_raw};
@@ -29,7 +30,7 @@ use crate::structural_graph::{
     StructuralGraphNode, StructuralGraphProjection, StructuralGraphSnapshot,
     build_structural_graph, javascript_ascii_cmp, javascript_ascii_locale_cmp,
     structural_edge_traversal_order, structural_graph_projection_from_parts,
-    structural_graph_snapshot,
+    structural_graph_projection_into_value, structural_graph_snapshot,
 };
 use serde::ser::{SerializeMap, SerializeSeq, Serializer};
 use serde::{Deserialize, Serialize};

@@ -131,8 +131,10 @@ impl NativeProtocolSession {
     }
 
     pub(super) fn retain_query_result(&mut self, key: String, result: NativeResponse) {
-        if self.query_results.contains_key(&key) {
-            self.query_results.insert(key, result);
+        if let std::collections::btree_map::Entry::Occupied(mut entry) =
+            self.query_results.entry(key.clone())
+        {
+            entry.insert(result);
             return;
         }
         while self.query_results.len() >= MAX_NATIVE_QUERY_RESULTS {
@@ -337,6 +339,7 @@ pub(super) fn ensure_persistent_facts(
 // cache: the current complete graph must still have the requested digest, and
 // a mismatch is deliberately reported so the caller can retry with its exact
 // in-memory batch for a historical graph or concurrent promotion.
+#[cfg(test)]
 pub(super) fn hydrate_cached_query_batch(
     session: &mut NativeProtocolSession,
     params: &mut Value,
@@ -350,6 +353,78 @@ pub(super) fn hydrate_cached_query_batch(
     })
 }
 
+pub(super) fn move_cached_query_batch(
+    session: &mut NativeProtocolSession,
+    params: &mut Value,
+) -> Result<(), NativeProtocolError> {
+    let root = project_root(params)?;
+    with_persistent_session_connection(session, &root, |session, connection| {
+        let project_id = params
+            .get("projectId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| NativeProtocolError {
+                code: "invalid-params",
+                message: "Cached native query requires params.projectId.".to_string(),
+            })?
+            .to_string();
+        let facts_digest = params
+            .get("factsDigest")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| NativeProtocolError {
+                code: "invalid-params",
+                message: "Cached native query requires params.factsDigest.".to_string(),
+            })?
+            .to_string();
+        if let Err(error) = ensure_persistent_facts(session, connection, &project_id, &facts_digest)
+        {
+            if error.code == "structural-fact-patch-miss" {
+                return Err(NativeProtocolError {
+                    code: "native-query-fact-cache-miss",
+                    message: "The requested graph is not the current verified native fact cache."
+                        .to_string(),
+                });
+            }
+            return Err(error);
+        }
+        let cached = session
+            .persistent_facts
+            .as_mut()
+            .filter(|cached| cached.project_id == project_id && cached.facts_digest == facts_digest)
+            .ok_or_else(|| NativeProtocolError {
+                code: "store-read-failed",
+                message: "Verified native fact cache was unavailable after lookup.".to_string(),
+            })?;
+        params
+            .as_object_mut()
+            .ok_or_else(|| NativeProtocolError {
+                code: "invalid-params",
+                message: "Cached native query params must be an object.".to_string(),
+            })?
+            .insert("batch".to_string(), std::mem::take(&mut cached.payload));
+        Ok(())
+    })
+}
+
+pub(super) fn restore_moved_cached_query_batch(
+    session: &mut NativeProtocolSession,
+    params: &mut Value,
+) {
+    let Some(batch) = params
+        .as_object_mut()
+        .and_then(|object| object.remove("batch"))
+    else {
+        return;
+    };
+    if let Some(cached) = session.persistent_facts.as_mut()
+        && cached.payload.is_null()
+    {
+        cached.payload = batch;
+    }
+}
+
+#[cfg(test)]
 pub(super) fn hydrate_cached_query_batch_using_connection(
     session: &mut NativeProtocolSession,
     params: &mut Value,

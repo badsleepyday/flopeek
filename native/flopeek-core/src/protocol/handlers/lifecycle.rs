@@ -6,6 +6,7 @@ pub(in crate::protocol) struct PersistedStructuralGraph {
     public_snapshot: Value,
     public_collection_patch: Option<Value>,
     public_snapshot_materialization_ms: u64,
+    projection_consumed: bool,
 }
 
 const NATIVE_PUBLIC_GRAPH_COLLECTIONS: [(&str, bool); 4] = [
@@ -331,6 +332,7 @@ pub(in crate::protocol) fn persist_reused_structural_projection(
         public_snapshot,
         public_collection_patch: None,
         public_snapshot_materialization_ms,
+        projection_consumed: false,
     })
 }
 
@@ -341,10 +343,11 @@ pub(in crate::protocol) struct PersistStructuralGraphOptions<'a> {
     reuse_previous_projection: bool,
     isolated_incremental_path: Option<&'a str>,
     changed_record_paths: Option<&'a BTreeSet<String>>,
+    consume_cold_projection_into_public: bool,
 }
 
 pub(in crate::protocol) fn persist_structural_graph_internal(
-    params: &Value,
+    params: &mut Value,
     connection: &mut rusqlite::Connection,
     options: PersistStructuralGraphOptions<'_>,
 ) -> Result<PersistedStructuralGraph, NativeProtocolError> {
@@ -392,10 +395,6 @@ pub(in crate::protocol) fn persist_structural_graph_internal(
         })?,
     };
     let native_traversal_order = structural_edge_traversal_order(batch, &graph);
-    let mut projection = serde_json::to_value(&graph).map_err(|error| NativeProtocolError {
-        code: "structural-graph-serialize-failed",
-        message: error.to_string(),
-    })?;
     let graph_assembly_ms = elapsed_ms(assembly_started);
     let flows_started = Instant::now();
     let (primary_tests, primary_fixtures) = configured_flow_scope(batch, "primary");
@@ -420,10 +419,44 @@ pub(in crate::protocol) fn persist_structural_graph_internal(
         .collect::<Result<Vec<_>, _>>()?;
     let flow_lenses_ms = elapsed_ms(flow_lenses_started);
     let flow_assembly_ms = elapsed_ms(flows_started);
+    let flow_context = batch["flowContext"].clone();
+    let lifecycle_context = batch["lifecycleContext"].clone();
+    let public_graph_context = batch["publicGraphContext"].clone();
+    if options.consume_cold_projection_into_public && options.previous_projection.is_none() {
+        let batch = if params.get("batch").is_some() {
+            params.get_mut("batch")
+        } else {
+            Some(&mut *params)
+        }
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| NativeProtocolError {
+            code: "invalid-structural-facts",
+            message: "StructuralFactBatch/v1 must be an object.".to_string(),
+        })?;
+        let records = batch
+            .get_mut("records")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| NativeProtocolError {
+                code: "invalid-structural-facts",
+                message: "StructuralFactBatch/v1 requires records[].".to_string(),
+            })?;
+        for record in records {
+            let payload = serde_json::to_string(record).map_err(|error| NativeProtocolError {
+                code: "structural-graph-serialize-failed",
+                message: error.to_string(),
+            })?;
+            *record = Value::String(payload);
+        }
+    }
     let serialization_started = Instant::now();
-    projection["flowContext"] = batch["flowContext"].clone();
-    projection["lifecycleContext"] = batch["lifecycleContext"].clone();
-    projection["publicGraphContext"] = batch["publicGraphContext"].clone();
+    let mut projection =
+        structural_graph_projection_into_value(graph).map_err(|message| NativeProtocolError {
+            code: "structural-graph-serialize-failed",
+            message,
+        })?;
+    projection["flowContext"] = flow_context;
+    projection["lifecycleContext"] = lifecycle_context;
+    projection["publicGraphContext"] = public_graph_context;
     projection["nativeTraversalOrder"] =
         serde_json::to_value(native_traversal_order).map_err(|error| NativeProtocolError {
             code: "structural-graph-serialize-failed",
@@ -452,20 +485,18 @@ pub(in crate::protocol) fn persist_structural_graph_internal(
     projection["projectId"] = Value::String(project_id.to_string());
     let projection_digest = projection_digest(&projection)?;
     let serialization_ms = elapsed_ms(serialization_started);
-    // Public response construction needs only nodes and edges. Retain this
-    // typed snapshot alongside the JSON persistence projection so a newly
-    // promoted graph is not deserialized from JSON merely to serialize the
-    // equivalent public node/edge response again.
-    let snapshot = StructuralGraphSnapshot {
-        nodes: graph.nodes,
-        edges: graph.edges,
-    };
-    // Build this exactly once for both adjacent-delta comparison and the
-    // public lifecycle response. Reconstructing nodes/edges twice here used
-    // to clone and sort the entire public graph on every changed refresh.
+    let consume_cold_projection_into_public = options.consume_cold_projection_into_public;
     let public_snapshot_started = Instant::now();
-    let public_snapshot = native_public_graph_snapshot_from_snapshot(&snapshot, &projection, None)?;
-    let public_snapshot_materialization_ms = elapsed_ms(public_snapshot_started);
+    let mut public_snapshot = if consume_cold_projection_into_public {
+        Value::Null
+    } else {
+        native_public_graph_snapshot_from_projection(&projection, None)?
+    };
+    let mut public_snapshot_materialization_ms = if consume_cold_projection_into_public {
+        0
+    } else {
+        elapsed_ms(public_snapshot_started)
+    };
     let facts_digest = receipt
         .get("factsDigest")
         .and_then(Value::as_str)
@@ -483,6 +514,11 @@ pub(in crate::protocol) fn persist_structural_graph_internal(
             && current.source_fingerprint == facts_digest
             && current.public_graph_version == Some(public_graph_version)
         {
+            if public_snapshot.is_null() {
+                let materialization_started = Instant::now();
+                public_snapshot = native_public_graph_snapshot_from_projection(&projection, None)?;
+                public_snapshot_materialization_ms = elapsed_ms(materialization_started);
+            }
             return Ok(PersistedStructuralGraph {
                 receipt: json!({
                     "schemaVersion": "flopeek-native-shadow-store-receipt/v1",
@@ -498,6 +534,7 @@ pub(in crate::protocol) fn persist_structural_graph_internal(
                 public_snapshot,
                 public_collection_patch: None,
                 public_snapshot_materialization_ms,
+                projection_consumed: false,
             });
         }
         Some(current)
@@ -582,6 +619,12 @@ pub(in crate::protocol) fn persist_structural_graph_internal(
         code: "store-promote-failed",
         message: error.to_string(),
     })?;
+    let projection_consumed = consume_cold_projection_into_public && previous.is_none();
+    if projection_consumed {
+        let materialization_started = Instant::now();
+        public_snapshot = take_native_public_graph_snapshot_from_projection(&mut projection)?;
+        public_snapshot_materialization_ms = elapsed_ms(materialization_started);
+    }
     let persistence_ms = elapsed_ms(persistence_started);
     Ok(PersistedStructuralGraph {
         receipt: json!({
@@ -599,6 +642,7 @@ pub(in crate::protocol) fn persist_structural_graph_internal(
         public_snapshot,
         public_collection_patch,
         public_snapshot_materialization_ms,
+        projection_consumed,
     })
 }
 
@@ -623,8 +667,9 @@ pub(in crate::protocol) fn persist_structural_graph(
             message: error.to_string(),
         }
     })?;
+    let mut owned_params = params.clone();
     Ok(persist_structural_graph_internal(
-        params,
+        &mut owned_params,
         &mut connection,
         PersistStructuralGraphOptions {
             validated_receipt: None,
@@ -633,6 +678,7 @@ pub(in crate::protocol) fn persist_structural_graph(
             reuse_previous_projection: false,
             isolated_incremental_path: None,
             changed_record_paths: None,
+            consume_cold_projection_into_public: false,
         },
     )?
     .receipt)
@@ -675,7 +721,11 @@ pub(in crate::protocol) fn versioned_native_lifecycle_params(
     state.insert("graphVersion".to_string(), json!(public_graph_version));
     state.insert(
         "status".to_string(),
-        Value::String("native-pending-promotion".to_string()),
+        // This owned batch is persisted atomically and is never observable
+        // between candidate creation and commit. Store the post-commit public
+        // state so SQLite-backed queries and the returned graph expose the
+        // same lifecycle contract after a successful promotion.
+        Value::String("native-advanced".to_string()),
     );
     if !validated_facts_digest.starts_with("sha256:")
         || !is_sha256_hex(&validated_facts_digest[7..])
@@ -1016,9 +1066,12 @@ pub(in crate::protocol) fn persist_native_public_graph_patch_using_connection(
         session,
         &mut next.payload,
         receipt,
-        false,
-        Some(next.topology_digest.clone()),
-        Some(changed_paths),
+        PersistNativePublicGraphOptions {
+            retain_persistent_facts: false,
+            verified_topology_digest: Some(next.topology_digest.clone()),
+            changed_record_paths_override: Some(changed_paths),
+            retain_public_snapshot: true,
+        },
         connection,
     ) {
         Ok(result) => result,
@@ -1029,7 +1082,7 @@ pub(in crate::protocol) fn persist_native_public_graph_patch_using_connection(
     };
     let native_lifecycle_ms = elapsed_ms(native_lifecycle_started);
     let session_cache_started = Instant::now();
-    session.persistent_facts = Some(next);
+    session.persistent_facts = None;
     let session_cache_ms = elapsed_ms(session_cache_started);
     let persistence_ms = elapsed_ms(persistence_started);
     if let Some(profile) = result
@@ -1127,22 +1180,36 @@ pub(in crate::protocol) fn persist_native_public_graph_with_receipt(
         session,
         params,
         receipt,
-        retain_persistent_facts,
-        verified_topology_digest,
-        None,
+        PersistNativePublicGraphOptions {
+            retain_persistent_facts,
+            verified_topology_digest,
+            changed_record_paths_override: None,
+            retain_public_snapshot: true,
+        },
         &mut connection,
     )
+}
+
+pub(in crate::protocol) struct PersistNativePublicGraphOptions {
+    pub(in crate::protocol) retain_persistent_facts: bool,
+    pub(in crate::protocol) verified_topology_digest: Option<String>,
+    pub(in crate::protocol) changed_record_paths_override: Option<BTreeSet<String>>,
+    pub(in crate::protocol) retain_public_snapshot: bool,
 }
 
 pub(in crate::protocol) fn persist_native_public_graph_with_receipt_using_connection(
     session: &mut NativeProtocolSession,
     params: &mut Value,
     receipt: Value,
-    retain_persistent_facts: bool,
-    verified_topology_digest: Option<String>,
-    changed_record_paths_override: Option<BTreeSet<String>>,
+    options: PersistNativePublicGraphOptions,
     connection: &mut rusqlite::Connection,
 ) -> Result<Value, NativeProtocolError> {
+    let PersistNativePublicGraphOptions {
+        retain_persistent_facts,
+        verified_topology_digest,
+        changed_record_paths_override,
+        retain_public_snapshot,
+    } = options;
     let lifecycle_started = Instant::now();
     let preflight_started = Instant::now();
     let changed_record_paths = match changed_record_paths_override {
@@ -1383,6 +1450,7 @@ pub(in crate::protocol) fn persist_native_public_graph_with_receipt_using_connec
             reuse_previous_projection,
             isolated_incremental_path: isolated_incremental_path.as_deref(),
             changed_record_paths: changed_record_paths.as_ref(),
+            consume_cold_projection_into_public: !retain_public_snapshot && current.is_none(),
         },
     )?;
     let native_graph_version = stored
@@ -1393,6 +1461,7 @@ pub(in crate::protocol) fn persist_native_public_graph_with_receipt_using_connec
             code: "store-promote-failed",
             message: "Native persistence receipt is missing graphVersion.".to_string(),
         })?;
+    let projection_consumed = stored.projection_consumed;
     let projection = stored.projection;
     let mut public_graph = stored.public_snapshot;
     let public_collection_patch = stored.public_collection_patch;
@@ -1514,12 +1583,17 @@ pub(in crate::protocol) fn persist_native_public_graph_with_receipt_using_connec
                 snapshot_object.insert(key.clone(), value.clone());
             }
         }
+    } else if projection_consumed {
+        // The complete projection was committed to SQLite before its public
+        // collections were moved into the response. Reload it on demand for a
+        // later refresh instead of retaining a second in-process copy now.
+        session.persistent_graph = None;
     } else {
         session.persistent_graph = Some(NativePersistentGraph {
             project_id: project_id.clone(),
             graph_version: native_graph_version,
             payload: projection,
-            public_snapshot: Some(public_graph.clone()),
+            public_snapshot: retain_public_snapshot.then(|| public_graph.clone()),
         });
     }
     let session_graph_cache_ms = elapsed_ms(session_graph_cache_started);

@@ -84,11 +84,14 @@ pub(super) fn handle_request(
         cached.request_id = Some(request.request_id);
         return (cached, false);
     }
+    let move_persistent_batch = accepts_cached_fact_reference
+        && request.params.get("batch").is_none()
+        && request.params.get("sessionGraph").is_none();
     if accepts_cached_fact_reference && request.params.get("batch").is_none() {
         let hydrate = if request.params.get("sessionGraph").is_some() {
             hydrate_session_query_batch(session, &mut request.params)
         } else {
-            hydrate_cached_query_batch(session, &mut request.params)
+            move_cached_query_batch(session, &mut request.params)
         };
         if let Err(error) = hydrate {
             return (
@@ -532,6 +535,9 @@ pub(super) fn handle_request(
             false,
         ),
     };
+    if move_persistent_batch {
+        restore_moved_cached_query_batch(session, &mut request.params);
+    }
     if let Some(key) = query_cache_key {
         session.retain_query_result(key, routed.0.clone());
     }

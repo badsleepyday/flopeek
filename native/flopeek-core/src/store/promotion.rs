@@ -31,6 +31,10 @@ fn contains_source_body(value: &serde_json::Value) -> bool {
                 "content" | "contents" | "rawsource" | "sourcebody" | "sourcetext" | "text"
             ) || contains_source_body(value)
         }),
+        serde_json::Value::String(raw) if raw.starts_with('{') || raw.starts_with('[') => {
+            serde_json::from_str::<serde_json::Value>(raw)
+                .is_ok_and(|value| contains_source_body(&value))
+        }
         _ => false,
     }
 }
@@ -271,25 +275,34 @@ fn promote_native_structural_batch_cache(
     let mut parsed_records = Vec::with_capacity(records.len());
     let mut next_paths = BTreeSet::new();
     for record in records {
-        let item = record.as_object().ok_or(rusqlite::Error::InvalidQuery)?;
+        let parsed;
+        let item = if let Some(payload) = record.as_str() {
+            parsed = serde_json::from_str::<serde_json::Value>(payload)
+                .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+            parsed.as_object().ok_or(rusqlite::Error::InvalidQuery)?
+        } else {
+            record.as_object().ok_or(rusqlite::Error::InvalidQuery)?
+        };
         let path = item
             .get("relativePath")
             .and_then(serde_json::Value::as_str)
             .filter(|value| !value.is_empty())
-            .ok_or(rusqlite::Error::InvalidQuery)?;
+            .ok_or(rusqlite::Error::InvalidQuery)?
+            .to_string();
         let source_hash = item
             .get("sourceHash")
             .and_then(serde_json::Value::as_str)
             .filter(|value| {
                 value.len() == 64 && value.chars().all(|character| character.is_ascii_hexdigit())
             })
-            .ok_or(rusqlite::Error::InvalidQuery)?;
+            .ok_or(rusqlite::Error::InvalidQuery)?
+            .to_string();
         let record_order = item
             .get("recordOrder")
             .and_then(serde_json::Value::as_i64)
             .filter(|value| *value >= 0)
             .ok_or(rusqlite::Error::InvalidQuery)?;
-        if !next_paths.insert(path.to_string()) {
+        if !next_paths.insert(path.clone()) {
             return Err(rusqlite::Error::InvalidQuery);
         }
         parsed_records.push((path, source_hash, record_order, record));
@@ -323,11 +336,14 @@ fn promote_native_structural_batch_cache(
         // whose header or payload may differ.  Avoid serializing and issuing
         // a guarded UPSERT for all of the other records; a full batch keeps
         // the conservative whole-record behavior.
-        if changed_record_paths.is_some_and(|paths| !paths.contains(path)) {
+        if changed_record_paths.is_some_and(|paths| !paths.contains(&path)) {
             continue;
         }
-        let payload_json = serde_json::to_string(record)
-            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        let payload_json = match record.as_str() {
+            Some(payload) => payload.to_string(),
+            None => serde_json::to_string(record)
+                .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?,
+        };
         upsert.execute(rusqlite::params![
             project_pk,
             path,

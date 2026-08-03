@@ -6,6 +6,14 @@ const readline = require("node:readline");
 const NATIVE_PROTOCOL_VERSION = "flopeek-native-protocol/v1";
 const MAX_STDERR_TAIL_BYTES = 16 * 1024;
 
+function nativeProcessEnvironment(platform = process.platform, environment = process.env, overrides = {}) {
+  const linuxAllocatorDefaults = platform === "linux" ? {
+    MALLOC_ARENA_MAX: environment.MALLOC_ARENA_MAX || "1",
+    MALLOC_TRIM_THRESHOLD_: environment.MALLOC_TRIM_THRESHOLD_ || "131072",
+  } : {};
+  return { ...environment, ...linuxAllocatorDefaults, ...overrides };
+}
+
 class NativeProtocolClientError extends Error {
   constructor(code, message, response = null) {
     super(message);
@@ -28,6 +36,7 @@ class NativeProtocolClient {
     // committed before the timed-out response became observable.
     this.recoveryTimeoutMs = Math.max(1, Number(options.recoveryTimeoutMs) || 30_000);
     this.spawn = options.spawn || defaultSpawn;
+    this.env = { ...(options.env || {}) };
     this.child = null;
     this.lines = null;
     this.pending = new Map();
@@ -61,6 +70,7 @@ class NativeProtocolClient {
       cwd: this.cwd,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
+      env: nativeProcessEnvironment(process.platform, process.env, this.env),
     });
     this.child = child;
     this.lines = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
@@ -272,5 +282,6 @@ class NativeProtocolClient {
 module.exports = {
   NATIVE_PROTOCOL_VERSION,
   NativeProtocolClient,
+  nativeProcessEnvironment,
   NativeProtocolClientError,
 };

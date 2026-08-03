@@ -277,11 +277,38 @@ pub(in crate::protocol) fn load_native_js_facts_status(
         .flatten();
     let status = (if ephemeral {
         scan_native_js_facts_ephemeral(&root, session_project_id)
-    } else if let (Some(previous), Some(paths)) = (previous, changed_paths.as_deref()) {
+    } else if let (Some(mut previous), Some(paths)) = (previous, changed_paths.as_deref()) {
         if paths.is_empty() {
             Ok(reuse_native_js_facts_session_owned(previous))
+        } else if previous.facts.is_empty()
+            && previous.compacted_facts.is_empty()
+            && !previous.candidate_paths.is_empty()
+        {
+            let promoted_facts_digest = previous.promoted_facts_digest.take();
+            let previous_record_digests = std::mem::take(&mut previous.structural_record_digests);
+            scan_native_js_facts(&root).map(|mut reconciled| {
+                reconciled.initial_scan = false;
+                reconciled.changed_paths = paths.to_vec();
+                let next_record_digests =
+                    native_structural_record_digests(&reconciled.structural_records);
+                reconciled.changed_record_paths = next_record_digests
+                    .iter()
+                    .filter(|(path, digest)| previous_record_digests.get(*path) != Some(*digest))
+                    .map(|(path, _)| path.clone())
+                    .chain(
+                        previous_record_digests
+                            .keys()
+                            .filter(|path| !next_record_digests.contains_key(*path))
+                            .cloned(),
+                    )
+                    .collect();
+                reconciled.structural_record_digests = next_record_digests;
+                reconciled.promoted_facts_digest = promoted_facts_digest;
+                reconciled
+            })
         } else {
-            refresh_native_js_facts_session_owned(previous, paths)
+            hydrate_native_js_source_facts(&mut previous)
+                .and_then(|()| refresh_native_js_facts_session_owned(previous, paths))
         }
     } else {
         scan_native_js_facts(&root)
@@ -352,56 +379,52 @@ pub(in crate::protocol) fn native_js_structural_facts(
 
 // A caller that explicitly supplies an empty changed-path list is asserting
 // that its watcher observed no source event.  Once this JSONL process already
-// owns the matching Rust source session and public snapshot, do not rebuild a
-// complete fact envelope merely to rediscover the same SQLite graph.  The
-// SQLite pointer is still read and matched first: another process may have
-// promoted a newer graph, in which case the normal lifecycle path safely
-// re-establishes this process-local cache.
+// owns the matching Rust source session, do not rebuild a complete fact
+// envelope merely to rediscover the same SQLite graph. SQLite remains the
+// authority: its current pointer and payload are matched to the promoted
+// source digest before a compact public envelope is reconstructed.
 pub(in crate::protocol) fn reuse_native_persistent_project_no_op(
     session: &mut NativeProtocolSession,
     root: &Path,
     status: &NativeJsFactsStatus,
 ) -> Result<Option<Value>, NativeProtocolError> {
     let project_id = status.project_identity.project_id.clone();
-    let cached = match (&session.persistent_graph, &session.persistent_facts) {
-        (Some(graph), Some(facts))
-            if graph.project_id == project_id
-                && facts.project_id == project_id
-                && graph.public_snapshot.is_some() =>
-        {
-            (
-                graph.graph_version,
-                facts.facts_digest.clone(),
-                graph
-                    .public_snapshot
-                    .as_ref()
-                    .expect("checked public snapshot")
-                    .clone(),
-            )
-        }
-        _ => return Ok(None),
-    };
-    let current = with_persistent_session_connection(session, root, |_session, connection| {
-        current_complete_graph(connection, &project_id).map_err(|error| NativeProtocolError {
-            code: "store-read-failed",
-            message: error.to_string(),
-        })
-    })?;
-    let Some(current) = current else {
+    let Some(expected_facts_digest) = status.promoted_facts_digest.as_ref() else {
         return Ok(None);
     };
-    if current.graph_version != cached.0
-        || current.material_fingerprint != cached.1
+    let current = with_persistent_session_connection(session, root, |_session, connection| {
+        let current = current_complete_graph(connection, &project_id).map_err(|error| {
+            NativeProtocolError {
+                code: "store-read-failed",
+                message: error.to_string(),
+            }
+        })?;
+        let payload = current
+            .as_ref()
+            .map(|current| complete_graph_payload(connection, &project_id, current.graph_version))
+            .transpose()
+            .map_err(|error| NativeProtocolError {
+                code: "store-read-failed",
+                message: error.to_string(),
+            })?
+            .flatten();
+        Ok((current, payload))
+    })?;
+    let (Some(current), Some(stored)) = current else {
+        return Ok(None);
+    };
+    if current.material_fingerprint != expected_facts_digest.as_str()
         || current.public_graph_version.unwrap_or_default() < 1
     {
         return Ok(None);
     }
-    let mut envelope = native_public_graph_envelope(&cached.2);
+    let public_graph = native_public_graph_snapshot(&stored.payload)?;
+    let mut envelope = native_public_graph_envelope(&public_graph);
     envelope["analysis"]["refresh"] = json!({
         "strategy": "incremental-content-analysis",
         "mode": "incremental",
         "analyzedFiles": 0,
-        "reusedFiles": status.reused_files,
+        "reusedFiles": status.candidate_paths.len(),
         "removedFiles": 0,
         "changedPaths": [],
     });
@@ -414,7 +437,7 @@ pub(in crate::protocol) fn reuse_native_persistent_project_no_op(
         "status": "reused",
         "nativeGraphVersion": current.graph_version,
         "publicGraphVersion": public_graph_version,
-        "factsDigest": cached.1,
+        "factsDigest": expected_facts_digest,
         "receipt": {
             "schemaVersion": "flopeek-native-source-session-no-op/v1",
             "stored": false,
@@ -445,7 +468,18 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
         .and_then(Value::as_array)
         .is_some_and(Vec::is_empty)
         && session.persistent_sources.contains_key(&session_key);
-    let mut status = load_native_js_facts_status(session, params)?;
+    // An explicit no-op first validates the lightweight session checkpoint
+    // against SQLite. Its parser facts were deliberately evicted after the
+    // preceding promotion, so routing it through source-adapter validation
+    // would misclassify every known path as unsupported before reuse can run.
+    let mut status = if explicit_no_op {
+        session
+            .persistent_sources
+            .remove(&session_key)
+            .expect("explicit no-op requires the checked session checkpoint")
+    } else {
+        load_native_js_facts_status(session, params)?
+    };
     let source_refresh_ms = elapsed_ms(source_refresh_started);
     if explicit_no_op
         && let Some(mut response) = reuse_native_persistent_project_no_op(session, &root, &status)?
@@ -454,7 +488,7 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
         response["sourceRefresh"] = json!({
             "mode": "no-op-session",
             "parsedFiles": 0,
-            "reusedFiles": status.reused_files,
+            "reusedFiles": status.candidate_paths.len(),
             "changedPaths": [],
             "removedPaths": [],
         });
@@ -470,6 +504,15 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
         }
         session.persistent_sources.insert(session_key, status);
         return Ok(response);
+    }
+    if explicit_no_op {
+        // SQLite moved independently or the cached lineage no longer matches.
+        // Restore the checkpoint so the ordinary durable reconciliation path
+        // can compare it, then acquire a complete verified status.
+        session
+            .persistent_sources
+            .insert(session_key.clone(), status);
+        status = load_native_js_facts_status(session, params)?;
     }
     let supported_paths = status.facts.keys().cloned().collect::<BTreeSet<_>>();
     let unsupported_paths = status
@@ -512,13 +555,7 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
     // the exact batch before SQLite promotion, so factsDigest and public graph
     // compatibility remain byte-for-byte equivalent to a full refresh.
     let cached_base_digest = (!status.initial_scan)
-        .then(|| {
-            session
-                .persistent_facts
-                .as_ref()
-                .filter(|facts| facts.project_id == status.project_identity.project_id)
-                .map(|facts| facts.facts_digest.clone())
-        })
+        .then(|| status.promoted_facts_digest.clone())
         .flatten();
     let (mut result, facts_digest, used_fact_patch, envelope_build_ms, persistent_promotion_ms) =
         if let Some(base_digest) = cached_base_digest {
@@ -550,6 +587,12 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
                 // malformed internal patches stay loud rather than being hidden by
                 // a full-batch retry.
                 Err(error) if error.code == "structural-fact-patch-miss" => {
+                    hydrate_native_js_source_facts(&mut status).map_err(|message| {
+                        NativeProtocolError {
+                            code: "native-source-facts-failed",
+                            message,
+                        }
+                    })?;
                     ensure_complete_native_js_structural_records(&mut status).map_err(
                         |message| NativeProtocolError {
                             code: "native-source-facts-failed",
@@ -578,6 +621,7 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
                         .collect::<BTreeSet<_>>();
                     let full_envelope_build_ms = elapsed_ms(full_envelope_started);
                     let full_promotion_started = Instant::now();
+                    evict_native_js_source_cache(&mut status);
                     let result = with_persistent_session_connection(
                         session,
                         &root,
@@ -587,9 +631,12 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
                                 session,
                                 &mut batch,
                                 receipt,
-                                true,
-                                None,
-                                Some(changed_record_paths),
+                                PersistNativePublicGraphOptions {
+                                    retain_persistent_facts: false,
+                                    verified_topology_digest: None,
+                                    changed_record_paths_override: Some(changed_record_paths),
+                                    retain_public_snapshot: handle_only_public_graph,
+                                },
                                 connection,
                             )
                         },
@@ -634,6 +681,7 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
             });
             let envelope_build_ms = elapsed_ms(envelope_started);
             let promotion_started = Instant::now();
+            evict_native_js_source_cache(&mut status);
             let result =
                 with_persistent_session_connection(session, &root, |session, connection| {
                     let receipt = submit_structural_facts(&batch)?;
@@ -641,9 +689,12 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
                         session,
                         &mut batch,
                         receipt,
-                        true,
-                        None,
-                        changed_record_paths,
+                        PersistNativePublicGraphOptions {
+                            retain_persistent_facts: false,
+                            verified_topology_digest: None,
+                            changed_record_paths_override: changed_record_paths,
+                            retain_public_snapshot: handle_only_public_graph,
+                        },
                         connection,
                     )
                 })?;
@@ -655,6 +706,7 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
                 elapsed_ms(promotion_started),
             )
         };
+    status.promoted_facts_digest = Some(facts_digest.clone());
     let project_id = status.project_identity.project_id.clone();
     if let Some(profile) = result
         .pointer_mut("/receipt/profile")
@@ -686,7 +738,10 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
     if handle_only_public_graph {
         replace_public_graph_with_handle_envelope(&mut result)?;
     }
-    compact_native_js_structural_records(&mut status);
+    // Keep complete source facts available until every incremental fallback
+    // path has either promoted or failed. Only then evict the derived parser
+    // cache; SQLite and the retained record digests remain the durable lineage.
+    evict_native_js_source_cache(&mut status);
     session.persistent_sources.insert(session_key, status);
     Ok(result)
 }
@@ -1195,6 +1250,35 @@ pub(in crate::protocol) struct ObjectWithoutKeys<'a> {
     omitted: &'static [&'static str],
 }
 
+struct CanonicalValue<'a>(&'a Value);
+
+impl Serialize for CanonicalValue<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self.0 {
+            Value::Array(values) => {
+                let mut sequence = serializer.serialize_seq(Some(values.len()))?;
+                for value in values {
+                    sequence.serialize_element(&CanonicalValue(value))?;
+                }
+                sequence.end()
+            }
+            Value::Object(entries) => {
+                let mut keys = entries.keys().collect::<Vec<_>>();
+                keys.sort_unstable();
+                let mut map = serializer.serialize_map(Some(keys.len()))?;
+                for key in keys {
+                    map.serialize_entry(key, &CanonicalValue(&entries[key]))?;
+                }
+                map.end()
+            }
+            value => value.serialize(serializer),
+        }
+    }
+}
+
 impl Serialize for ObjectWithoutKeys<'_> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -1208,9 +1292,11 @@ impl Serialize for ObjectWithoutKeys<'_> {
             .filter(|key| !self.omitted.contains(&key.as_str()))
             .count();
         let mut map = serializer.serialize_map(Some(retained))?;
-        for (key, value) in object {
+        let mut keys = object.keys().collect::<Vec<_>>();
+        keys.sort_unstable();
+        for key in keys {
             if !self.omitted.contains(&key.as_str()) {
-                map.serialize_entry(key, value)?;
+                map.serialize_entry(key, &CanonicalValue(&object[key]))?;
             }
         }
         map.end()
@@ -1229,10 +1315,13 @@ impl Serialize for StructuralFactsCanonical<'_> {
             .filter(|key| !ROOT_OMITTED.contains(&key.as_str()))
             .count();
         let mut map = serializer.serialize_map(Some(retained))?;
-        for (key, value) in self.0 {
+        let mut keys = self.0.keys().collect::<Vec<_>>();
+        keys.sort_unstable();
+        for key in keys {
             if ROOT_OMITTED.contains(&key.as_str()) {
                 continue;
             }
+            let value = &self.0[key];
             match key.as_str() {
                 "lifecycleContext" => map.serialize_entry(
                     key,
@@ -1248,7 +1337,7 @@ impl Serialize for StructuralFactsCanonical<'_> {
                         omitted: &["graphVersion"],
                     },
                 )?,
-                _ => map.serialize_entry(key, value)?,
+                _ => map.serialize_entry(key, &CanonicalValue(value))?,
             }
         }
         map.end()
@@ -1290,10 +1379,13 @@ impl Serialize for StructuralTopologyCanonical<'_> {
             .filter(|key| !ROOT_OMITTED.contains(&key.as_str()))
             .count();
         let mut map = serializer.serialize_map(Some(retained))?;
-        for (key, value) in self.0 {
+        let mut keys = self.0.keys().collect::<Vec<_>>();
+        keys.sort_unstable();
+        for key in keys {
             if ROOT_OMITTED.contains(&key.as_str()) {
                 continue;
             }
+            let value = &self.0[key];
             match key.as_str() {
                 "lifecycleContext" => map.serialize_entry(
                     key,
@@ -1315,7 +1407,7 @@ impl Serialize for StructuralTopologyCanonical<'_> {
                     },
                 )?,
                 "records" => map.serialize_entry(key, &RecordsWithoutSourceHashes(value))?,
-                _ => map.serialize_entry(key, value)?,
+                _ => map.serialize_entry(key, &CanonicalValue(value))?,
             }
         }
         map.end()
@@ -1613,11 +1705,19 @@ pub(in crate::protocol) fn build_isolated_incremental_graph(
 pub(in crate::protocol) fn projection_digest(
     projection: &Value,
 ) -> Result<String, NativeProtocolError> {
-    let serialized = serde_json::to_vec(projection).map_err(|error| NativeProtocolError {
-        code: "structural-graph-serialize-failed",
-        message: error.to_string(),
+    // SQLite stores public collections separately from their envelope and
+    // reconstructs an equivalent JSON object on read. Object insertion order
+    // is therefore not durable identity. Hash the same recursively sorted
+    // representation used by JavaScript stable JSON so storage layout cannot
+    // turn a valid graph into a false corruption report.
+    let mut writer = Sha256Writer(Sha256::new());
+    serde_json::to_writer(&mut writer, &CanonicalValue(projection)).map_err(|error| {
+        NativeProtocolError {
+            code: "structural-graph-serialize-failed",
+            message: error.to_string(),
+        }
     })?;
-    Ok(format!("sha256:{:x}", Sha256::digest(serialized)))
+    Ok(format!("sha256:{:x}", writer.0.finalize()))
 }
 
 pub(in crate::protocol) fn submit_structural_facts_with_verified_digest(
