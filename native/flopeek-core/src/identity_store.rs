@@ -415,6 +415,13 @@ pub(crate) fn sync_identity_v2(
     let mut order = (0..resolved.len()).collect::<Vec<_>>();
     order.sort_by_key(|index| usize::from(resolved[*index].owner_public_id.is_some()));
 
+    // Resolve semantic identities through one prepared lookup. Preparing the
+    // same statement for every public node made a cold promotion pay SQLite
+    // parse/compile work thousands of times before any identity row changed.
+    let mut semantic_candidates = transaction.prepare(
+        "SELECT node_pk, node_uid, current_canonical_identity
+         FROM nodes_v2 WHERE project_pk = ?1 AND current_semantic_hash = ?2",
+    )?;
     for node_index in order {
         let owner_uid = resolved[node_index]
             .owner_public_id
@@ -445,11 +452,7 @@ pub(crate) fn sync_identity_v2(
 
         // A semantic digest collision is never trusted. Exact canonical bytes
         // may be reused only when there is one unclaimed candidate.
-        let mut statement = transaction.prepare(
-            "SELECT node_pk, node_uid, current_canonical_identity
-             FROM nodes_v2 WHERE project_pk = ?1 AND current_semantic_hash = ?2",
-        )?;
-        let candidates = statement
+        let candidates = semantic_candidates
             .query_map(
                 params![project_pk, semantic.hash().as_bytes().as_slice()],
                 |row| {
@@ -483,6 +486,7 @@ pub(crate) fn sync_identity_v2(
         }
         resolved[node_index].semantic = Some(semantic);
     }
+    drop(semantic_candidates);
 
     let resolved_node_pks = resolved
         .iter()
