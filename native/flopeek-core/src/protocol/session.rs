@@ -46,11 +46,36 @@ pub(super) struct NativePersistentGraph {
 // SQLite's current pointer is checked before every reuse; this cache is never
 // authoritative and is discarded when another process advances the graph.
 #[derive(Clone)]
+pub(super) struct NativePersistentFactHeader {
+    pub(super) relative_path: String,
+    pub(super) source_hash: String,
+    pub(super) source_scope: String,
+    pub(super) record_order: u64,
+}
+
+#[derive(Clone)]
 pub(super) struct NativePersistentFacts {
     pub(super) project_id: String,
+    pub(super) graph_version: i64,
     pub(super) facts_digest: String,
     pub(super) topology_digest: String,
     pub(super) payload: Value,
+    pub(super) record_headers: Vec<NativePersistentFactHeader>,
+    pub(super) compact_records: bool,
+}
+
+// A process-local provenance marker for the SQLite fact cache.  It is created
+// only after an atomic promotion of a fully validated batch and is checked
+// against both the complete graph version and SQLite's external-write
+// watermark before a later patch reuses the cache.  A restarted process has
+// no marker and therefore performs the full cache validation again.
+#[derive(Clone)]
+pub(super) struct NativePersistentFactProof {
+    pub(super) project_id: String,
+    pub(super) graph_version: i64,
+    pub(super) facts_digest: String,
+    pub(super) topology_digest: String,
+    pub(super) sqlite_data_version: i64,
 }
 
 pub(super) struct NativeProtocolSession {
@@ -74,6 +99,7 @@ pub(super) struct NativeProtocolSession {
     pub(super) persistent_connections: BTreeMap<String, rusqlite::Connection>,
     pub(super) persistent_graph: Option<NativePersistentGraph>,
     pub(super) persistent_facts: Option<NativePersistentFacts>,
+    pub(super) persistent_fact_proof: Option<NativePersistentFactProof>,
     // Git branch/revision metadata is repository-level observational context,
     // not parser evidence. A source-only incremental event cannot alter HEAD
     // or branch, and the source session already retains its matching graph
@@ -120,6 +146,7 @@ impl NativeProtocolSession {
             persistent_connections: BTreeMap::new(),
             persistent_graph: None,
             persistent_facts: None,
+            persistent_fact_proof: None,
             persistent_git_metadata: BTreeMap::new(),
             query_results: BTreeMap::new(),
             query_result_order: VecDeque::new(),
@@ -294,16 +321,40 @@ pub(super) fn ensure_persistent_facts(
             code: "store-read-failed",
             message: error.to_string(),
         })?;
-    if !current.is_some_and(|graph| graph.material_fingerprint == facts_digest) {
+    let Some(current_graph) = current
+        .as_ref()
+        .filter(|graph| graph.material_fingerprint == facts_digest)
+    else {
         return Err(NativeProtocolError {
             code: "structural-fact-patch-miss",
             message:
                 "The SQLite current graph no longer matches the patch base; submit a full batch."
                     .to_string(),
         });
-    }
+    };
+    let sqlite_data_version = connection
+        .query_row("PRAGMA data_version", [], |row| row.get::<_, i64>(0))
+        .map_err(|error| NativeProtocolError {
+            code: "store-read-failed",
+            message: error.to_string(),
+        })?;
+    let proof_matches = session.persistent_fact_proof.as_ref().is_some_and(|proof| {
+        proof.project_id == project_id
+            && proof.graph_version == current_graph.graph_version
+            && proof.facts_digest == facts_digest
+            && proof.sqlite_data_version == sqlite_data_version
+    });
     let cache_hit = session.persistent_facts.as_ref().is_some_and(|cached| {
-        cached.project_id == project_id && cached.facts_digest == facts_digest
+        cached.project_id == project_id
+            && cached.graph_version == current_graph.graph_version
+            && cached.facts_digest == facts_digest
+            && proof_matches
+            && cached.topology_digest
+                == session
+                    .persistent_fact_proof
+                    .as_ref()
+                    .expect("proof match was checked")
+                    .topology_digest
     });
     if !cache_hit {
         let payload = current_structural_batch(connection, project_id, facts_digest)
@@ -338,12 +389,38 @@ pub(super) fn ensure_persistent_facts(
             })?;
         session.persistent_facts = Some(NativePersistentFacts {
             project_id: project_id.to_string(),
+            graph_version: current_graph.graph_version,
             facts_digest: facts_digest.to_string(),
             topology_digest,
             payload,
+            record_headers: Vec::new(),
+            compact_records: false,
         });
     }
     Ok(())
+}
+
+pub(super) fn remember_persistent_fact_proof(
+    session: &mut NativeProtocolSession,
+    connection: &rusqlite::Connection,
+    project_id: &str,
+    graph_version: i64,
+    facts_digest: &str,
+    topology_digest: &str,
+) {
+    let Ok(sqlite_data_version) =
+        connection.query_row("PRAGMA data_version", [], |row| row.get::<_, i64>(0))
+    else {
+        session.persistent_fact_proof = None;
+        return;
+    };
+    session.persistent_fact_proof = Some(NativePersistentFactProof {
+        project_id: project_id.to_string(),
+        graph_version,
+        facts_digest: facts_digest.to_string(),
+        topology_digest: topology_digest.to_string(),
+        sqlite_data_version,
+    });
 }
 
 // A persistent query may name an already-promoted StructuralFactBatch instead

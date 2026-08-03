@@ -263,9 +263,49 @@ fn promote_native_structural_batch_cache(
         .collect();
     let envelope_json = serde_json::to_string(&serde_json::Value::Object(envelope))
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-    let mut parsed_records = Vec::with_capacity(records.len());
-    let mut next_paths = BTreeSet::new();
+    let existing = {
+        let mut statement = transaction
+            .prepare("SELECT path FROM native_structural_batch_records WHERE project_pk = ?1")?;
+        statement
+            .query_map([project_pk], |row| row.get::<_, String>(0))?
+            .collect::<Result<BTreeSet<_>, _>>()?
+    };
+    let mut parsed_records =
+        Vec::with_capacity(changed_record_paths.map_or(records.len(), BTreeSet::len));
+    let mut changed_records_seen = BTreeSet::new();
+    let mut next_paths = if changed_record_paths.is_some() {
+        existing.clone()
+    } else {
+        BTreeSet::new()
+    };
+    let changed_present_paths = if changed_record_paths.is_some() {
+        records
+            .iter()
+            .filter_map(|record| {
+                record
+                    .get("relativePath")
+                    .and_then(serde_json::Value::as_str)
+            })
+            .collect::<BTreeSet<_>>()
+    } else {
+        BTreeSet::new()
+    };
+    if let Some(changed_paths) = changed_record_paths {
+        for path in changed_paths {
+            if changed_present_paths.contains(path.as_str()) {
+                next_paths.insert(path.clone());
+            } else {
+                next_paths.remove(path);
+            }
+        }
+    }
     for record in records {
+        // Compact process-local patches carry canonical raw JSON for every
+        // unchanged record. SQLite already has those rows, so only changed
+        // object records need to be decoded and considered for an UPSERT.
+        if changed_record_paths.is_some() && record.is_string() {
+            continue;
+        }
         let parsed;
         let item = if let Some(payload) = record.as_str() {
             parsed = serde_json::from_str::<serde_json::Value>(payload)
@@ -293,18 +333,25 @@ fn promote_native_structural_batch_cache(
             .and_then(serde_json::Value::as_i64)
             .filter(|value| *value >= 0)
             .ok_or(rusqlite::Error::InvalidQuery)?;
-        if !next_paths.insert(path.clone()) {
+        if changed_record_paths.is_none() && !next_paths.insert(path.clone()) {
             return Err(rusqlite::Error::InvalidQuery);
+        }
+        if let Some(changed_paths) = changed_record_paths {
+            if !changed_paths.contains(&path) {
+                // A compatibility patch may still carry unchanged object
+                // records (older callers did not compact them).  They are
+                // already represented by the durable cache; only the
+                // explicitly changed paths are eligible for this selective
+                // write.
+                continue;
+            }
+            if !changed_records_seen.insert(path.clone()) {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+            next_paths.insert(path.clone());
         }
         parsed_records.push((path, source_hash, record_order, record));
     }
-    let existing = {
-        let mut statement = transaction
-            .prepare("SELECT path FROM native_structural_batch_records WHERE project_pk = ?1")?;
-        statement
-            .query_map([project_pk], |row| row.get::<_, String>(0))?
-            .collect::<Result<BTreeSet<_>, _>>()?
-    };
     for path in existing.difference(&next_paths) {
         transaction.execute(
             "DELETE FROM native_structural_batch_records WHERE project_pk = ?1 AND path = ?2",

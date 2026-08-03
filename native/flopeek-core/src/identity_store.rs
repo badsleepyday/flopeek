@@ -161,7 +161,10 @@ fn public_nodes(payload: &Value) -> rusqlite::Result<Vec<PublicNode<'_>>> {
         .collect()
 }
 
-fn source_hashes(structural_batch: Option<&Value>) -> rusqlite::Result<BTreeMap<String, [u8; 32]>> {
+fn source_hashes(
+    structural_batch: Option<&Value>,
+    changed_record_paths: Option<&BTreeSet<String>>,
+) -> rusqlite::Result<BTreeMap<String, [u8; 32]>> {
     let mut hashes = BTreeMap::new();
     for record in structural_batch
         .and_then(|batch| batch.get("records"))
@@ -169,7 +172,14 @@ fn source_hashes(structural_batch: Option<&Value>) -> rusqlite::Result<BTreeMap<
         .into_iter()
         .flatten()
     {
-        let Some(object) = record.as_object() else {
+        let parsed;
+        let Some(object) = (match record {
+            Value::String(raw) if changed_record_paths.is_some() => {
+                parsed = serde_json::from_str::<Value>(raw).map_err(conversion_error)?;
+                parsed.as_object()
+            }
+            value => value.as_object(),
+        }) else {
             continue;
         };
         let (Some(path), Some(hash)) = (
@@ -178,6 +188,9 @@ fn source_hashes(structural_batch: Option<&Value>) -> rusqlite::Result<BTreeMap<
         ) else {
             continue;
         };
+        if changed_record_paths.is_some_and(|paths| !paths.contains(path)) {
+            continue;
+        }
         hashes.insert(path.to_string(), decode_hex_32("sourceHash", hash)?);
     }
     Ok(hashes)
@@ -362,7 +375,7 @@ pub(crate) fn sync_identity_v2(
     let project_uid = ensure_project(transaction, project_pk, public_project_id)?;
     let facts = public_nodes(payload)?;
     let owners = lexical_owners(payload, &facts);
-    let source_hashes = source_hashes(structural_batch)?;
+    let source_hashes = source_hashes(structural_batch, None)?;
     let identity_store_empty = transaction.query_row(
         "SELECT NOT EXISTS (SELECT 1 FROM nodes_v2 WHERE project_pk = ?1)",
         [project_pk],
@@ -781,7 +794,7 @@ pub(crate) fn sync_identity_v2_changed_records(
     let project_uid = ensure_project(transaction, project_pk, public_project_id)?;
     let facts = public_nodes(payload)?;
     let owners = lexical_owners(payload, &facts);
-    let source_hashes = source_hashes(structural_batch)?;
+    let source_hashes = source_hashes(structural_batch, Some(changed_record_paths))?;
     let content_hashes = content_hashes(transaction, project_pk)?;
     let external_ids = existing_external_ids(transaction, project_pk)?;
     let mut public_to_pk = HashMap::with_capacity(facts.len());

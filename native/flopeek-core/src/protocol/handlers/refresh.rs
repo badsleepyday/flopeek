@@ -1305,7 +1305,47 @@ pub(in crate::protocol) struct ObjectWithoutKeys<'a> {
     omitted: &'static [&'static str],
 }
 
-struct CanonicalValue<'a>(&'a Value);
+pub(in crate::protocol) struct CanonicalValue<'a>(pub(in crate::protocol) &'a Value);
+
+struct RawJsonValue<'a>(&'a str);
+
+const RAW_VALUE_TOKEN: &str = "$serde_json::private::RawValue";
+
+impl Serialize for RawJsonValue<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut value = serializer.serialize_struct(RAW_VALUE_TOKEN, 1)?;
+        value.serialize_field(RAW_VALUE_TOKEN, self.0)?;
+        value.end()
+    }
+}
+
+struct RecordsCanonical<'a>(&'a Value);
+
+impl Serialize for RecordsCanonical<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let Some(records) = self.0.as_array() else {
+            return self.0.serialize(serializer);
+        };
+        let mut sequence = serializer.serialize_seq(Some(records.len()))?;
+        for record in records {
+            match record {
+                // Compact process-local records were canonicalized before
+                // entering this envelope. RawValue lets the SHA-256 stream
+                // reuse those bytes without reparsing and reallocating every
+                // unchanged parser fact.
+                Value::String(raw) => sequence.serialize_element(&RawJsonValue(raw))?,
+                value => sequence.serialize_element(&CanonicalValue(value))?,
+            }
+        }
+        sequence.end()
+    }
+}
 
 impl Serialize for CanonicalValue<'_> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -1392,6 +1432,7 @@ impl Serialize for StructuralFactsCanonical<'_> {
                         omitted: &["graphVersion"],
                     },
                 )?,
+                "records" => map.serialize_entry(key, &RecordsCanonical(value))?,
                 _ => map.serialize_entry(key, &CanonicalValue(value))?,
             }
         }
@@ -1830,91 +1871,102 @@ pub(in crate::protocol) fn submit_structural_facts_with_verified_digest(
             message: "StructuralFactBatch/v1 must remain bounded.".to_string(),
         });
     }
-    validate_structural_records(records).map_err(|message| NativeProtocolError {
-        code: "unsafe-structural-facts",
-        message,
-    })?;
-    let mut record_orders = std::collections::BTreeSet::new();
-    for record in records {
-        let Some(record) = record.as_object() else {
-            return Err(NativeProtocolError {
-                code: "invalid-structural-facts",
-                message: "StructuralFactBatch/v1 records must be objects.".to_string(),
-            });
-        };
-        let relative_path = string_field(record, "relativePath")?;
-        if !is_portable_repository_path(relative_path) {
-            return Err(NativeProtocolError {
+    // With a verified digest, unchanged records came from the already
+    // validated SQLite cache and changed records were validated while the
+    // patch was reconstructed. Revalidating the complete multi-megabyte batch
+    // here added latency without adding an independent trust boundary.
+    if verified_digest.is_none() {
+        validate_structural_records(records).map_err(|message| NativeProtocolError {
+            code: "unsafe-structural-facts",
+            message,
+        })?;
+    }
+    if verified_digest.is_none() {
+        let mut record_orders = std::collections::BTreeSet::new();
+        for record in records {
+            let Some(record) = record.as_object() else {
+                return Err(NativeProtocolError {
+                    code: "invalid-structural-facts",
+                    message: "StructuralFactBatch/v1 records must be objects.".to_string(),
+                });
+            };
+            let relative_path = string_field(record, "relativePath")?;
+            if !is_portable_repository_path(relative_path) {
+                return Err(NativeProtocolError {
                 code: "invalid-structural-facts",
                 message:
                     "StructuralFactBatch/v1 record paths must be portable and repository-relative."
                         .to_string(),
             });
-        }
-        let record_order = record
-            .get("recordOrder")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| NativeProtocolError {
-                code: "invalid-structural-facts",
-                message: "StructuralFactBatch/v1 recordOrder must be a non-negative integer."
-                    .to_string(),
-            })?;
-        if !record_orders.insert(record_order) {
-            return Err(NativeProtocolError {
-                code: "invalid-structural-facts",
-                message: "StructuralFactBatch/v1 recordOrder values must be unique.".to_string(),
-            });
-        }
-        let source_hash = string_field(record, "sourceHash")?;
-        if !is_sha256_hex(source_hash) {
-            return Err(NativeProtocolError {
-                code: "invalid-structural-facts",
-                message: "StructuralFactBatch/v1 record sourceHash must be a SHA-256 hex digest."
-                    .to_string(),
-            });
-        }
-        if !record.contains_key("result") {
-            return Err(NativeProtocolError {
-                code: "invalid-structural-facts",
-                message: "StructuralFactBatch/v1 records require result facts.".to_string(),
-            });
-        }
-        if let Some(resolved_imports) = record
-            .get("result")
-            .and_then(Value::as_object)
-            .and_then(|result| result.get("resolvedImports"))
-        {
-            let Some(resolved_imports) = resolved_imports.as_array() else {
+            }
+            let record_order = record
+                .get("recordOrder")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| NativeProtocolError {
+                    code: "invalid-structural-facts",
+                    message: "StructuralFactBatch/v1 recordOrder must be a non-negative integer."
+                        .to_string(),
+                })?;
+            if !record_orders.insert(record_order) {
                 return Err(NativeProtocolError {
                     code: "invalid-structural-facts",
-                    message: "StructuralFactBatch/v1 resolvedImports must be an array.".to_string(),
+                    message: "StructuralFactBatch/v1 recordOrder values must be unique."
+                        .to_string(),
                 });
-            };
-            for resolved_import in resolved_imports {
-                let Some(resolved_import) = resolved_import.as_object() else {
+            }
+            let source_hash = string_field(record, "sourceHash")?;
+            if !is_sha256_hex(source_hash) {
+                return Err(NativeProtocolError {
+                    code: "invalid-structural-facts",
+                    message:
+                        "StructuralFactBatch/v1 record sourceHash must be a SHA-256 hex digest."
+                            .to_string(),
+                });
+            }
+            if !record.contains_key("result") {
+                return Err(NativeProtocolError {
+                    code: "invalid-structural-facts",
+                    message: "StructuralFactBatch/v1 records require result facts.".to_string(),
+                });
+            }
+            if let Some(resolved_imports) = record
+                .get("result")
+                .and_then(Value::as_object)
+                .and_then(|result| result.get("resolvedImports"))
+            {
+                let Some(resolved_imports) = resolved_imports.as_array() else {
                     return Err(NativeProtocolError {
                         code: "invalid-structural-facts",
-                        message: "StructuralFactBatch/v1 resolvedImports must contain objects."
+                        message: "StructuralFactBatch/v1 resolvedImports must be an array."
                             .to_string(),
                     });
                 };
-                string_field(resolved_import, "specifier")?;
-                let target_path = string_field(resolved_import, "targetPath")?;
-                if !is_portable_repository_path(target_path) {
-                    return Err(NativeProtocolError {
+                for resolved_import in resolved_imports {
+                    let Some(resolved_import) = resolved_import.as_object() else {
+                        return Err(NativeProtocolError {
+                            code: "invalid-structural-facts",
+                            message: "StructuralFactBatch/v1 resolvedImports must contain objects."
+                                .to_string(),
+                        });
+                    };
+                    string_field(resolved_import, "specifier")?;
+                    let target_path = string_field(resolved_import, "targetPath")?;
+                    if !is_portable_repository_path(target_path) {
+                        return Err(NativeProtocolError {
                         code: "invalid-structural-facts",
                         message: "StructuralFactBatch/v1 resolved import target paths must be portable and repository-relative.".to_string(),
                     });
+                    }
                 }
             }
         }
-    }
-    if !record_orders.iter().copied().eq(0..records.len() as u64) {
-        return Err(NativeProtocolError {
-            code: "invalid-structural-facts",
-            message: "StructuralFactBatch/v1 recordOrder values must be contiguous from zero."
-                .to_string(),
-        });
+        if !record_orders.iter().copied().eq(0..records.len() as u64) {
+            return Err(NativeProtocolError {
+                code: "invalid-structural-facts",
+                message: "StructuralFactBatch/v1 recordOrder values must be contiguous from zero."
+                    .to_string(),
+            });
+        }
     }
     Ok(json!({
         "schemaVersion": STRUCTURAL_FACT_BATCH_SCHEMA,

@@ -32,7 +32,7 @@ use crate::structural_graph::{
     structural_edge_traversal_order, structural_graph_projection_from_parts,
     structural_graph_projection_into_value, structural_graph_snapshot,
 };
-use serde::ser::{SerializeMap, SerializeSeq, Serializer};
+use serde::ser::{SerializeMap, SerializeSeq, SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use serde_json::{Value, json};
