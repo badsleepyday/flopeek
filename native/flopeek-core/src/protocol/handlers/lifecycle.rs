@@ -1115,10 +1115,6 @@ pub(in crate::protocol) fn persist_native_public_graph_patch_using_connection(
     // rather than risking stale process-local parser facts.
     session.persistent_facts = Some(previous);
     let persistence_started = Instant::now();
-    let retain_persistent_facts = params
-        .get("retainPublicSnapshot")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
     // Patch membership is passed as an internal promotion override. The
     // reconstructed batch is already owned and validated, so wrapping it in a
     // second JSON object only to move it back out adds O(batch) allocator churn.
@@ -1129,7 +1125,7 @@ pub(in crate::protocol) fn persist_native_public_graph_patch_using_connection(
         &mut next.payload,
         receipt,
         PersistNativePublicGraphOptions {
-            retain_persistent_facts,
+            retain_persistent_facts: false,
             verified_topology_digest: Some(next.topology_digest.clone()),
             changed_record_paths_override: Some(changed_paths),
             retain_public_snapshot: true,
@@ -1144,9 +1140,7 @@ pub(in crate::protocol) fn persist_native_public_graph_patch_using_connection(
     };
     let native_lifecycle_ms = elapsed_ms(native_lifecycle_started);
     let session_cache_started = Instant::now();
-    if !retain_persistent_facts {
-        session.persistent_facts = None;
-    }
+    session.persistent_facts = None;
     let session_cache_ms = elapsed_ms(session_cache_started);
     let persistence_ms = elapsed_ms(persistence_started);
     if let Some(profile) = result
