@@ -650,7 +650,15 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
                                     retain_persistent_facts: false,
                                     verified_topology_digest: None,
                                     changed_record_paths_override: Some(changed_record_paths),
-                                    retain_public_snapshot: handle_only_public_graph,
+                                    // The normal compatibility lifecycle also retains the
+                                    // committed public collections.  The next changed-path
+                                    // refresh can then reuse them for its adjacent delta and
+                                    // publicGraphReuse envelope instead of reconstructing every
+                                    // collection from the SQLite projection.  Handle-only mode
+                                    // is not the only caller that benefits from this cache: the
+                                    // benchmark and product CoreClient both retain a materialized
+                                    // graph across refreshes.
+                                    retain_public_snapshot: true,
                                 },
                                 connection,
                             )
@@ -708,7 +716,7 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
                             retain_persistent_facts: false,
                             verified_topology_digest: None,
                             changed_record_paths_override: changed_record_paths,
-                            retain_public_snapshot: handle_only_public_graph,
+                            retain_public_snapshot: true,
                         },
                         connection,
                     )
