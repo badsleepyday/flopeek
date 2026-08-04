@@ -2366,7 +2366,7 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
             extension.eq_ignore_ascii_case("java") || extension.eq_ignore_ascii_case("cs")
         })
     }) {
-        16
+        4
     } else {
         1
     };
