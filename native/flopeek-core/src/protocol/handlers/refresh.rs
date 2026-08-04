@@ -162,7 +162,12 @@ pub(in crate::protocol) fn refresh_native_project(
         code: "native-bounded-execution-failed",
         message,
     })?;
-    let supported_paths = status.facts.keys().cloned().collect::<BTreeSet<_>>();
+    let supported_paths = status
+        .facts
+        .keys()
+        .chain(status.compacted_facts.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
     let unsupported_paths = status
         .candidate_paths
         .iter()
@@ -307,7 +312,7 @@ pub(in crate::protocol) fn load_native_js_facts_status(
                 reconciled
             })
         } else {
-            hydrate_native_js_source_facts(&mut previous)
+            hydrate_native_js_source_facts_for_changed_paths(&mut previous, paths)
                 .and_then(|()| refresh_native_js_facts_session_owned(previous, paths))
         }
     } else {
@@ -333,7 +338,12 @@ pub(in crate::protocol) fn native_js_structural_facts(
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let status = load_native_js_facts_status(session, params)?;
-    let supported_paths = status.facts.keys().cloned().collect::<BTreeSet<_>>();
+    let supported_paths = status
+        .facts
+        .keys()
+        .chain(status.compacted_facts.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
     let unsupported_paths = status
         .candidate_paths
         .iter()
@@ -544,7 +554,12 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
             .insert(session_key.clone(), status);
         status = load_native_js_facts_status(session, params)?;
     }
-    let supported_paths = status.facts.keys().cloned().collect::<BTreeSet<_>>();
+    let supported_paths = status
+        .facts
+        .keys()
+        .chain(status.compacted_facts.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
     let unsupported_paths = status
         .candidate_paths
         .iter()

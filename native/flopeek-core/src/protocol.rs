@@ -8,11 +8,11 @@ use crate::inventory::{
 use crate::js_batch::native_manual_descriptions;
 use crate::js_facts::{
     NativeJsFactsStatus, ensure_complete_native_js_structural_records,
-    evict_native_js_source_cache, hydrate_native_js_source_facts, native_structural_record_digests,
-    refresh_native_js_facts_session, refresh_native_js_facts_session_owned,
-    reuse_native_js_facts_session, reuse_native_js_facts_session_owned, scan_native_js_facts,
-    scan_native_js_facts_ephemeral, scan_native_js_facts_ephemeral_bounded,
-    take_complete_native_js_structural_records,
+    evict_native_js_source_cache, hydrate_native_js_source_facts_for_changed_paths,
+    native_structural_record_digests, refresh_native_js_facts_session,
+    refresh_native_js_facts_session_owned, reuse_native_js_facts_session,
+    reuse_native_js_facts_session_owned, scan_native_js_facts, scan_native_js_facts_ephemeral,
+    scan_native_js_facts_ephemeral_bounded, take_complete_native_js_structural_records,
 };
 use crate::project_identity::ProjectIdentity;
 use crate::record_cache::{handle_native_js_record_cache_value, load_native_js_record_cache_raw};

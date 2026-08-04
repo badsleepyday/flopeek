@@ -408,6 +408,59 @@ pub fn hydrate_native_js_source_facts(status: &mut NativeJsFactsStatus) -> Resul
     Ok(())
 }
 
+/// Hydrate only the source facts that can participate in an ordinary
+/// changed-file refresh.  Persistent sessions keep the rest as compact JSON
+/// strings after promotion; deserializing every unchanged file on each edit
+/// turns the incremental path back into an O(repository) operation.
+///
+/// Membership/configuration events are deliberately conservative and hydrate
+/// the complete cache because they can invalidate every resolver record.
+pub fn hydrate_native_js_source_facts_for_changed_paths(
+    status: &mut NativeJsFactsStatus,
+    changed_paths: &[String],
+) -> Result<(), String> {
+    if status.facts.len() == status.candidate_paths.len() {
+        return Ok(());
+    }
+    let scope = read_native_scope(&status.project_root)?;
+    let mut needed = BTreeSet::new();
+    for raw_path in changed_paths {
+        let normalized = raw_path.replace('\\', "/");
+        if normalized.is_empty()
+            || normalized.starts_with('/')
+            || normalized
+                .split('/')
+                .any(|segment| segment == ".." || segment.is_empty())
+            || normalized == ".flopeek/config.json"
+            || normalized.ends_with('/')
+            || native_resolution_manifest_path(&normalized)
+            || native_js_ignored_path(&normalized)
+            || scope.classify(&normalized) == crate::scope::SourceScope::Excluded
+            || !native_fact_supported_path(&normalized)
+            || !status.candidate_paths.contains(&normalized)
+        {
+            return hydrate_native_js_source_facts(status);
+        }
+        needed.insert(normalized.clone());
+        if let Some(importers) = status.reverse_importers.get(&normalized) {
+            needed.extend(importers.iter().cloned());
+        }
+    }
+    for path in needed {
+        if status.facts.contains_key(&path) {
+            continue;
+        }
+        let payload = status
+            .compacted_facts
+            .remove(&path)
+            .ok_or_else(|| format!("Persistent source cache is missing facts for {path}."))?;
+        let fact = serde_json::from_str(&payload)
+            .map_err(|error| format!("Invalid compacted native parser fact for {path}: {error}"))?;
+        status.facts.insert(path, fact);
+    }
+    Ok(())
+}
+
 pub fn compact_native_js_source_facts(status: &mut NativeJsFactsStatus) -> Result<(), String> {
     status.compacted_facts = status
         .facts
@@ -554,6 +607,14 @@ pub fn refresh_native_js_facts_session_owned(
     let mut parsed_files = 0;
     let mut removed_paths = Vec::new();
     let mut added_paths = BTreeSet::new();
+    let previous_failed_by_path = changed
+        .iter()
+        .filter_map(|path| {
+            next.facts
+                .get(path)
+                .map(|fact| (path.clone(), fact.status == "parse-failed"))
+        })
+        .collect::<BTreeMap<_, _>>();
     for path in &changed {
         let absolute = next.project_root.join(path);
         entry_facts_affected |= next
@@ -721,12 +782,23 @@ pub fn refresh_native_js_facts_session_owned(
             build_native_js_entry_facts(&next.project_root, &next.facts, &next.structural_records);
     }
     next.parsed_files = parsed_files;
-    next.reused_files = next.facts.len().saturating_sub(parsed_files);
-    next.failed_files = next
-        .facts
-        .values()
-        .filter(|fact| fact.status == "parse-failed")
+    let supported_candidate_files = next
+        .candidate_paths
+        .iter()
+        .filter(|path| native_fact_supported_path(path))
         .count();
+    next.reused_files = supported_candidate_files.saturating_sub(parsed_files);
+    let mut failed_files = next.failed_files;
+    for path in &changed {
+        let before = previous_failed_by_path.get(path).copied().unwrap_or(false);
+        let after = next
+            .facts
+            .get(path)
+            .is_some_and(|fact| fact.status == "parse-failed");
+        failed_files = failed_files.saturating_sub(usize::from(before));
+        failed_files = failed_files.saturating_add(usize::from(after));
+    }
+    next.failed_files = failed_files;
     next.removed_facts = removed_paths.len();
     next.candidate_files = next.candidate_paths.len();
     next.changed_paths = changed
@@ -779,6 +851,7 @@ pub fn ensure_complete_native_js_structural_records(
     if status.structural_records_complete {
         return Ok(());
     }
+    hydrate_native_js_source_facts(status)?;
     let scope = read_native_scope(&status.project_root)?;
     let known_records = status
         .candidate_paths
