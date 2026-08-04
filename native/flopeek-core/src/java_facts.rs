@@ -107,6 +107,10 @@ fn compact_java_type(value: &str) -> String {
         .collect()
 }
 
+fn compact_java_node_type(node: Node<'_>, source: &str) -> Option<String> {
+    text_ref(node, source).map(compact_java_type)
+}
+
 fn method_signature(method: Node<'_>, source: &str) -> String {
     let parameters = method
         .child_by_field_name("parameters")
@@ -123,8 +127,7 @@ fn method_signature(method: Node<'_>, source: &str) -> String {
                 .map(|parameter| {
                     parameter
                         .child_by_field_name("type")
-                        .and_then(|kind| text(kind, source))
-                        .map(|kind| compact_java_type(&kind))
+                        .and_then(|kind| compact_java_node_type(kind, source))
                         .unwrap_or_else(|| "unknown".to_string())
                 })
                 .collect::<Vec<_>>()
@@ -133,8 +136,7 @@ fn method_signature(method: Node<'_>, source: &str) -> String {
         .unwrap_or_default();
     let return_type = method
         .child_by_field_name("type")
-        .and_then(|kind| text(kind, source))
-        .map(|kind| compact_java_type(&kind))
+        .and_then(|kind| compact_java_node_type(kind, source))
         .unwrap_or_else(|| "void".to_string());
     format!("({parameters}):{return_type}")
 }

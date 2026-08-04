@@ -2501,28 +2501,45 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| error.to_string())?;
+        let mut delete_stale = transaction
+            .prepare(
+                "DELETE FROM parser_facts
+                 WHERE project_pk = ?1 AND path = ?2 AND adapter_version = ?3 AND source_hash != ?4",
+            )
+            .map_err(|error| error.to_string())?;
+        let mut insert_fact = transaction
+            .prepare(
+                "INSERT INTO parser_facts(project_pk, path, source_hash, adapter_version, payload_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(project_pk, path, source_hash, adapter_version)
+                 DO UPDATE SET payload_json = excluded.payload_json",
+            )
+            .map_err(|error| error.to_string())?;
         for (path, source_hash) in &parser_cache_misses {
             let fact = facts.get(path).ok_or_else(|| {
                 format!("Native parser cache miss has no parsed fact for {path}.")
             })?;
             let payload = serde_json::to_string(fact).map_err(|error| error.to_string())?;
-            transaction
-                .execute(
-                    "DELETE FROM parser_facts
-                     WHERE project_pk = ?1 AND path = ?2 AND adapter_version = ?3 AND source_hash != ?4",
-                    params![project_pk, path, NATIVE_JS_ADAPTER_VERSION, source_hash],
-                )
+            delete_stale
+                .execute(params![
+                    project_pk,
+                    path,
+                    NATIVE_JS_ADAPTER_VERSION,
+                    source_hash
+                ])
                 .map_err(|error| error.to_string())?;
-            transaction
-                .execute(
-                    "INSERT INTO parser_facts(project_pk, path, source_hash, adapter_version, payload_json)
-                     VALUES (?1, ?2, ?3, ?4, ?5)
-                     ON CONFLICT(project_pk, path, source_hash, adapter_version)
-                     DO UPDATE SET payload_json = excluded.payload_json",
-                    params![project_pk, path, source_hash, NATIVE_JS_ADAPTER_VERSION, payload],
-                )
+            insert_fact
+                .execute(params![
+                    project_pk,
+                    path,
+                    source_hash,
+                    NATIVE_JS_ADAPTER_VERSION,
+                    payload
+                ])
                 .map_err(|error| error.to_string())?;
         }
+        drop(delete_stale);
+        drop(insert_fact);
         let removed = transaction
             .execute(
                 "DELETE FROM parser_facts

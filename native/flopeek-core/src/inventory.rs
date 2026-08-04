@@ -492,19 +492,38 @@ fn scan_native_inventory_with_options(
         )
         .map_err(|error| error.to_string())?;
     let scan_pk = transaction.last_insert_rowid();
+    let mut inventory_insert = transaction
+        .prepare(
+            "INSERT INTO inventory_files(project_pk, path, size_bytes, modified_at_ns, source_scope, content_hash, last_seen_scan_pk)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(project_pk, path) DO UPDATE SET
+               size_bytes = excluded.size_bytes,
+               modified_at_ns = excluded.modified_at_ns,
+               source_scope = excluded.source_scope,
+               content_hash = excluded.content_hash,
+               last_seen_scan_pk = excluded.last_seen_scan_pk",
+        )
+        .map_err(|error| error.to_string())?;
+    let mut node_insert = transaction
+        .prepare(
+            "INSERT INTO nodes(project_pk, node_id, semantic_key, content_hash, kind, path, symbol, signature)
+             VALUES (?1, ?2, ?3, ?4, 'file', ?5, NULL, NULL)
+             ON CONFLICT(project_pk, node_id) DO UPDATE SET
+               content_hash = excluded.content_hash,
+               path = excluded.path",
+        )
+        .map_err(|error| error.to_string())?;
     for record in &records {
-        transaction
-            .execute(
-                "INSERT INTO inventory_files(project_pk, path, size_bytes, modified_at_ns, source_scope, content_hash, last_seen_scan_pk)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                 ON CONFLICT(project_pk, path) DO UPDATE SET
-                   size_bytes = excluded.size_bytes,
-                   modified_at_ns = excluded.modified_at_ns,
-                   source_scope = excluded.source_scope,
-                   content_hash = excluded.content_hash,
-                   last_seen_scan_pk = excluded.last_seen_scan_pk",
-                params![project_pk, record.candidate.path, record.candidate.size_bytes, record.candidate.modified_at_ns, record.candidate.source_scope.as_str(), record.content_hash, scan_pk],
-            )
+        inventory_insert
+            .execute(params![
+                project_pk,
+                record.candidate.path,
+                record.candidate.size_bytes,
+                record.candidate.modified_at_ns,
+                record.candidate.source_scope.as_str(),
+                record.content_hash,
+                scan_pk
+            ])
             .map_err(|error| error.to_string())?;
         let identity = NodeIdentity {
             kind: "file",
@@ -512,17 +531,18 @@ fn scan_native_inventory_with_options(
             symbol: None,
             signature: None,
         };
-        transaction
-            .execute(
-                "INSERT INTO nodes(project_pk, node_id, semantic_key, content_hash, kind, path, symbol, signature)
-                 VALUES (?1, ?2, ?3, ?4, 'file', ?5, NULL, NULL)
-                 ON CONFLICT(project_pk, node_id) DO UPDATE SET
-                   content_hash = excluded.content_hash,
-                   path = excluded.path",
-                params![project_pk, stable_node_id(identity), semantic_key(identity), record.content_hash, record.candidate.path],
-            )
+        node_insert
+            .execute(params![
+                project_pk,
+                stable_node_id(identity),
+                semantic_key(identity),
+                record.content_hash,
+                record.candidate.path
+            ])
             .map_err(|error| error.to_string())?;
     }
+    drop(inventory_insert);
+    drop(node_insert);
     let removed_paths = {
         let mut statement = transaction
             .prepare(
