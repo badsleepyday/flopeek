@@ -522,6 +522,15 @@ pub fn evict_native_js_source_cache(status: &mut NativeJsFactsStatus) {
     status.structural_records.shrink_to_fit();
     status.structural_records_complete = false;
     status.structural_record_manifest.shrink_to_fit();
+    // Resolution facts are needed only while rebuilding the affected records
+    // for the next changed-path event. The reverse-importer index above is the
+    // bounded lookup needed to select those files; retaining every resolver
+    // payload beside compact parser facts duplicates the promoted batch and
+    // inflates the native process peak on large repositories. Incremental
+    // refresh repopulates only the affected resolver entries before record
+    // construction, while a membership/configuration event hydrates and
+    // resolves the complete set again.
+    status.resolution.clear();
 }
 
 // Refresh one already-initialized no-cache session without re-walking the
