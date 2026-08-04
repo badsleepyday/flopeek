@@ -5,6 +5,7 @@ use crate::project_identity::{
 use crate::scope::{NativeScope, SourceScope, read_native_scope};
 use crate::store::open_native_store;
 use blake3::Hasher;
+use rayon::prelude::*;
 use rusqlite::{OptionalExtension, params};
 use std::collections::BTreeMap;
 use std::fs;
@@ -433,48 +434,57 @@ fn scan_native_inventory_with_options(
     let mut source_batch_bytes = 0usize;
     let mut source_batch_omitted_files = 0usize;
     let mut ephemeral_source_texts = BTreeMap::new();
-    let mut records = Vec::with_capacity(candidates.len());
-    for candidate in candidates {
-        let hash = match cached.get(&candidate.path) {
-            Some(cached)
-                if cached.size_bytes == candidate.size_bytes
-                    && cached.modified_at_ns == candidate.modified_at_ns =>
-            {
-                reused_files += 1;
-                reused_paths.push(candidate.path.clone());
-                cached.content_hash.clone()
+    // Reading and hashing candidate files is independent work. On a cold
+    // checkout the old serial loop paid one Windows filesystem round-trip per
+    // file before parser workers could start; perform those reads in parallel
+    // and merge the deterministic source-batch/cache order below.
+    let candidate_reads = candidates
+        .into_par_iter()
+        .map(|candidate| {
+            let cached = cached.get(&candidate.path);
+            if let Some(cached) = cached.filter(|cached| {
+                cached.size_bytes == candidate.size_bytes
+                    && cached.modified_at_ns == candidate.modified_at_ns
+            }) {
+                return Ok((candidate, cached.content_hash.clone(), None));
             }
-            _ => {
-                hashed_files += 1;
-                changed_paths.push(candidate.path.clone());
-                let source_path = root.join(&candidate.path);
-                let bytes = fs::read(&source_path).map_err(|error| {
-                    format!("Unable to read {}: {error}", source_path.display())
-                })?;
-                if include_source_batch {
-                    let utf8 = String::from_utf8_lossy(&bytes).into_owned();
-                    let byte_len = utf8.len();
-                    if source_batch_bytes.saturating_add(byte_len) <= MAX_SOURCE_BATCH_BYTES {
-                        source_batch_bytes += byte_len;
-                        source_batch_records.push(NativeSourceBatchRecord {
-                            path: candidate.path.clone(),
-                            utf8,
-                            size_bytes: candidate.size_bytes,
-                            modified_at_ns: candidate.modified_at_ns,
-                        });
-                    } else {
-                        source_batch_omitted_files += 1;
-                    }
+            let source_path = root.join(&candidate.path);
+            let bytes = fs::read(&source_path)
+                .map_err(|error| format!("Unable to read {}: {error}", source_path.display()))?;
+            Ok((candidate, content_hash(&bytes), Some(bytes)))
+        })
+        .collect::<Vec<Result<(CandidateFile, String, Option<Vec<u8>>), String>>>();
+    let mut records = Vec::with_capacity(candidate_reads.len());
+    for read in candidate_reads {
+        let (candidate, hash, bytes) = read?;
+        if let Some(bytes) = bytes {
+            hashed_files += 1;
+            changed_paths.push(candidate.path.clone());
+            if include_source_batch {
+                let utf8 = String::from_utf8_lossy(&bytes).into_owned();
+                let byte_len = utf8.len();
+                if source_batch_bytes.saturating_add(byte_len) <= MAX_SOURCE_BATCH_BYTES {
+                    source_batch_bytes += byte_len;
+                    source_batch_records.push(NativeSourceBatchRecord {
+                        path: candidate.path.clone(),
+                        utf8,
+                        size_bytes: candidate.size_bytes,
+                        modified_at_ns: candidate.modified_at_ns,
+                    });
+                } else {
+                    source_batch_omitted_files += 1;
                 }
-                if include_native_source_texts && is_native_source_path(&candidate.path) {
-                    ephemeral_source_texts.insert(
-                        candidate.path.clone(),
-                        String::from_utf8_lossy(&bytes).into_owned(),
-                    );
-                }
-                content_hash(&bytes)
             }
-        };
+            if include_native_source_texts && is_native_source_path(&candidate.path) {
+                ephemeral_source_texts.insert(
+                    candidate.path.clone(),
+                    String::from_utf8_lossy(&bytes).into_owned(),
+                );
+            }
+        } else {
+            reused_files += 1;
+            reused_paths.push(candidate.path.clone());
+        }
         records.push(InventoryRecord {
             candidate,
             content_hash: hash,
