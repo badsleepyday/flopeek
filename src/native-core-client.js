@@ -557,7 +557,11 @@ function createNativeCoreClient(options = {}) {
             return requestNativeWithSignal(native, scanOptions.signal, "refreshNativePersistentProject", {
               projectRoot: authorityRoot,
               ...(Array.isArray(changedPaths) ? { changedPaths } : {}),
-              retainPublicSnapshot: true,
+              // A materialized CoreClient caller already receives the complete
+              // public graph in Node. Retaining another full snapshot inside
+              // the native session duplicates the peak; handle-only callers
+              // still retain it for native-side query reuse.
+              retainPublicSnapshot: nativeGraphHandleOnly,
               ...(nativeGraphHandleOnly ? { returnPublicGraph: false } : {}),
             });
           };
