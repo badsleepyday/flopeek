@@ -4,7 +4,6 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { validateGraph } = require("./graph-schema");
-const { compareCollation } = require("./collation");
 
 const CORE_COMPATIBILITY_SCHEMA = "flopeek-core-compatibility/v1";
 const JS_CORE_BASELINE_SCHEMA = "flopeek-js-core-baseline/v1";
@@ -23,7 +22,7 @@ function stableJson(value) {
 }
 
 function compareStable(left, right) {
-  return compareCollation(stableJson(left), stableJson(right));
+  return stableJson(left).localeCompare(stableJson(right));
 }
 
 function normalizedNode(node) {
@@ -37,7 +36,7 @@ function normalizedCoverage(coverage) {
   if (!coverage) return null;
   const normalized = stableValue(coverage);
   if (Array.isArray(normalized.languages)) {
-    normalized.languages.sort((left, right) => compareCollation(left.language, right.language));
+    normalized.languages.sort((left, right) => String(left.language).localeCompare(String(right.language)));
     for (const language of normalized.languages) {
       if (Array.isArray(language.parsers)) language.parsers.sort();
     }
@@ -49,10 +48,10 @@ function normalizedCoverage(coverage) {
 
 function createCoreCompatibilityProjection(graph) {
   validateGraph(graph);
-  const nodes = graph.nodes.map(normalizedNode).sort((left, right) => compareCollation(left.id, right.id));
+  const nodes = graph.nodes.map(normalizedNode).sort((left, right) => left.id.localeCompare(right.id));
   const edges = graph.edges.map(stableValue).sort(compareStable);
-  const flows = graph.flows.map(stableValue).sort((left, right) => compareCollation(left.id, right.id));
-  const diagnosticFlows = graph.diagnosticFlows.map(stableValue).sort((left, right) => compareCollation(left.id, right.id));
+  const flows = graph.flows.map(stableValue).sort((left, right) => left.id.localeCompare(right.id));
+  const diagnosticFlows = graph.diagnosticFlows.map(stableValue).sort((left, right) => left.id.localeCompare(right.id));
   return stableValue({
     schemaVersion: CORE_COMPATIBILITY_SCHEMA,
     graphSchemaVersion: graph.schemaVersion,
@@ -83,7 +82,7 @@ function sourceFiles(root) {
   const files = [];
   const visit = (directory) => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      if (entry.name === ".flopeek" || entry.name === "expectations.json") continue;
+      if (entry.name === ".flopeek" || entry.name === ".flowpeek" || entry.name === "expectations.json") continue;
       const absolute = path.join(directory, entry.name);
       if (entry.isDirectory()) visit(absolute);
       else if (entry.isFile()) files.push(path.relative(root, absolute).replaceAll("\\", "/"));

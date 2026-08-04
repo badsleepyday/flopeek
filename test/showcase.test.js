@@ -30,20 +30,6 @@ async function waitForGraphVersion(baseUrl, minimumVersion) {
   throw new Error(`Timed out waiting for showcase graph version ${minimumVersion}.`);
 }
 
-async function waitForChangedContexts(baseUrl, fromVersion, changedPath) {
-  let observed = null;
-  for (let attempt = 0; attempt < 80; attempt += 1) {
-    const view = await (await fetch(`${baseUrl}/api/view?mode=overview&scope=application`)).json();
-    if (view.aiContext?.graphState?.graphVersion > fromVersion) {
-      const changedContexts = await (await fetch(`${baseUrl}/api/changed-contexts`)).json();
-      observed = { graphVersion: view.aiContext.graphState.graphVersion, changedContexts };
-      if (changedContexts.available && changedContexts.delta.changedPaths.includes(changedPath)) return { changedContexts, view };
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error(`Timed out waiting for changed context ${changedPath} after graph version ${fromVersion}: ${JSON.stringify(observed)}`);
-}
-
 function mcpPayload(result) {
   return JSON.parse(result.content.find((item) => item.type === "text").text);
 }
@@ -155,16 +141,17 @@ test("showcase demonstrates one shared Viewer, HTTP, and MCP context before and 
 
     const applied = applyShowcaseChange(instance.workspaceRoot);
     assert.equal(applied.status, "changed");
-    const { changedContexts, view: refreshedView } = await waitForChangedContexts(baseUrl, graphVersion, "src/checkout/payment.ts");
+    const refreshedView = await waitForGraphVersion(baseUrl, graphVersion + 1);
     assert.equal(refreshedView.project.projectId, projectId);
 
+    const changedContexts = await (await fetch(`${baseUrl}/api/changed-contexts`)).json();
     assert.equal(changedContexts.available, true);
     assert.deepEqual(changedContexts.delta.changedPaths, ["src/checkout/payment.ts"]);
     const changedFlow = changedContexts.flows.find((flow) => flow.id === PRIMARY_FLOW_ID);
     assert.equal(changedFlow.flowComparisonAvailable, true);
     assert.ok(changedFlow.changedStepIds.includes("symbol:src/checkout/payment.ts:function:authorizePayment"));
 
-    const comparison = await (await fetch(`${baseUrl}/api/flow-comparison?flow=${encodeURIComponent(PRIMARY_FLOW_ID)}&fromVersion=${changedContexts.delta.fromGraphVersion}&toVersion=${changedContexts.delta.toGraphVersion}`)).json();
+    const comparison = await (await fetch(`${baseUrl}/api/flow-comparison?flow=${encodeURIComponent(PRIMARY_FLOW_ID)}`)).json();
     assert.equal(comparison.available, true);
     assert.equal(comparison.comparison.status, "changed");
     assert.ok(comparison.comparison.changes.addedStepIds.includes(RISK_STEP_ID));

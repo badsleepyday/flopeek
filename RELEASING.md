@@ -48,23 +48,16 @@ request is merged or closed.
    and at least four distinct recorded provider IDs. This record is an explicit
    maintainer attestation; its references remain independently reviewable
    evidence, not parser facts or an automated proof of provider independence.
-3. Record the exact npm owner decision in
-   `packaging/npm-publication-approval.json`. Release-preparation commits keep
-   this record `not-approved`; automation must not invent owner approval.
-4. Create an annotated semantic-version tag on the approved `main` commit and
-   push it.
-5. The tagged workflow builds and tests all six binaries, packs and clean-room
-   verifies each platform package on its own OS, verifies the complete release
-   set, and only then publishes immutable platform and main versions under a
-   staging dist-tag.
-6. The workflow anonymously installs the exact main version from the public
-   registry. Only after that succeeds does it move the public channel dist-tag
-   for the platform packages and main package.
-7. The GitHub Release is created last.
+3. For beta, release candidate, and stable channels, publish the exact approved
+   package first. The tagged-release workflow checks that the public npm
+   dist-tag resolves to that same version. An alpha may remain source-only.
+4. Create an annotated semantic-version tag on the approved `main` commit.
+5. Push the tag. The release workflow fails closed until the approval record,
+   source/package checks, and required registry check pass; only then does it
+   create the GitHub Release and mark prerelease tags as prereleases.
 
-Creating a tag does not bypass either approval gate. A failed verification can
-never move the public channel dist-tag, and native platform packages are not
-published before the complete release set has passed verification.
+Creating a tag does not bypass this gate. The workflow never runs `npm publish`;
+registry publication retains its separate exact owner approval gate.
 
 ## Private overlay boundary
 

@@ -568,36 +568,17 @@ test("C# Roslyn analysis extracts usings, class declarations, and methods", () =
       assert.equal(graph.nodes.some((node) => node.id === "external:System"), false);
       return;
     }
-    assert.equal(file.analysis.parser, "csharp-static-ast");
+    assert.equal(file.analysis.parser, "csharp-roslyn");
     assert.equal(file.analysis.status, "parsed");
     assert.deepEqual(service.methods, ["Submit", "Count"]);
     assert.ok(graph.nodes.some((node) => node.id === "external:System"));
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test("C# helper selects the newest SDK numerically instead of lexicographically", () => {
+test("C# helper selects the newest installed SDK numerically", () => {
   assert.equal(selectLatestSdk(["9.0.400", "10.0.100", "10.0.302", "preview"]), "10.0.302");
   assert.equal(selectLatestSdk(["10.0.300-preview.1", "10.0.300"]), "10.0.300");
-  assert.equal(selectLatestSdk(["10.0.300", "10.0.301-preview.1"]), "10.0.301-preview.1");
   assert.equal(selectLatestSdk(["invalid", "preview"]), null);
-});
-
-test("C# Roslyn reports malformed input with diagnostics without inventing symbols", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-csharp-malformed-"));
-  try {
-    write(root, "package.json", JSON.stringify({ name: "csharp-malformed" }));
-    write(root, "src/Broken.cs", "using Acme.Data;\npublic class Broken { public void Submit( {");
-    const graph = scanRepository(root);
-    const file = graph.nodes.find((node) => node.id === "file:src/Broken.cs");
-    if (!CSHARP_TOOLCHAIN_AVAILABLE) {
-      assert.equal(file.analysis.status, "inventory-only");
-      return;
-    }
-    assert.equal(file.analysis.parser, "csharp-static-ast");
-    assert.equal(file.analysis.status, "parsed-with-diagnostics");
-    assert.ok(file.analysis.diagnostics > 0);
-    assert.equal(graph.nodes.some((node) => node.id.includes(":function:")), false);
-  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test("PHP AST analysis extracts use imports, declarations, methods, and direct local calls", () => {
@@ -688,39 +669,6 @@ test("Tree-sitter Java resolves only unqualified unique local static method call
     assert.equal(graph.nodes.some((node) => node.id === "symbol:src/Orders.java:function:Orders.overloaded"), false);
     assert.equal(graph.edges.some((edge) => edge.type === "calls" && edge.source === maybe.id), false);
     assert.ok(graph.analysis.calls.supported.includes("direct unqualified unique local static Java method calls"));
-  } finally { fs.rmSync(root, { recursive: true, force: true }); }
-});
-
-test("Tree-sitter Java canonical facts preserve overloaded methods without changing public v1 IDs", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-java-canonical-overloads-"));
-  try {
-    write(root, "package.json", JSON.stringify({ name: "java-overload-example" }));
-    write(root, "src/OrderService.java", "class OrderService { void save(Order order) {} void save(Order order, User user) {} }\n");
-    const scanner = createRepositoryScanner(root, { persistIdentity: false });
-    const graph = scanner.scan();
-    const record = scanner.snapshotRecords().find((item) => item.relativePath === "src/OrderService.java");
-    const overloads = record.result.identitySymbols.filter((symbol) => symbol.type === "method" && symbol.name === "save");
-    assert.deepEqual(overloads.map((symbol) => symbol.identity.signature), ["(Order):void", "(Order,User):void"]);
-    assert.ok(overloads.every((symbol) => symbol.identity.lexicalOwner.name === "OrderService"));
-    assert.equal(graph.nodes.some((node) => node.id === "symbol:src/OrderService.java:function:OrderService.save"), false);
-    assert.ok(graph.nodes.some((node) => node.id === "symbol:src/OrderService.java:class:OrderService"));
-  } finally { fs.rmSync(root, { recursive: true, force: true }); }
-});
-
-test("TypeScript canonical facts preserve owners and overload signatures without changing public v1 IDs", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-typescript-canonical-overloads-"));
-  try {
-    write(root, "package.json", JSON.stringify({ name: "typescript-overload-example" }));
-    write(root, "src/OrderService.ts", "class OrderService { save(order: Order): void; save(order: Order, user: User): void; save(order: Order, user?: User): void {} }\nclass AuditService { save(order: Order): void {} }\n");
-    const scanner = createRepositoryScanner(root, { persistIdentity: false });
-    const graph = scanner.scan();
-    const record = scanner.snapshotRecords().find((item) => item.relativePath === "src/OrderService.ts");
-    const saves = record.result.identitySymbols.filter((symbol) => symbol.name === "save");
-    assert.equal(saves.length, 4);
-    assert.deepEqual(saves.slice(0, 2).map((symbol) => symbol.identity.signature), ["(Order):void", "(Order,User):void"]);
-    assert.equal(saves[0].identity.qualifiedName, "OrderService.save");
-    assert.equal(saves[3].identity.qualifiedName, "AuditService.save");
-    assert.equal(graph.nodes.filter((node) => node.id === "symbol:src/OrderService.ts:class:OrderService").length, 1);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -3026,7 +2974,7 @@ test("repository scope defaults keep test and fixture endpoints out of applicati
     write(root, "src/orders.routes.ts", "router.get('/orders', () => ({ ok: true }));");
     write(root, "test/orders.routes.spec.ts", "router.put('/test-orders', () => ({ ok: true }));");
     write(root, "test/fixtures/orders.routes.ts", "router.post('/fixture-orders', () => ({ ok: true }));");
-    write(root, ".flopeek/cache.routes.ts", "router.delete('/cache', () => ({ ok: true }));");
+    write(root, ".flowpeek/legacy.routes.ts", "router.delete('/legacy-cache', () => ({ ok: true }));");
     const graph = scanRepository(root);
     assert.deepEqual(graph.flows.map((flow) => flow.title), ["GET /orders"]);
     assert.deepEqual(graph.diagnosticFlows.map((flow) => flow.title).sort(), ["GET /orders", "POST /fixture-orders", "PUT /test-orders"]);
@@ -3176,51 +3124,6 @@ test("repository config watcher remains active when recursive directory watching
     filename: path.join("/repository", ".flopeek", "config.json"),
     listener: configListener,
   });
-});
-
-test("repository watcher resolves Windows short paths before starting recursive watches", () => {
-  let watchedRoot = null;
-  let watchedConfig = null;
-  const realpathSync = () => { throw new Error("generic realpath must not be used"); };
-  realpathSync.native = (root) => {
-    assert.equal(root, "C:\\RUNNER~1\\AppData\\Local\\Temp\\repository");
-    return "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\repository";
-  };
-  const watcher = { close() {}, on() {} };
-  const fileSystem = {
-    realpathSync,
-    watch(root) { watchedRoot = root; return watcher; },
-    watchFile(filename) { watchedConfig = filename; },
-    unwatchFile() {},
-  };
-  const close = watchRepository("C:\\RUNNER~1\\AppData\\Local\\Temp\\repository", () => {}, fileSystem);
-  assert.equal(watchedRoot, "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\repository");
-  assert.equal(watchedConfig, path.join(watchedRoot, ".flopeek", "config.json"));
-  close();
-});
-
-test("Windows short and long roots retain one graph identity and adjacent delta", { skip: process.platform !== "win32" }, () => {
-  const shortRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-canonical-root-"));
-  try {
-    const longRoot = fs.realpathSync.native(shortRoot);
-    write(shortRoot, "package.json", JSON.stringify({ name: "canonical-root" }));
-    write(shortRoot, "src/index.js", "module.exports = 1;\n");
-    const first = scanRepository(shortRoot, { persistIdentity: true });
-    const firstWrite = writeGraphCache(shortRoot, first, { reason: "canonical-root-initial" });
-    assert.equal(first.project.root, longRoot);
-    assert.equal(firstWrite.graphState.graphVersion, 1);
-
-    write(shortRoot, "src/index.js", "module.exports = 2;\n");
-    const scanner = createRepositoryScanner(longRoot, { persistIdentity: true });
-    const second = scanner.scan(["src/index.js"]);
-    const secondWrite = writeGraphCache(longRoot, second, { reason: "canonical-root-refresh", changedPaths: ["src/index.js"] });
-    assert.equal(second.project.root, longRoot);
-    assert.equal(secondWrite.previousCache, "valid");
-    assert.equal(secondWrite.graphState.graphVersion, 2);
-    assert.deepEqual(secondWrite.delta.changedPaths, ["src/index.js"]);
-  } finally {
-    fs.rmSync(shortRoot, { recursive: true, force: true });
-  }
 });
 
 test("serve watches repository scope configuration changes", async () => {

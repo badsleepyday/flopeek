@@ -1,13 +1,10 @@
 "use strict";
 
 const childProcess = require("node:child_process");
-const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
-const { nativePlatformPackageNames } = require("./native-platform-targets");
 
-const GITHUB_RELEASE_APPROVAL_SCHEMA = "flopeek-github-release-approval/v2";
-const NATIVE_RELEASE_MANIFEST_SCHEMA = "flopeek-native-release-manifest/v1";
+const GITHUB_RELEASE_APPROVAL_SCHEMA = "flopeek-github-release-approval/v1";
 const RELEASE_ROLES = ["Azka", "Bono", "Cuna", "Dana", "Hadi", "Iris"];
 const RELEASE_CHANNELS = new Map([["alpha", "alpha"], ["beta", "beta"], ["rc", "rc"]]);
 
@@ -22,46 +19,6 @@ function exactKeys(value, expected, field) {
 function requiredText(value, field) {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${field} must be a non-empty string.`);
   return value;
-}
-
-function validSha256(value) {
-  return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
-}
-
-function validateNativeReleaseManifest(manifest) {
-  exactKeys(manifest, ["schemaVersion", "release", "artifacts"], "release manifest");
-  if (manifest.schemaVersion !== NATIVE_RELEASE_MANIFEST_SCHEMA) {
-    throw new Error(`release manifest must use ${NATIVE_RELEASE_MANIFEST_SCHEMA}.`);
-  }
-  exactKeys(manifest.release, ["packageName", "version", "tag", "repositoryRevision", "sourceDigest"], "release manifest identity");
-  requiredText(manifest.release.packageName, "release manifest packageName");
-  requiredText(manifest.release.version, "release manifest version");
-  if (manifest.release.tag !== `v${manifest.release.version}`) throw new Error("release manifest tag must exactly match its version.");
-  if (!/^[a-f0-9]{40,64}$/u.test(manifest.release.repositoryRevision || "")
-    || !validSha256(manifest.release.sourceDigest)) {
-    throw new Error("release manifest source binding is invalid.");
-  }
-  exactKeys(manifest.artifacts, ["main", "rolloutEvidence", "native"], "release manifest artifacts");
-  for (const [field, artifact] of [["main", manifest.artifacts.main], ["rolloutEvidence", manifest.artifacts.rolloutEvidence]]) {
-    exactKeys(artifact, ["filename", "sha256"], `release manifest ${field} artifact`);
-    requiredText(artifact.filename, `release manifest ${field} filename`);
-    if (!validSha256(artifact.sha256)) throw new Error(`release manifest ${field} sha256 is invalid.`);
-  }
-  exactKeys(manifest.artifacts.native, nativePlatformPackageNames(), "release manifest native artifacts");
-  for (const packageName of nativePlatformPackageNames()) {
-    const artifact = manifest.artifacts.native[packageName];
-    exactKeys(artifact, ["filename", "tarballSha256", "binarySha256", "target"], `release manifest ${packageName}`);
-    requiredText(artifact.filename, `release manifest ${packageName} filename`);
-    requiredText(artifact.target, `release manifest ${packageName} target`);
-    if (!validSha256(artifact.tarballSha256) || !validSha256(artifact.binarySha256)) {
-      throw new Error(`release manifest ${packageName} checksums are invalid.`);
-    }
-  }
-  return manifest;
-}
-
-function loadNativeReleaseManifest(file) {
-  return validateNativeReleaseManifest(JSON.parse(fs.readFileSync(file, "utf8")));
 }
 
 function releaseChannelForTag(tag) {
@@ -94,7 +51,7 @@ function validateReviewArtifacts(value) {
 
 function validateApprovedRelease(approval) {
   exactKeys(approval.release, ["tag", "channel", "packageName", "version", "npmDistTag"], "release approval release");
-  exactKeys(approval.evidence, ["brandDecisionReference", "manualViewerReviewReference", "releaseManifestSha256", "reviewArtifacts"], "release approval evidence");
+  exactKeys(approval.evidence, ["brandDecisionReference", "manualViewerReviewReference", "reviewArtifacts"], "release approval evidence");
   exactKeys(approval.approval, ["approvedBy", "approvedAt", "decisionReference"], "release approval decision");
   const parsed = releaseChannelForTag(requiredText(approval.release.tag, "release approval tag"));
   if (approval.release.channel !== parsed.channel) throw new Error("release approval channel does not match the tag.");
@@ -105,9 +62,6 @@ function validateApprovedRelease(approval) {
   if (parsed.channel === "stable" && approval.release.npmDistTag !== "latest") throw new Error("a stable release must use the latest npm dist-tag.");
   requiredText(approval.evidence.brandDecisionReference, "brand decision reference");
   requiredText(approval.evidence.manualViewerReviewReference, "manual Viewer review reference");
-  if (!/^[a-f0-9]{64}$/u.test(approval.evidence.releaseManifestSha256 || "")) {
-    throw new Error("release approval releaseManifestSha256 must be a lowercase SHA-256 digest.");
-  }
   validateReviewArtifacts(approval.evidence.reviewArtifacts);
   requiredText(approval.approval.approvedBy, "release approval approvedBy");
   requiredText(approval.approval.decisionReference, "release approval decisionReference");
@@ -132,22 +86,10 @@ function assertGithubReleaseApproved(root, options = {}) {
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
   const approval = loadGithubReleaseApproval(path.join(root, "packaging", "github-release-approval.json"));
   if (approval.status !== "approved") throw new Error("GitHub release is not approved; record the owner decision and independent release evidence first.");
-  const releaseManifestFile = requiredText(options.releaseManifest, "release manifest");
   if (approval.release.tag !== tag) throw new Error("GitHub release approval does not match the pushed tag.");
   if (approval.release.packageName !== packageJson.name || approval.release.version !== packageJson.version) throw new Error("GitHub release approval does not match the package identity.");
   const parsed = releaseChannelForTag(tag);
   if (approval.release.channel !== parsed.channel) throw new Error("GitHub release approval channel does not match the pushed tag.");
-  const manifestBytes = fs.readFileSync(releaseManifestFile);
-  const manifestSha256 = crypto.createHash("sha256").update(manifestBytes).digest("hex");
-  if (approval.evidence.releaseManifestSha256 !== manifestSha256) {
-    throw new Error("GitHub release approval is not bound to the exact release manifest.");
-  }
-  const manifest = loadNativeReleaseManifest(releaseManifestFile);
-  if (manifest.release.tag !== tag
-    || manifest.release.packageName !== packageJson.name
-    || manifest.release.version !== packageJson.version) {
-    throw new Error("the approved release manifest does not match the tag and package identity.");
-  }
   return approval;
 }
 

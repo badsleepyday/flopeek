@@ -40,9 +40,7 @@ function selectLatestSdk(entries) {
         const difference = left.version.components[index] - right.version.components[index];
         if (difference) return difference;
       }
-      if (left.version.prerelease !== right.version.prerelease) {
-        return left.version.prerelease ? -1 : 1;
-      }
+      if (left.version.prerelease !== right.version.prerelease) return left.version.prerelease ? -1 : 1;
       return left.name.localeCompare(right.name);
     })
     .at(-1)?.name || null;
@@ -50,16 +48,30 @@ function selectLatestSdk(entries) {
 
 function buildHelper() {
   const source = fs.readFileSync(path.join(__dirname, "csharp-facts.cs"));
-  const fingerprint = crypto.createHash("sha256").update("copy-local-roslyn-v1\0").update(source).digest("hex").slice(0, 16);
-  const target = path.join(os.tmpdir(), `flopeek-csharp-facts-${fingerprint}`);
-  const helper = path.join(target, "Flopeek.CSharpFacts.dll");
-  if (fs.existsSync(helper)) return helper;
   const sdkRoot = path.join(dotnetRoot(), "sdk");
   let sdk;
   try { sdk = selectLatestSdk(fs.readdirSync(sdkRoot)); } catch { return null; }
   if (!sdk) return null;
   const roslyn = path.join(sdkRoot, sdk, "Roslyn", "bincore");
   if (!fs.existsSync(path.join(roslyn, "Microsoft.CodeAnalysis.CSharp.dll"))) return null;
+  // Bind the helper cache to the selected SDK. A source-only fingerprint can
+  // retain an executable whose Roslyn assemblies came from an older SDK and
+  // make a healthy toolchain look unavailable after an SDK update.
+  const fingerprint = crypto.createHash("sha256")
+    .update("copy-local-roslyn-v2\0")
+    .update(sdk)
+    .update("\0")
+    .update(source)
+    .digest("hex")
+    .slice(0, 16);
+  const target = path.join(os.tmpdir(), `flopeek-csharp-facts-${fingerprint}`);
+  const helper = path.join(target, "Flopeek.CSharpFacts.dll");
+  const helperDependencies = [
+    helper,
+    path.join(target, "Microsoft.CodeAnalysis.dll"),
+    path.join(target, "Microsoft.CodeAnalysis.CSharp.dll"),
+  ];
+  if (helperDependencies.every((file) => fs.existsSync(file))) return helper;
   const work = `${target}.build-${process.pid}-${Date.now()}`;
   try {
     fs.mkdirSync(work, { recursive: true });

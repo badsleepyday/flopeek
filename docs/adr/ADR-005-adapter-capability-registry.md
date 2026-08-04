@@ -10,7 +10,7 @@ Adapter support statements previously appeared in scanner output and human docum
 
 ## Decision
 
-`src/adapter-registry.js` is the declarative source of truth for general adapter capability metadata. It uses the versioned `flopeek-adapter-capabilities/v2` schema, separates product capability from JavaScript/native implementation availability, validates closed vocabulary and fields, and returns deterministically sorted records. It never reads the scanned repository or executes target code/configuration.
+`src/adapter-registry.js` is the declarative source of truth for general adapter capability metadata. It uses the versioned `flopeek-adapter-capabilities/v1` schema, validates closed vocabulary and fields, and returns deterministically sorted records. It never reads the scanned repository or executes target code/configuration.
 
 Graph `analysis.adapterCapabilities`, `/api/capabilities`, and agent context expose the same registry. Repository-specific `analysis.coverage` remains a separate parse-result report. Generated material in `SUPPORT.md` is produced from the registry and `check:support` rejects drift without writing files.
 

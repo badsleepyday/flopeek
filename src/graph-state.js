@@ -157,7 +157,7 @@ function changedPathProvenance(root, previousGraph, options = {}) {
       .map((value) => value.trim().replaceAll("\\", "/"))
       .filter(Boolean);
     const paths = [...new Set([...changed, ...untracked])]
-      .filter((value) => value !== ".flopeek" && !value.startsWith(".flopeek/"))
+      .filter((value) => value !== ".flopeek" && !value.startsWith(".flopeek/") && value !== ".flowpeek" && !value.startsWith(".flowpeek/"))
       .sort();
     return { status: "available", source: "git-revision-diff", reason: null, paths };
   } catch {

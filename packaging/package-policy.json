@@ -4,11 +4,11 @@
     "name": "flopeek",
     "publication": {
       "state": "prepared",
-      "distTag": "beta",
+      "distTag": "latest",
       "approvalFile": "packaging/npm-publication-approval.json"
     },
     "bin": "src/cli.js",
-    "minimumNodeMajor": 22
+    "minimumNodeMajor": 20
   },
   "allowedExactPaths": [
     "ARCHITECTURE.md",
@@ -33,10 +33,7 @@
     "benchmarks/renderer-projection-corpus.json",
     "benchmarks/semantic-flow-suggestions.json",
     "benchmarks/semantic-suggestion-feedback-contract.json",
-    "benchmarks/monorepo-package-selection.json",
-    "contracts/adapter-capabilities.json",
-    "contracts/go-stdlib-catalog.json",
-    "packaging/native-rollout-evidence.json"
+    "benchmarks/monorepo-package-selection.json"
   ],
   "allowedDirectories": [
     "docs",
@@ -53,8 +50,6 @@
     "docs/assets/shared-context-workflow.svg",
     "docs/assets/screenshots/flow-lens.png",
     "package.json",
-    "contracts/go-stdlib-catalog.json",
-    "packaging/native-rollout-evidence.json",
     "src/cli.js",
     "src/core-compatibility.js",
     "src/mcp.js",
@@ -96,6 +91,6 @@
     ".pem",
     ".pfx"
   ],
-  "maximumEntries": 203,
-  "maximumUnpackedBytes": 3000000
+  "maximumEntries": 190,
+  "maximumUnpackedBytes": 2700000
 }

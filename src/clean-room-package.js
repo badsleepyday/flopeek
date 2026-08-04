@@ -7,7 +7,6 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { atomicWriteJson } = require("./graph-cache");
 const { npmInvocation, runPackageAudit } = require("./package-policy");
-const { nativePlatformPackageName } = require("./native-platform-targets");
 
 const CLEAN_ROOM_REPORT_SCHEMA = "flopeek-clean-room-package-report/v1";
 
@@ -28,7 +27,7 @@ function sourceFingerprint(root) {
   const files = [];
   const walk = (directory) => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name))) {
-      if (entry.name === ".flopeek" || entry.name === "node_modules") continue;
+      if (entry.name === ".flopeek" || entry.name === ".flowpeek" || entry.name === "node_modules") continue;
       const absolute = path.join(directory, entry.name);
       if (entry.isDirectory()) walk(absolute);
       else if (entry.isFile()) files.push(absolute);
@@ -253,99 +252,6 @@ async function verifyCleanRoomPackage(root, options = {}) {
   return report;
 }
 
-// This is deliberately separate from the general package smoke test: it
-// proves the installed CLI resolves its native executable from the
-// target-locked optional package, with no checkout binary available inside
-// the packed main package.
-async function verifyCleanRoomNativePlatformPackage(root, options = {}) {
-  const repository = fs.realpathSync(root);
-  const packageName = nativePlatformPackageName();
-  if (!packageName) throw new CleanRoomError("unsupported-native-platform", `No native platform package is registered for ${process.platform}/${process.arch}.`);
-  const executable = process.platform === "win32" ? "flopeek-native-core.exe" : "flopeek-native-core";
-  const releaseBinary = path.join(repository, "native", "flopeek-core", "target", "release", executable);
-  const suppliedPlatformTarball = options.platformTarball ? path.resolve(options.platformTarball) : null;
-  if (suppliedPlatformTarball && (!fs.existsSync(suppliedPlatformTarball) || !fs.statSync(suppliedPlatformTarball).isFile())) throw new CleanRoomError("missing-platform-tarball", `Supplied platform tarball is missing: ${suppliedPlatformTarball}`);
-  if (!suppliedPlatformTarball && (!fs.existsSync(releaseBinary) || !fs.statSync(releaseBinary).isFile())) throw new CleanRoomError("missing-native-release-binary", `Native release binary is required: ${releaseBinary}`);
-  const report = cleanRoomReport();
-  report.evidenceClass = "clean-room-native-platform-observation";
-  report.nativePlatform = { packageName, platform: process.platform, architecture: process.arch, status: "running" };
-  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-clean-room-native-"));
-  const packDirectory = path.join(workspace, "pack");
-  const nativeDirectory = path.join(workspace, "native-package");
-  const nativePackDirectory = path.join(workspace, "native-pack");
-  const consumer = path.join(workspace, "consumer");
-  const fixture = path.join(workspace, "fixture");
-  let failure = null;
-  try {
-    fs.mkdirSync(packDirectory, { recursive: true });
-    fs.mkdirSync(nativePackDirectory, { recursive: true });
-    fs.mkdirSync(consumer, { recursive: true });
-    const packed = phase(report, "pack-main", () => runPackageAudit(repository, { dryRun: false, packDestination: packDirectory, timeoutMilliseconds: options.packTimeoutMilliseconds || 180_000 }));
-    if (packed.report.status !== "passed") throw new CleanRoomError("package-audit-failed", "The produced main tarball failed the committed package policy.");
-    const mainTarball = path.join(packDirectory, packed.packResult.filename);
-    let platformTarball = suppliedPlatformTarball;
-    if (!platformTarball) {
-      phase(report, "package-platform-native", () => run(process.execPath, [
-        path.join(repository, "scripts", "package-native-platform.js"),
-        "--package", packageName, "--os", process.platform, "--cpu", process.arch,
-        "--binary", releaseBinary, "--output", nativeDirectory,
-      ], { cwd: repository, label: "package platform native" }));
-      const packedPlatform = phase(report, "pack-platform-native", () => parseJsonOutput(npmRun(["pack", "--json", "--pack-destination", nativePackDirectory], { cwd: nativeDirectory, label: "npm pack platform native" }).stdout, "npm pack platform native"));
-      const platformFilename = packedPlatform[0]?.filename;
-      if (!platformFilename) throw new CleanRoomError("missing-platform-tarball", "npm pack did not report a platform native tarball.");
-      platformTarball = path.join(nativePackDirectory, platformFilename);
-    }
-    if (!fs.existsSync(mainTarball) || !fs.statSync(mainTarball).isFile() || !fs.existsSync(platformTarball) || !fs.statSync(platformTarball).isFile()) throw new CleanRoomError("missing-tarball", "Clean-room native verification is missing a packed tarball.");
-    report.artifact = { filename: path.basename(mainTarball), sha256: sha256File(mainTarball), packedBytes: fs.statSync(mainTarball).size };
-    report.nativePlatform.artifact = { filename: path.basename(platformTarball), sha256: sha256File(platformTarball), packedBytes: fs.statSync(platformTarball).size, source: suppliedPlatformTarball ? "supplied-release-artifact" : "locally-packed-release-binary" };
-    phase(report, "copy-fixture", () => {
-      fs.cpSync(path.join(repository, "examples", "commerce-showcase"), fixture, { recursive: true, errorOnExist: true });
-      fs.writeFileSync(path.join(consumer, "package.json"), `${JSON.stringify({ name: "flopeek-clean-room-native-consumer", private: true, version: "0.0.0" }, null, 2)}\n`);
-    });
-    const before = sourceFingerprint(fixture);
-    phase(report, "install-main-tarball", () => npmRun(["install", "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false", mainTarball], { cwd: consumer, timeoutMilliseconds: options.installTimeoutMilliseconds || 300_000 }));
-    phase(report, "install-platform-tarball", () => npmRun(["install", "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false", platformTarball], { cwd: consumer, timeoutMilliseconds: options.installTimeoutMilliseconds || 300_000 }));
-    const resolved = phase(report, "resolve-installed-native", () => parseJsonOutput(run(process.execPath, ["-e", "process.stdout.write(JSON.stringify(require('flopeek/src/native-incremental-coordinator').defaultNativeBinary()))"], { cwd: consumer, label: "resolve installed native" }).stdout, "resolve installed native"));
-    const expectedBinary = path.join(consumer, "node_modules", ...packageName.split("/"), "bin", executable);
-    const nativeScan = phase(report, "native-experimental-scan", () => parseJsonOutput(npmRun(["exec", "--offline", "--", "flopeek", "scan", fixture, "--core-mode", "native-experimental", "--no-cache", "--format", "json"], { cwd: consumer, label: "installed native flopeek scan", timeoutMilliseconds: 180_000 }).stdout, "installed native flopeek scan"));
-    const after = sourceFingerprint(fixture);
-    report.nativePlatform = {
-      ...report.nativePlatform,
-      status: "resolved",
-      resolvedBinary: resolved.command,
-      expectedBinary,
-      checksumVerifiedByResolver: path.resolve(resolved.command) === path.resolve(expectedBinary),
-      nativeScan: {
-        requestedMode: nativeScan.analysis?.coreRuntime?.requestedMode ?? null,
-        selectedImplementation: nativeScan.analysis?.coreRuntime?.selectedImplementation ?? null,
-        cacheStatus: nativeScan.analysis?.cacheState?.status ?? null,
-        nodes: nativeScan.stats?.nodes ?? null,
-      },
-    };
-    report.smoke = { targetFixture: { copied: true, sourceFingerprintBefore: before, sourceFingerprintAfter: after, unchanged: before.value === after.value, applicationExecuted: false, testCommandExecuted: false } };
-    if (!(report.nativePlatform.checksumVerifiedByResolver
-      && report.nativePlatform.nativeScan.requestedMode === "native-experimental"
-      && report.nativePlatform.nativeScan.selectedImplementation === "native"
-      && report.nativePlatform.nativeScan.cacheStatus === "disabled"
-      && before.value === after.value)) {
-      throw new CleanRoomError("native-platform-smoke-contract-failed", "Installed platform native package did not satisfy the clean-room native contract.");
-    }
-    report.nativePlatform.status = "passed";
-    report.status = "passed";
-  } catch (error) {
-    failure = error instanceof CleanRoomError ? error : new CleanRoomError("unexpected-error", error.message);
-    report.status = "failed";
-    report.nativePlatform.status = "failed";
-    report.failure = { code: failure.code, message: failure.message };
-  } finally {
-    try { fs.rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); report.cleanup = { status: fs.existsSync(workspace) ? "failed" : "passed" }; }
-    catch (error) { report.cleanup = { status: "failed", code: error.code || "cleanup-error" }; }
-    if (report.cleanup.status !== "passed") { report.status = "failed"; failure ||= new CleanRoomError("cleanup-failed", "The native clean-room workspace could not be removed."); }
-  }
-  if (failure) throw new CleanRoomError(failure.code, failure.message, report);
-  return report;
-}
-
 function writeCleanRoomReport(file, report) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   atomicWriteJson(file, report);
@@ -358,6 +264,5 @@ module.exports = {
   sha256File,
   sourceFingerprint,
   verifyCleanRoomPackage,
-  verifyCleanRoomNativePlatformPackage,
   writeCleanRoomReport,
 };

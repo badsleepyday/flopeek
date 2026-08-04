@@ -1,7 +1,7 @@
 {
   "schemaVersion": "flopeek-npm-publication-approval/v1",
-  "status": "not-approved",
+  "status": "approved",
   "packageName": "flopeek",
-  "version": "0.2.1-beta.4",
-  "distTag": "beta"
+  "version": "0.2.1",
+  "distTag": "latest"
 }

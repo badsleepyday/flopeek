@@ -6,6 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const { sourceFingerprint, writeCleanRoomReport } = require("../../src/clean-room-package");
+const PACKAGE = require("../../package.json");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 
@@ -42,7 +43,7 @@ test("checked clean-room evidence preserves package, source, cleanup, and public
   assert.equal(report.packageAudit.status, "passed");
   assert.equal(report.packageAudit.package.private, false);
   assert.equal(report.packageAudit.policy.publicationState, "prepared");
-  assert.equal(report.packageAudit.policy.distTag, "beta");
+  assert.equal(report.packageAudit.policy.distTag, PACKAGE.publishConfig.tag);
   assert.equal(report.environment.lifecycleScriptsDuringInstall, false);
   assert.equal(report.smoke.version.matched, true);
   assert.ok(report.smoke.scan.applicationFlows > 0);

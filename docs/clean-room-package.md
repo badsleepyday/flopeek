@@ -73,6 +73,6 @@ The report contains package identity, entry count, size, tarball SHA-256, host-s
 
 ## CI and interpretation
 
-The ordinary CI matrix runs the package tests, dry-run inventory audit, and clean-room verifier on Node 22 and Node 24. A local Windows pass plus future CI passes provide platform-specific observations; neither proves every operating system or shell.
+The ordinary CI matrix runs the package tests, dry-run inventory audit, and clean-room verifier on Node 20 and Node 22. A local Windows pass plus future CI passes provide platform-specific observations; neither proves every operating system or shell.
 
 A passing report proves one tarball can complete the declared clean-room sequence. It does not prove npm publication permission or package-name availability, licensing approval, upgrade compatibility, every adapter on every host, target runtime correctness, business intent, universal performance, or alpha/beta/stable readiness.

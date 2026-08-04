@@ -34,7 +34,9 @@ availability, or exclusive rights. A maintainer must obtain and record any
 jurisdiction-specific legal advice required for its intended distribution
 before promoting a public beta or stable release.
 
-Flopeek writes local state only under `.flopeek/`.
+The pre-rename `.flowpeek/` cache is treated as ignored legacy local state: it
+is never scanned as source and is not migrated or read as Flopeek evidence.
+Flopeek writes new local state only under `.flopeek/`.
 
 ## Writing rules
 

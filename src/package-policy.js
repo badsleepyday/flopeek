@@ -44,7 +44,7 @@ function validatePolicy(input) {
   if (input.package.name !== "flopeek") throw new PackagePolicyError("invalid-package-name", "policy.package.name must be flopeek.");
   exactKeys(input.package.publication, ["state", "distTag", "approvalFile"], "policy.package.publication");
   if (input.package.publication.state !== "prepared") throw new PackagePolicyError("unsafe-release-policy", "The package publication state must remain prepared until a separate release approval.");
-  if (input.package.publication.distTag !== "beta") throw new PackagePolicyError("unsafe-release-policy", "The prepared package must use the beta dist-tag.");
+  if (!["beta", "latest"].includes(input.package.publication.distTag)) throw new PackagePolicyError("unsafe-release-policy", "The prepared package must use the beta or latest dist-tag.");
   if (!Number.isSafeInteger(input.package.minimumNodeMajor) || input.package.minimumNodeMajor < 20) throw new PackagePolicyError("invalid-node-version", "policy.package.minimumNodeMajor must be an integer of at least 20.");
   if (!Number.isSafeInteger(input.maximumEntries) || input.maximumEntries < 1) throw new PackagePolicyError("invalid-entry-limit", "policy.maximumEntries must be a positive integer.");
   if (!Number.isSafeInteger(input.maximumUnpackedBytes) || input.maximumUnpackedBytes < 1) throw new PackagePolicyError("invalid-size-limit", "policy.maximumUnpackedBytes must be a positive integer.");
@@ -111,6 +111,9 @@ function auditPackageFiles(packResult, policyInput, packageJson) {
   if (!Number.isSafeInteger(packResult.unpackedSize) || packResult.unpackedSize > policy.maximumUnpackedBytes) errors.push({ code: "unpacked-size-limit-exceeded", actual: packResult.unpackedSize ?? null, maximum: policy.maximumUnpackedBytes });
   if (packResult.name !== policy.package.name || packageJson.name !== policy.package.name) errors.push({ code: "package-name-mismatch", expected: policy.package.name });
   if (packResult.version !== packageJson.version) errors.push({ code: "package-version-mismatch", expected: packageJson.version, actual: packResult.version ?? null });
+  const isBetaVersion = /-beta\.\d+$/u.test(packageJson.version);
+  const expectedDistTag = isBetaVersion ? "beta" : "latest";
+  if (policy.package.publication.distTag !== expectedDistTag) errors.push({ code: "release-channel-mismatch", expectedDistTag, actualDistTag: policy.package.publication.distTag });
   if (packageJson.private !== false) errors.push({ code: "release-publication-metadata", expectedPrivate: false, actualPrivate: packageJson.private ?? null });
   if (packageJson.publishConfig?.access !== "public" || packageJson.publishConfig?.tag !== policy.package.publication.distTag) {
     errors.push({ code: "release-publication-metadata", expectedAccess: "public", expectedDistTag: policy.package.publication.distTag });

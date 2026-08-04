@@ -7,13 +7,13 @@ Flopeek helps you answer four questions before changing an unfamiliar repository
 3. Which tests and neighboring components are directly related?
 4. Is the context I copied earlier still current?
 
-## Install the public beta
+## Install stable Flopeek
 
-Install the explicit beta channel, then point Flopeek at the repository you
-want to inspect:
+Install the stable package, then point Flopeek at the repository you want to
+inspect:
 
 ```powershell
-npm install --global flopeek@beta
+npm install --global flopeek@latest
 flopeek serve D:\work\my-project
 ```
 
@@ -24,8 +24,9 @@ flopeek serve D:\work\my-project --port 4780
 flopeek serve D:\work\my-project --port 4780 --strict-port
 ```
 
-The public `main` branch remains the canonical source checkout for contributors.
-Pin `@beta` explicitly until a stable npm release is published.
+The public `main` branch remains the canonical stable JavaScript-core source
+checkout for contributors. Native/Rust work is released separately as a
+prerelease and is not enabled by this package.
 
 ## Read the Viewer
 
