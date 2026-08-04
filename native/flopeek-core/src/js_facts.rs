@@ -2366,6 +2366,14 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
         with_native_parser_pool(|| {
             let cached_facts = &cached_facts;
             let project_root = &project_root;
+            if parser_chunk_size == 1 {
+                return candidates
+                    .par_iter()
+                    .map(|(path, source_hash)| {
+                        parse_native_candidate(project_root, cached_facts, path, source_hash)
+                    })
+                    .collect();
+            }
             // Tree-sitter parsers retain their language tables between parses.
             // Reuse one parser per language within each Rayon chunk instead of
             // constructing and configuring one for every source file. Large Java
@@ -2542,6 +2550,32 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
         structural_record_manifest: Vec::new(),
         entry_facts,
     })
+}
+
+fn parse_native_candidate(
+    project_root: &Path,
+    cached_facts: &BTreeMap<(String, String), String>,
+    path: &str,
+    source_hash: &str,
+) -> Result<(String, String, NativeJsFacts, Option<String>), String> {
+    if let Some(payload) = cached_facts.get(&(path.to_string(), source_hash.to_string())) {
+        let fact = serde_json::from_str(payload).map_err(|error| {
+            format!("Invalid cached native JavaScript parser fact for {path}: {error}")
+        })?;
+        return Ok((path.to_string(), source_hash.to_string(), fact, None));
+    }
+    let source = read_source_text(project_root.join(path))
+        .map_err(|error| format!("Unable to read JavaScript/TypeScript source {path}: {error}"))?;
+    let fact = parse_native_js_facts(path, &source).ok_or_else(|| {
+        format!("No native JavaScript/TypeScript parser is registered for {path}.")
+    })?;
+    let payload = serde_json::to_string(&fact).map_err(|error| error.to_string())?;
+    Ok((
+        path.to_string(),
+        source_hash.to_string(),
+        fact,
+        Some(payload),
+    ))
 }
 
 fn parse_native_js_paths_parallel(
