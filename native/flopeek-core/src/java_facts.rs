@@ -13,6 +13,10 @@ fn text(node: Node<'_>, source: &str) -> Option<String> {
     node.utf8_text(source.as_bytes()).ok().map(str::to_owned)
 }
 
+fn text_ref<'a>(node: Node<'_>, source: &'a str) -> Option<&'a str> {
+    node.utf8_text(source.as_bytes()).ok()
+}
+
 fn evidence(path: &str, node: Node<'_>) -> NativeJsEvidence {
     let start = node.start_position();
     let end = node.end_position();
@@ -62,13 +66,20 @@ fn method_is_static(node: Node<'_>, source: &str) -> bool {
     let mut cursor = node.walk();
     node.named_children(&mut cursor).any(|child| {
         child.kind() == "modifiers"
-            && text(child, source).is_some_and(|modifiers| {
+            && text_ref(child, source).is_some_and(|modifiers| {
                 modifiers.split_whitespace().any(|value| value == "static")
             })
     })
 }
 
-fn methods<'a>(node: Node<'a>, source: &str) -> Vec<(Node<'a>, String, bool)> {
+struct JavaMethod<'a> {
+    node: Node<'a>,
+    name: String,
+    is_static: bool,
+    signature: String,
+}
+
+fn methods<'a>(node: Node<'a>, source: &str) -> Vec<JavaMethod<'a>> {
     let Some(body) = type_body(node) else {
         return Vec::new();
     };
@@ -79,7 +90,12 @@ fn methods<'a>(node: Node<'a>, source: &str) -> Vec<(Node<'a>, String, bool)> {
             method
                 .child_by_field_name("name")
                 .and_then(|name| text(name, source))
-                .map(|name| (method, name, method_is_static(method, source)))
+                .map(|name| JavaMethod {
+                    node: method,
+                    is_static: method_is_static(method, source),
+                    signature: method_signature(method, source),
+                    name,
+                })
         })
         .collect()
 }
@@ -154,8 +170,8 @@ fn collect_calls(
         && node.child_by_field_name("object").is_none()
         && let Some(name) = node
             .child_by_field_name("name")
-            .and_then(|name| text(name, context.source))
-        && context.static_names.contains(&name)
+            .and_then(|name| text_ref(name, context.source))
+        && context.static_names.contains(name)
     {
         calls.push(NativeJsCall {
             name: format!("{}.{name}", context.type_name),
@@ -255,7 +271,7 @@ pub fn parse_native_java_facts_with_parser(
             name: type_name.clone(),
             methods: method_details
                 .iter()
-                .map(|(_, name, _)| name.clone())
+                .map(|method| method.name.clone())
                 .collect(),
             evidence: evidence(path, declaration),
             identity: Some(NativeJsCanonicalSymbolIdentity {
@@ -276,18 +292,18 @@ pub fn parse_native_java_facts_with_parser(
             symbol_type: "class".into(),
             name: type_name.clone(),
         };
-        for (method, name, is_static) in &method_details {
-            let qualified_name = format!("{type_name}.{name}");
+        for method in &method_details {
+            let qualified_name = format!("{type_name}.{}", method.name);
             structural.canonical_symbols.push(NativeJsStructuralSymbol {
                 symbol_type: "method".into(),
-                name: name.clone(),
+                name: method.name.clone(),
                 methods: vec![],
-                evidence: evidence(path, *method),
+                evidence: evidence(path, method.node),
                 identity: Some(NativeJsCanonicalSymbolIdentity {
                     qualified_name,
                     lexical_owner: Some(owner.clone()),
-                    signature: Some(method_signature(*method, source)),
-                    discriminator: if *is_static {
+                    signature: Some(method.signature.clone()),
+                    discriminator: if method.is_static {
                         "static-method"
                     } else {
                         "instance-method"
@@ -297,21 +313,21 @@ pub fn parse_native_java_facts_with_parser(
             });
         }
         let mut static_counts = BTreeMap::<String, usize>::new();
-        for (_, name, is_static) in &method_details {
-            if *is_static {
-                *static_counts.entry(name.clone()).or_default() += 1;
+        for method in &method_details {
+            if method.is_static {
+                *static_counts.entry(method.name.clone()).or_default() += 1;
             }
         }
         let unique_static = method_details
             .into_iter()
-            .filter(|(_, name, is_static)| *is_static && static_counts.get(name) == Some(&1))
+            .filter(|method| method.is_static && static_counts.get(&method.name) == Some(&1))
             .collect::<Vec<_>>();
         let static_names = unique_static
             .iter()
-            .map(|(_, name, _)| name.clone())
+            .map(|method| method.name.clone())
             .collect::<BTreeSet<_>>();
-        for (method, name, _) in unique_static {
-            let qualified_name = format!("{type_name}.{name}");
+        for method in unique_static {
+            let qualified_name = format!("{type_name}.{}", method.name);
             let owner = NativeJsSymbolReference {
                 symbol_type: "function".into(),
                 name: qualified_name.clone(),
@@ -320,18 +336,18 @@ pub fn parse_native_java_facts_with_parser(
                 symbol_type: "function".into(),
                 name: qualified_name,
                 methods: vec![],
-                evidence: evidence(path, method),
+                evidence: evidence(path, method.node),
                 identity: Some(NativeJsCanonicalSymbolIdentity {
-                    qualified_name: format!("{type_name}.{name}"),
+                    qualified_name: format!("{type_name}.{}", method.name),
                     lexical_owner: Some(NativeJsSymbolReference {
                         symbol_type: "class".into(),
                         name: type_name.clone(),
                     }),
-                    signature: Some(method_signature(method, source)),
+                    signature: Some(method.signature),
                     discriminator: "static-method".into(),
                 }),
             });
-            if let Some(body) = method.child_by_field_name("body") {
+            if let Some(body) = method.node.child_by_field_name("body") {
                 let context = JavaCallContext {
                     path,
                     source,
@@ -339,7 +355,7 @@ pub fn parse_native_java_facts_with_parser(
                     type_name: &type_name,
                     static_names: &static_names,
                 };
-                collect_calls(body, method, &context, &mut structural.calls);
+                collect_calls(body, method.node, &context, &mut structural.calls);
             }
         }
     }
