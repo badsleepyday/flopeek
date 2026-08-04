@@ -496,23 +496,17 @@ pub fn evict_native_js_source_cache(status: &mut NativeJsFactsStatus) {
                 status.compacted_facts.insert(path, payload);
             }
         } else {
-            // An incremental refresh hydrates the complete compact map only
-            // to run exact resolver invalidation. Re-serializing every
-            // unchanged fact here would recreate the very cold cost this
-            // cache is meant to remove; rewrite only direct source events.
-            let changed_fact_paths = status
-                .changed_paths
-                .iter()
-                .chain(status.removed_paths.iter())
-                .collect::<BTreeSet<_>>();
-            for path in changed_fact_paths {
-                if let Some(fact) = status.facts.get(path) {
-                    let payload = serde_json::to_string(fact)
-                        .expect("native parser facts must remain JSON serializable");
-                    status.compacted_facts.insert(path.clone(), payload);
-                } else {
-                    status.compacted_facts.remove(path);
-                }
+            // Incremental refreshes may hydrate reverse-importer facts in
+            // addition to the directly changed path. Re-serialize exactly the
+            // facts currently held in memory so targeted hydrations are not
+            // lost when the typed cache is evicted again.
+            for (path, fact) in &status.facts {
+                let payload = serde_json::to_string(fact)
+                    .expect("native parser facts must remain JSON serializable");
+                status.compacted_facts.insert(path.clone(), payload);
+            }
+            for path in &status.removed_paths {
+                status.compacted_facts.remove(path);
             }
             status.facts.clear();
         }
@@ -686,6 +680,11 @@ pub fn refresh_native_js_facts_session_owned(
     );
     let membership_changed = !added_paths.is_empty() || !removed_paths.is_empty();
     if membership_changed || !resolution_manifests.is_empty() {
+        // A membership or resolver-manifest change renumbers or invalidates
+        // the complete record set. The ordinary changed-file path can stay
+        // lazy, but this branch must hydrate every cached fact before it
+        // rebuilds all records and their global orders.
+        hydrate_native_js_source_facts(&mut next)?;
         // Candidate membership changes recordOrder for subsequent files. Keep
         // the public batch deterministic by rebuilding records from cached
         // facts/hashes, not by reparsing or rereading every source file.
