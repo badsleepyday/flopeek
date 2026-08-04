@@ -735,6 +735,26 @@ fn structural_fact_digest_serialization_matches_the_javascript_stable_json_contr
 }
 
 #[test]
+fn structural_fact_digest_accepts_canonical_raw_records_from_persistent_cache() {
+    let batch = structural_facts(json!({
+        "symbols": [{ "type": "function", "name": "checkout" }]
+    }));
+    let expected = structural_facts_digest(batch.as_object().unwrap()).unwrap();
+    let mut compact = batch;
+    for record in compact
+        .get_mut("records")
+        .and_then(Value::as_array_mut)
+        .unwrap()
+    {
+        *record = Value::String(stable_json(record));
+    }
+    assert_eq!(
+        structural_facts_digest(compact.as_object().unwrap()).unwrap(),
+        expected
+    );
+}
+
+#[test]
 fn structural_topology_digest_serialization_matches_the_stable_json_projection() {
     let mut batch = structural_facts(json!({
         "symbols": [{ "type": "function", "name": "checkout" }]

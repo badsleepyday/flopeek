@@ -872,7 +872,15 @@ pub(in crate::protocol) fn reconstruct_structural_fact_patch(
     session: &mut NativeProtocolSession,
     params: &Value,
     connection: &rusqlite::Connection,
-) -> Result<(NativePersistentFacts, NativePersistentFacts, Value), NativeProtocolError> {
+) -> Result<
+    (
+        NativePersistentFacts,
+        NativePersistentFacts,
+        Value,
+        BTreeSet<String>,
+    ),
+    NativeProtocolError,
+> {
     let patch = params.as_object().ok_or_else(|| NativeProtocolError {
         code: "invalid-structural-fact-patch",
         message: "Native structural fact patch must be an object.".to_string(),
@@ -1141,6 +1149,13 @@ pub(in crate::protocol) fn reconstruct_structural_fact_patch(
             message: "Structural fact patch includes records absent from its manifest.".to_string(),
         });
     }
+    // The source session reports changed records, but a deletion (or a
+    // rename's old path) has no record to include in `changedRecords`. Any
+    // cached path left unmatched by the new manifest is therefore a durable
+    // cache row that must be removed during selective promotion. Deriving this
+    // from the verified cache and manifest keeps the deletion set authoritative
+    // instead of trusting a caller-provided hint.
+    let removed_record_paths = cached_by_path.keys().cloned().collect::<BTreeSet<_>>();
     if topology_changed {
         for record in &mut records {
             if let Value::String(raw) = record {
@@ -1202,7 +1217,7 @@ pub(in crate::protocol) fn reconstruct_structural_fact_patch(
     next.facts_digest = computed_digest;
     next.topology_digest = topology_digest;
     next.payload = reconstructed;
-    Ok((next, previous, receipt))
+    Ok((next, previous, receipt, removed_record_paths))
 }
 
 pub(in crate::protocol) fn persist_native_public_graph_patch(
@@ -1221,10 +1236,10 @@ pub(in crate::protocol) fn persist_native_public_graph_patch_using_connection(
     connection: &mut rusqlite::Connection,
 ) -> Result<Value, NativeProtocolError> {
     let reconstruction_started = Instant::now();
-    let (mut next, previous, receipt) =
+    let (mut next, previous, receipt, removed_record_paths) =
         reconstruct_structural_fact_patch(session, params, connection)?;
     let reconstruction_ms = elapsed_ms(reconstruction_started);
-    let changed_paths = params
+    let mut changed_paths = params
         .get("changedRecords")
         .and_then(Value::as_array)
         .ok_or_else(|| NativeProtocolError {
@@ -1246,6 +1261,7 @@ pub(in crate::protocol) fn persist_native_public_graph_patch_using_connection(
                 })
         })
         .collect::<Result<BTreeSet<_>, _>>()?;
+    changed_paths.extend(removed_record_paths);
     if next.payload.get("projectRoot").is_none() {
         return Err(NativeProtocolError {
             code: "invalid-structural-facts",
