@@ -171,6 +171,14 @@ pub fn parse_native_java_facts(path: &str, source: &str) -> Option<NativeJsFacts
     parser
         .set_language(&tree_sitter_java::LANGUAGE.into())
         .ok()?;
+    parse_native_java_facts_with_parser(path, source, &mut parser)
+}
+
+pub fn parse_native_java_facts_with_parser(
+    path: &str,
+    source: &str,
+    parser: &mut Parser,
+) -> Option<NativeJsFacts> {
     let tree = parser.parse(source, None)?;
     let root = tree.root_node();
     let diagnostic_count = diagnostics(root);

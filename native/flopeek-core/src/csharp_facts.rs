@@ -166,14 +166,22 @@ fn recover_malformed_declaration(path: &str, source: &str) -> Option<NativeJsStr
 }
 
 pub fn parse_native_csharp_facts(path: &str, source: &str) -> Option<NativeJsFacts> {
-    // Roslyn treats an initial UTF-8 BOM as encoding metadata rather than
-    // source text. Tree-sitter otherwise counts its three encoded bytes as
-    // columns, shifting every range on the first line.
-    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
     let mut parser = Parser::new();
     parser
         .set_language(&tree_sitter_c_sharp::LANGUAGE.into())
         .ok()?;
+    parse_native_csharp_facts_with_parser(path, source, &mut parser)
+}
+
+pub fn parse_native_csharp_facts_with_parser(
+    path: &str,
+    source: &str,
+    parser: &mut Parser,
+) -> Option<NativeJsFacts> {
+    // Roslyn treats an initial UTF-8 BOM as encoding metadata rather than
+    // source text. Tree-sitter otherwise counts its three encoded bytes as
+    // columns, shifting every range on the first line.
+    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
     let tree = parser.parse(source, None)?;
     let root = tree.root_node();
     // Parser recovery trees are implementation details.  Match the Roslyn
