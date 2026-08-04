@@ -857,7 +857,8 @@ pub(crate) fn sync_identity_v2(
         payload,
         structural_batch,
         &public_identity_index,
-    )
+    )?;
+    Ok(())
 }
 
 /// Advance only source-backed revisions when the validated structural topology
@@ -1115,6 +1116,19 @@ fn sync_canonical_symbols(
            end_line = ?12, end_column = ?13, metadata_json = ?14
          WHERE node_revision_pk = ?15",
     )?;
+    let mut symbol_cold_update_revision = identity_store_empty
+        .then(|| {
+            transaction.prepare(
+                "UPDATE node_revisions_v2 SET semantic_hash = ?1, canonical_identity = ?2,
+                   revision_hash = ?3, source_sha256 = ?4, content_blake3 = NULL,
+                   path = ?5, qualified_name = ?6, display_name = ?7, signature = ?8,
+                   lexical_owner_pk = ?9, start_line = ?10, start_column = ?11,
+                   end_line = ?12, end_column = ?13, metadata_json = ?14
+                 WHERE node_pk = ?15 AND first_graph_version = ?16
+                   AND last_graph_version IS NULL",
+            )
+        })
+        .transpose()?;
     let mut symbol_close_revision = transaction.prepare(
         "UPDATE node_revisions_v2 SET last_graph_version = ?1 WHERE node_revision_pk = ?2",
     )?;
@@ -1375,6 +1389,31 @@ fn sync_canonical_symbols(
                         end_line,
                         end_column,
                         metadata_json
+                    ])?;
+                current_node_pks.insert(node_pk);
+                continue;
+            }
+            if identity_store_empty {
+                symbol_cold_update_revision
+                    .as_mut()
+                    .expect("cold symbol revision update statement")
+                    .execute(params![
+                        semantic.hash().as_bytes().as_slice(),
+                        semantic.canonical(),
+                        revision.as_bytes().as_slice(),
+                        source_sha256.as_ref().map(|value| value.as_slice()),
+                        path,
+                        qualified_name,
+                        name,
+                        signature,
+                        owner_pk,
+                        start_line,
+                        start_column,
+                        end_line,
+                        end_column,
+                        metadata_json,
+                        node_pk,
+                        graph_version
                     ])?;
                 current_node_pks.insert(node_pk);
                 continue;
@@ -1890,14 +1929,6 @@ fn sync_edges_and_placements(
            SELECT 1 FROM edge_presence_v2 WHERE edge_pk = ?1 AND last_graph_version IS NULL
          )",
     )?;
-    let mut insert_edge_presence_cold = cold_start
-        .then(|| {
-            transaction.prepare(
-                "INSERT INTO edge_presence_v2(edge_pk, first_graph_version, last_graph_version)
-                 VALUES (?1, ?2, NULL)",
-            )
-        })
-        .transpose()?;
     let mut insert_placement = transaction.prepare(
         "INSERT INTO node_placements_v2(project_pk, parent_node_pk, child_node_pk, relation,
            ordinal, placement_hash, first_graph_version, last_graph_version)
@@ -1924,14 +1955,6 @@ fn sync_edges_and_placements(
            WHERE placement_pk = ?1 AND last_graph_version IS NULL
          )",
     )?;
-    let mut insert_placement_presence_cold = cold_start
-        .then(|| {
-            transaction.prepare(
-                "INSERT INTO placement_presence_v2(placement_pk, first_graph_version, last_graph_version)
-                 VALUES (?1, ?2, NULL)",
-            )
-        })
-        .transpose()?;
     for edge in payload
         .get("edges")
         .and_then(Value::as_array)
@@ -1995,9 +2018,7 @@ fn sync_edges_and_placements(
                 |row| row.get::<_, i64>(0),
             )?
         };
-        if let Some(statement) = insert_edge_presence_cold.as_mut() {
-            statement.execute(params![edge_pk, graph_version])?;
-        } else {
+        if !cold_start {
             insert_edge_presence.execute(params![edge_pk, graph_version])?;
         }
 
@@ -2026,9 +2047,7 @@ fn sync_edges_and_placements(
                     |row| row.get::<_, i64>(0),
                 )?
             };
-            if let Some(statement) = insert_placement_presence_cold.as_mut() {
-                statement.execute(params![placement_pk, graph_version])?;
-            } else {
+            if !cold_start {
                 insert_placement_presence.execute(params![placement_pk, graph_version])?;
             }
         }
@@ -2049,6 +2068,24 @@ fn sync_edges_and_placements(
                 &mut current_evidence,
             )?;
         }
+    }
+
+    // A cold store has no existing open intervals. Materialize all presence
+    // rows with two set-based inserts after the edge/placement primary keys
+    // exist, instead of issuing one statement per relationship.
+    if cold_start {
+        transaction.execute(
+            "INSERT INTO edge_presence_v2(edge_pk, first_graph_version, last_graph_version)
+             SELECT edge_pk, ?2, NULL FROM edges_v2
+             WHERE project_pk = ?1 AND first_graph_version = ?2",
+            params![project_pk, graph_version],
+        )?;
+        transaction.execute(
+            "INSERT INTO placement_presence_v2(placement_pk, first_graph_version, last_graph_version)
+             SELECT placement_pk, ?2, NULL FROM node_placements_v2
+             WHERE project_pk = ?1 AND first_graph_version = ?2",
+            params![project_pk, graph_version],
+        )?;
     }
 
     // Public graph v1 deliberately collapses equal (source, target, relation)
