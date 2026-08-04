@@ -38,6 +38,9 @@ fn evidence(path: &str, node: Node<'_>) -> NativeJsEvidence {
 }
 
 fn diagnostics(node: Node<'_>) -> usize {
+    if !node.has_error() {
+        return 0;
+    }
     // Walk the tree with one reusable stack.  Building a temporary `Vec` for
     // every AST node made diagnostics checking dominate cold Java scans on
     // large repositories even though the result is only a count of recovery

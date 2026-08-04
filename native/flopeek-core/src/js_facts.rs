@@ -2100,6 +2100,9 @@ fn typescript_tolerates_tree_sitter_error(node: Node<'_>, source: &str) -> bool 
 }
 
 fn diagnostic_count(node: Node<'_>, source: &str) -> usize {
+    if !node.has_error() {
+        return 0;
+    }
     let mut count = 0;
     let mut stack = vec![node];
     while let Some(current) = stack.pop() {

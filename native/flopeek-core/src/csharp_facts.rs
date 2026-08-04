@@ -35,6 +35,9 @@ fn evidence(path: &str, node: Node<'_>) -> NativeJsEvidence {
     }
 }
 fn diagnostics(node: Node<'_>) -> usize {
+    if !node.has_error() {
+        return 0;
+    }
     let mut count = 0;
     let mut stack = vec![node];
     while let Some(current) = stack.pop() {
