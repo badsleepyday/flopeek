@@ -2,7 +2,6 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { nativePlatformPackageNames } = require("./native-platform-targets");
 
 const NPM_PUBLICATION_APPROVAL_SCHEMA = "flopeek-npm-publication-approval/v1";
 
@@ -30,13 +29,6 @@ function assertNpmPublicationApproved(root) {
   if (packageJson.private !== false) throw new Error("npm publication requires package.json private to be false.");
   if (packageJson.name !== approval.packageName || packageJson.version !== approval.version) throw new Error("npm publication approval does not match the package identity.");
   if (packageJson.publishConfig?.tag !== approval.distTag || packageJson.publishConfig?.access !== "public") throw new Error("npm publication approval does not match the declared public dist-tag configuration.");
-  const expectedNativePackages = nativePlatformPackageNames();
-  const optionalDependencies = packageJson.optionalDependencies || {};
-  const missing = expectedNativePackages.filter((name) => optionalDependencies[name] !== packageJson.version);
-  const unexpected = Object.keys(optionalDependencies).filter((name) => name.startsWith("@flopeek/native-") && !expectedNativePackages.includes(name));
-  if (missing.length || unexpected.length) {
-    throw new Error(`native platform optional dependencies must exactly match ${packageJson.version}; missing or mismatched: ${missing.join(", ") || "none"}; unexpected: ${unexpected.join(", ") || "none"}.`);
-  }
   return approval;
 }
 

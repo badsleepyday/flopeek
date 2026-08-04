@@ -61,26 +61,6 @@ Current public preview package version: `0.2.1-beta.3`.
 | SDLC workflow engine and local Work ledger | `partial` | Durable work records, planned windows, append-only actual events, Agile/Waterfall/custom definitions, evidence-gated transitions, a read-only Viewer inspector, immutable continuation checkpoints, immutable planned overlays/Plan Refs with CLI/HTTP/MCP parity, an opt-in Viewer Continue mode, append-only human reconciliation records, deterministic baseline/plan/current comparison, read-only divergence, and declared dependency readiness are current. Checkpoint editing and external evidence authority remain. |
 | Public distribution | `partial` | The unscoped `flopeek@0.2.1-beta.3` package is published on npm with the `beta` dist-tag and verified through a clean-room install. A tagged GitHub beta release, stable channel, and documented upgrade policy remain. |
 
-## Native-core re-engineering charter
-
-Status: `in progress`. This is the current P0 delivery constraint, not a second
-roadmap. See [ADR-024](docs/adr/ADR-024-native-core-strangler-contract.md).
-
-Flopeek is migrating through a strangler boundary: JavaScript remains the
-compatibility oracle while Rust replaces bounded internal responsibilities and
-SQLite becomes authoritative only after an explicit promotion gate. The active
-core loop is discovery, bounded scanning, structural facts, deterministic graph
-construction, entry flows, graph lifecycle, Context Ref freshness, impact, and
-related tests.
-
-Until native-core promotion, do not add languages/framework adapters, MCP tools,
-workflow/planning features, semantic/runtime features, WebGL work,
-multi-project behavior, or external integrations. Preserve existing extension
-behavior as compatibility surfaces; security, integrity, compatibility, and
-necessary release fixes remain allowed. Every native slice must retain public
-JavaScript IDs and pass the applicable canonical parity fixture before it can
-become authoritative.
-
 ## Agile operating model
 
 ### Iteration policy
@@ -1270,7 +1250,7 @@ language, runtime, business-flow, or release claim.
 | S2 Entry-point regression coverage | `done` | Production CLI and real stdio MCP cover history, Git snapshot comparison, and Git Context continuity import order. |
 | S3 Cache hygiene | `done` | Cache retention is inspectable and explicitly prunable; cache-disabled fixture scans do not create new Flopeek metadata. Existing user-owned metadata is preserved. |
 | S4 Delivery-document synchronization | `done` | Gate B reconciled roadmap, checkpoint, support claims, and executable E46–E53 evidence at the current dirty baseline; manual Viewer/browser evidence remains separately open in S5. |
-| S5 C11 observable stabilization | `partial` | The [six-job public Core matrix](https://github.com/badsleepyday/flopeek-core/actions/runs/30161751505) passed on Ubuntu, Windows, and macOS with Node 20 and 22. A single-host browser-assisted checkout observation against `beccef32af9b0a978d4463a90806aeb66a8f1a28` exercised keyboard Flow Lens recovery, v1-to-v2 comparison, and v2 stale resolution after reset to v3. Human readability/accessibility, 200%-zoom, touch/cross-browser/cross-device, and explicitly scoped independent-provider evidence remain required. |
+| S5 C11 observable stabilization | `partial` | The [six-job public Core matrix](https://github.com/badsleepyday/flopeek/actions/runs/30161751505) passed on Ubuntu, Windows, and macOS with Node 20 and 22. A single-host browser-assisted checkout observation against `beccef32af9b0a978d4463a90806aeb66a8f1a28` exercised keyboard Flow Lens recovery, v1-to-v2 comparison, and v2 stale resolution after reset to v3. Human readability/accessibility, 200%-zoom, touch/cross-browser/cross-device, and explicitly scoped independent-provider evidence remain required. |
 | S6 Supported-language dogfooding proof | `done` | A digest-pinned TypeScript, Python, and PHP fixture cohort audits declared static relations, semantic levels, MCP Context Ref retrieval, disposable refresh, and stale resolution without executing targets. It is not production-repository or runtime evidence. |
 
 The mechanical implementation contract is

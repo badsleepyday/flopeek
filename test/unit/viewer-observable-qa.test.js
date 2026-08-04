@@ -61,15 +61,3 @@ test("Viewer makes repeated static convention discovery opt-in and states its ev
   assert.match(app, /does not read source into this view or prove UI behavior, runtime wiring, or semantic equivalence/);
   assert.match(app, /data-related-implementation/);
 });
-
-test("Viewer exposes canonical identity, multi-parent history, and developer-only local PK", () => {
-  assert.match(app, /function canonicalIdentitySection\(packet\)/);
-  assert.match(app, /Canonical identity/);
-  assert.match(app, /Stable ID/);
-  assert.match(app, /All parents/);
-  assert.match(app, /Identity history/);
-  assert.match(app, /Copy stable Context Ref/);
-  assert.match(app, /developerModeEnabled\(\)/);
-  assert.match(app, /Local node PK/);
-  assert.match(app, /\/api\/node-identity\?id=/);
-});

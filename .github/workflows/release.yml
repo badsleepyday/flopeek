@@ -1,0 +1,40 @@
+name: Create tagged release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Verify and publish GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run verify:github-release -- --tag "$GITHUB_REF_NAME"
+      - run: npm run check:support
+      - run: npm run check:docs
+      - run: npm run test:public-source
+      - run: npm run test:package
+      - run: npm run audit:package
+      - run: npm run verify:clean-room
+      - name: Create prerelease
+        if: contains(github.ref_name, '-')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --target "$GITHUB_SHA" --title "Flopeek $GITHUB_REF_NAME" --generate-notes --prerelease
+      - name: Create stable release
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --target "$GITHUB_SHA" --title "Flopeek $GITHUB_REF_NAME" --generate-notes

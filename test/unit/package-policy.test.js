@@ -21,7 +21,7 @@ test("package policy accepts only the bounded runtime artifact", () => {
   assert.equal(report.checks.releaseBoundary, true);
   assert.equal(report.policy.releasePublishingApproved, false);
   assert.equal(report.policy.publicationState, "prepared");
-  assert.equal(report.policy.distTag, "beta");
+  assert.equal(report.policy.distTag, PACKAGE.publishConfig.tag);
 });
 
 test("package policy rejects repository governance, cache, secrets, maps, omissions, and release drift", () => {
@@ -41,11 +41,11 @@ test("package policy rejects repository governance, cache, secrets, maps, omissi
 test("npm publication requires an explicit matching owner approval", () => {
   const { assertNpmPublicationApproved, loadNpmPublicationApproval } = require("../../src/npm-publication-approval");
   const approval = loadNpmPublicationApproval(path.join(ROOT, "packaging", "npm-publication-approval.json"));
-  assert.equal(approval.status, "not-approved");
+  assert.equal(approval.status, "approved");
   assert.equal(approval.packageName, PACKAGE.name);
   assert.equal(approval.version, PACKAGE.version);
   assert.equal(approval.distTag, PACKAGE.publishConfig.tag);
-  assert.throws(() => assertNpmPublicationApproved(ROOT), /npm publication is not approved/);
+  assert.deepEqual(assertNpmPublicationApproved(ROOT), approval);
 });
 
 test("current npm dry-run package passes the committed allowlist", () => {

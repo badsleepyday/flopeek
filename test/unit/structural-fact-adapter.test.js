@@ -21,7 +21,7 @@ test("structural fact adapter preserves Go parser evidence and bounded methods",
 test("structural fact adapter preserves C# facts and makes missing adapter state explicit", () => {
   const csharp = analyzeCSharpFact({ status: "parsed-with-diagnostics", diagnostics: 1, imports: [{ specifier: "Ledger.Core", range: { start: 1, end: 2 } }], methods: ["Approve"] }, "Api.cs");
   assert.equal(csharp.analysis.confidence, "exact");
-  assert.deepEqual(csharp.imports[0].evidence, { parser: "csharp-static-ast", file: "Api.cs", range: { start: 1, end: 2 } });
+  assert.deepEqual(csharp.imports[0].evidence, { parser: "csharp-roslyn", file: "Api.cs", range: { start: 1, end: 2 } });
   assert.deepEqual(analyzeInventory("README.md", ".md").analysis, {
     parser: "inventory",
     status: "inventory-only",

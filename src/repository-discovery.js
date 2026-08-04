@@ -8,7 +8,7 @@ const { classifyRepositoryPath, readRepositoryScope, scopeSummary } = require(".
 
 const DISCOVERY_SCHEMA = "flopeek-repository-discovery/v1";
 const IGNORED_DIRECTORIES = new Set([
-  ".flopeek", ".git", ".next", ".nuxt", ".project-flow", ".turbo",
+  ".flopeek", ".flowpeek", ".git", ".next", ".nuxt", ".project-flow", ".turbo",
   "build", "coverage", "dist", "node_modules", "out", "target", "vendor",
 ]);
 const EXACT_MANIFESTS = new Map([

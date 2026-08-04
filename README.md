@@ -77,7 +77,7 @@ alongside the exact scope and limitations of each result.
 ![Flopeek product proof panel with bounded evidence](docs/assets/screenshots/product-proof.png)
 
 <details>
-<summary>Current verified repository and npm beta snapshot — July 26, 2026</summary>
+<summary>Current verified JavaScript-core release snapshot — July 26, 2026</summary>
 
 This snapshot is the evidence refresh represented by the screenshots and
 machine-readable benchmark files below. These are repository, package, and
@@ -109,26 +109,28 @@ universal accuracy claims.
 | Stability | Last-complete-graph fallback, scan cancellation, cache freshness, helper cleanup, and deterministic cancellation coverage |
 | Packaging | Strict allowlist, clean-room installation verification, and tagged public-Core release checks |
 
-The same `flopeek@0.2.1-beta.3` package identity is published on npm and was
-verified through an anonymous clean-room registry installation. The repository
-metrics remain bounded source and test evidence, not live product telemetry.
+This JavaScript-core source snapshot was previously verified and published as
+`flopeek@0.2.1-beta.3`. It is the source baseline for stable `flopeek@0.2.1`;
+the repository metrics remain bounded source and test evidence, not live
+product telemetry.
 
 </details>
 
 ## Run the change-context loop
 
-Install the explicitly named public beta from npm:
+Install the stable Flopeek package from npm:
 
 ```powershell
-npm install --global flopeek@beta
+npm install --global flopeek@latest
 flopeek showcase
 ```
 
 The showcase opens a safe temporary checkout flow. It does not execute the
 target application or change the committed example.
 
-Use the explicit `@beta` channel until a stable release is published. The
-source checkout on public `main` remains canonical for contributors.
+The source checkout on public `main` is the stable JavaScript-core baseline and
+remains canonical for contributors. Native/Rust work is not part of this
+stable release.
 
 Public preview and stable versions are immutable Git tags on `main`, not long-
 lived `alpha` or `beta` branches. See [RELEASING.md](RELEASING.md) for the
@@ -171,7 +173,7 @@ checkout showcase and the shortest local setup. Flopeek also has explicitly
 bounded parser support beyond that starting point; check the
 [support matrix](SUPPORT.md) before treating a missing relationship as absent.
 
-After installing `flopeek@beta`:
+After installing `flopeek`:
 
 ```powershell
 flopeek discover D:\path\to\repository --max-files 5000 --budget-ms 10000
@@ -304,6 +306,6 @@ npm run audit:package
 npm run verify:clean-room
 ```
 
-Flopeek currently requires Node.js 22 or later. The source repository is
-public, and `flopeek@0.2.1-beta.3` is available through the npm `beta` channel.
-GitHub release tags remain a separate, evidence-gated release decision.
+Flopeek currently requires Node.js 20 or later. The source repository is
+public, and stable `flopeek@0.2.1` uses the npm `latest` channel. Native/Rust
+work remains a separately labelled prerelease and is not included here.

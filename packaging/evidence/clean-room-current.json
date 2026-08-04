@@ -1,10 +1,10 @@
 {
   "schemaVersion": "flopeek-clean-room-package-report/v1",
-  "generatedAt": "2026-07-27T06:15:19.819Z",
+  "generatedAt": "2026-08-04T11:49:02.487Z",
   "status": "passed",
   "evidenceClass": "clean-room-package-observation",
   "environment": {
-    "nodeVersion": "24.18.0",
+    "nodeVersion": "22.23.2",
     "platform": "win32",
     "architecture": "x64",
     "lifecycleScriptsDuringInstall": false,
@@ -16,11 +16,11 @@
     "status": "passed",
     "package": {
       "name": "flopeek",
-      "version": "0.2.1-beta.3",
+      "version": "0.2.1",
       "private": false,
-      "filename": "flopeek-0.2.1-beta.3.tgz",
-      "packedBytes": 967309,
-      "unpackedBytes": 2603551,
+      "filename": "flopeek-0.2.1.tgz",
+      "packedBytes": 967435,
+      "unpackedBytes": 2606084,
       "entries": 180
     },
     "policy": {
@@ -30,7 +30,7 @@
       "requiredPaths": 19,
       "releasePublishingApproved": false,
       "publicationState": "prepared",
-      "distTag": "beta"
+      "distTag": "latest"
     },
     "checks": {
       "allowlist": true,
@@ -47,63 +47,63 @@
     ]
   },
   "artifact": {
-    "filename": "flopeek-0.2.1-beta.3.tgz",
-    "sha256": "3da908760a57ccbf329160afbbd874d3f7160259f62ba59c5bd59ca1c4448953",
-    "packedBytes": 967309
+    "filename": "flopeek-0.2.1.tgz",
+    "sha256": "6a789ac289a7923e2f91137779a26228f82b16fe2befdb2d42f63b0ea9b04cb4",
+    "packedBytes": 967435
   },
   "phases": [
     {
       "id": "pack-and-audit",
       "status": "passed",
-      "milliseconds": 3276.351
+      "milliseconds": 2920.014
     },
     {
       "id": "copy-fixture",
       "status": "passed",
-      "milliseconds": 100.972
+      "milliseconds": 42.422
     },
     {
       "id": "install-tarball",
       "status": "passed",
-      "milliseconds": 23378.134
+      "milliseconds": 36782.937
     },
     {
       "id": "binary-version",
       "status": "passed",
-      "milliseconds": 2772.388
+      "milliseconds": 7050.157
     },
     {
       "id": "binary-help",
       "status": "passed",
-      "milliseconds": 3158.19
+      "milliseconds": 2769.817
     },
     {
       "id": "binary-doctor",
       "status": "passed",
-      "milliseconds": 2761.789
+      "milliseconds": 3077.97
     },
     {
       "id": "bounded-static-scan",
       "status": "passed",
-      "milliseconds": 3311.441
+      "milliseconds": 2419.642
     },
     {
       "id": "mcp-startup",
       "status": "passed",
-      "milliseconds": 2493.063
+      "milliseconds": 11063.714
     }
   ],
   "smoke": {
     "packageIdentity": {
       "expectedName": "flopeek",
       "actualName": "flopeek",
-      "expectedVersion": "0.2.1-beta.3",
-      "actualVersion": "0.2.1-beta.3",
+      "expectedVersion": "0.2.1",
+      "actualVersion": "0.2.1",
       "binShimPresent": true
     },
     "version": {
-      "expected": "0.2.1-beta.3",
-      "actual": "0.2.1-beta.3",
+      "expected": "0.2.1",
+      "actual": "0.2.1",
       "matched": true
     },
     "help": {
@@ -142,12 +142,12 @@
       "copied": true,
       "sourceFingerprintBefore": {
         "algorithm": "sha256",
-        "value": "ae4b631b2116bd40a2b29d434859460d37e873bdd1ac281737b10153997614ed",
+        "value": "b55e91e69b0743779d04a2d3553b05126a119997453d6192dfec66f864854436",
         "files": 16
       },
       "sourceFingerprintAfter": {
         "algorithm": "sha256",
-        "value": "ae4b631b2116bd40a2b29d434859460d37e873bdd1ac281737b10153997614ed",
+        "value": "b55e91e69b0743779d04a2d3553b05126a119997453d6192dfec66f864854436",
         "files": 16
       },
       "unchanged": true,
@@ -157,7 +157,7 @@
   },
   "cleanup": {
     "status": "passed",
-    "milliseconds": 4996.135
+    "milliseconds": 4284.323
   },
   "publication": {
     "attempted": false,

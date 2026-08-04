@@ -195,11 +195,6 @@ async function closeServer(server) {
   await new Promise((resolve) => server.close(resolve));
 }
 
-async function closeProject(app) {
-  if (typeof app?.close === "function") return app.close();
-  return closeServer(app?.server);
-}
-
 async function startWorkspaceServer(options = {}) {
   const projects = new Map();
   const diagnostics = [];
@@ -233,12 +228,11 @@ async function startWorkspaceServer(options = {}) {
       timeBudgetMs: input.timeBudgetMs ?? options.timeBudgetMs,
       maxFiles: input.maxFiles ?? options.maxFiles,
       maxBytes: input.maxBytes ?? options.maxBytes,
-      coreMode: input.coreMode ?? options.coreMode,
     });
     const projectId = app.project.projectId;
     const existing = projects.get(projectId);
     if (existing) {
-      await closeProject(app);
+      await closeServer(app.server);
       activeProjectId = projectId;
       return { created: false, project: projectList().find((item) => item.projectId === projectId) };
     }
@@ -409,7 +403,7 @@ async function startWorkspaceServer(options = {}) {
   try { hubRegistration = writeHubRegistration(workspaceId, server.address().port, { registryRoot: options.registryRoot }); }
   catch (error) {
     await closeServer(server);
-    await Promise.all([...projects.values()].map((item) => closeProject(item.app)));
+    await Promise.all([...projects.values()].map((item) => closeServer(item.app.server)));
     throw error;
   }
   let closing = false;
@@ -417,7 +411,7 @@ async function startWorkspaceServer(options = {}) {
     if (closing) return;
     closing = true;
     await closeServer(server);
-    await Promise.all([...projects.values()].map((item) => closeProject(item.app)));
+    await Promise.all([...projects.values()].map((item) => closeServer(item.app.server)));
     removeHubRegistration(hubRegistration, { registryRoot: options.registryRoot });
   };
   return { server, port: server.address().port, portBinding, workspaceId, addProject, workspace: workspacePayload, close };
