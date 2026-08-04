@@ -4,7 +4,7 @@ use crate::js_facts::{
     NativeJsFacts, NativeJsImport, NativeJsPosition, NativeJsRange, NativeJsStructuralFacts,
     NativeJsStructuralSymbol, NativeJsSymbol, NativeJsSymbolReference,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use tree_sitter::{Node, Parser};
 
 const PARSER: &str = "tree-sitter-java";
@@ -112,33 +112,34 @@ fn compact_java_node_type(node: Node<'_>, source: &str) -> Option<String> {
 }
 
 fn method_signature(method: Node<'_>, source: &str) -> String {
-    let parameters = method
-        .child_by_field_name("parameters")
-        .map(|parameters| {
-            let mut cursor = parameters.walk();
-            parameters
-                .named_children(&mut cursor)
-                .filter(|parameter| {
-                    matches!(
-                        parameter.kind(),
-                        "formal_parameter" | "spread_parameter" | "receiver_parameter"
-                    )
-                })
-                .map(|parameter| {
-                    parameter
-                        .child_by_field_name("type")
-                        .and_then(|kind| compact_java_node_type(kind, source))
-                        .unwrap_or_else(|| "unknown".to_string())
-                })
-                .collect::<Vec<_>>()
-                .join(",")
-        })
-        .unwrap_or_default();
+    let mut signature = String::from("(");
+    let mut first_parameter = true;
+    if let Some(parameters) = method.child_by_field_name("parameters") {
+        let mut cursor = parameters.walk();
+        for parameter in parameters.named_children(&mut cursor).filter(|parameter| {
+            matches!(
+                parameter.kind(),
+                "formal_parameter" | "spread_parameter" | "receiver_parameter"
+            )
+        }) {
+            if !first_parameter {
+                signature.push(',');
+            }
+            first_parameter = false;
+            let parameter_type = parameter
+                .child_by_field_name("type")
+                .and_then(|kind| compact_java_node_type(kind, source))
+                .unwrap_or_else(|| "unknown".to_string());
+            signature.push_str(&parameter_type);
+        }
+    }
+    signature.push_str("):");
     let return_type = method
         .child_by_field_name("type")
         .and_then(|kind| compact_java_node_type(kind, source))
         .unwrap_or_else(|| "void".to_string());
-    format!("({parameters}):{return_type}")
+    signature.push_str(&return_type);
+    signature
 }
 
 struct JavaCallContext<'a> {
@@ -146,7 +147,7 @@ struct JavaCallContext<'a> {
     source: &'a str,
     owner: &'a NativeJsSymbolReference,
     type_name: &'a str,
-    static_names: &'a BTreeSet<String>,
+    static_names: &'a HashSet<String>,
 }
 
 fn collect_calls(
@@ -314,7 +315,7 @@ pub fn parse_native_java_facts_with_parser(
                 }),
             });
         }
-        let mut static_counts = BTreeMap::<String, usize>::new();
+        let mut static_counts = HashMap::<String, usize>::new();
         for method in &method_details {
             if method.is_static {
                 *static_counts.entry(method.name.clone()).or_default() += 1;
@@ -327,7 +328,7 @@ pub fn parse_native_java_facts_with_parser(
         let static_names = unique_static
             .iter()
             .map(|method| method.name.clone())
-            .collect::<BTreeSet<_>>();
+            .collect::<HashSet<_>>();
         for method in unique_static {
             let qualified_name = format!("{type_name}.{}", method.name);
             let owner = NativeJsSymbolReference {
