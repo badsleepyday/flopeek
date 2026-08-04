@@ -2353,6 +2353,15 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
     // collection order deterministic by first collecting the indexed Rayon
     // results and merging them in candidate order below; SQLite remains a
     // single writer transaction after the parallel work completes.
+    let parser_chunk_size = if candidates.iter().any(|(path, _)| {
+        path.rsplit('.').next().is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("java") || extension.eq_ignore_ascii_case("cs")
+        })
+    }) {
+        16
+    } else {
+        1
+    };
     let parsed_candidates =
         with_native_parser_pool(|| {
             let cached_facts = &cached_facts;
@@ -2363,7 +2372,7 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
             // and C# repositories otherwise pay that setup cost hundreds of times
             // during a cold scan.
             candidates
-                .par_chunks(16)
+                .par_chunks(parser_chunk_size)
                 .flat_map_iter(|chunk| {
                     let mut java_parser = None;
                     let mut csharp_parser = None;
