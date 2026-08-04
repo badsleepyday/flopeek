@@ -153,16 +153,6 @@ fn collect_calls(
     context: &JavaCallContext<'_>,
     calls: &mut Vec<NativeJsCall>,
 ) {
-    // A method body without an opening parenthesis cannot contain a Java
-    // invocation. Avoid walking its complete syntax subtree (common for
-    // accessors, constants, and trivial return methods) while preserving the
-    // exact recursive traversal for bodies that may contain calls.
-    if node
-        .utf8_text(context.source.as_bytes())
-        .is_ok_and(|body| !body.as_bytes().contains(&b'('))
-    {
-        return;
-    }
     if node.id() != method.id()
         && matches!(
             node.kind(),
