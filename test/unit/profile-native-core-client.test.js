@@ -62,7 +62,10 @@ test("native core profiler measures explicit absent lookups when a repository ha
     getProjectOverview: async () => ({}),
     getContextCard: async () => ({ card: null }),
     resolveContextRef: async (_graph, value) => requested.contextRefs.push(value),
-    getFlowProjection: async (_graph, value) => requested.flowIds.push(value),
+    getFlowProjection: async (_graph, value) => {
+      requested.flowIds.push(value);
+      return null;
+    },
   };
   const profile = await profileQueries(core, {
     nodes: [{ id: "file:src/lib.rs", kind: "file", label: "lib.rs" }],
@@ -74,4 +77,21 @@ test("native core profiler measures explicit absent lookups when a repository ha
   assert.equal(profile.operations.flowProjection.targetStatus, "absent");
   assert.ok(requested.contextRefs.every((value) => value === "fp://invalid/profile"));
   assert.ok(requested.flowIds.every((value) => value === "flow:__flopeek_profile_absent__"));
+});
+
+test("native core profiler rejects a missing result for a declared present target", async () => {
+  const core = {
+    findNodes: async () => ({}),
+    getProjectOverview: async () => ({}),
+    getContextCard: async () => ({ card: { contextRef: "fp://local/project/node@1" } }),
+    resolveContextRef: async () => ({}),
+    getFlowProjection: async () => null,
+  };
+  await assert.rejects(
+    profileQueries(core, {
+      nodes: [{ id: "file:src/example.ts", kind: "file", label: "Example" }],
+      flows: [{ id: "flow:example" }],
+    }),
+    /flowProjection declared a present profile target but returned null/,
+  );
 });

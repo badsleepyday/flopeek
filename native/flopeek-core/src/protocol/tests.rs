@@ -1,11 +1,12 @@
 use super::{
     NATIVE_PROTOCOL_VERSION, NativeProtocolSession, NativeRequest, STRUCTURAL_FACT_BATCH_SCHEMA,
-    build_isolated_incremental_graph, get_native_database_open_evidence, handle_request,
-    hydrate_cached_query_batch, hydrate_session_query_batch, isolated_structural_change_path,
-    native_entry_source_nodes, parse_session_history_limit, refresh_native_js_session_graph,
-    refresh_native_persistent_project, refresh_native_session_graph, same_canonical_json,
-    serve_jsonl, structural_facts_canonical_json, structural_facts_digest,
-    structural_topology_digest,
+    STRUCTURAL_FACT_PATCH_SCHEMA, build_isolated_incremental_graph,
+    get_native_database_open_evidence, handle_request, hydrate_cached_query_batch,
+    hydrate_session_query_batch, isolated_structural_change_path, native_entry_source_nodes,
+    native_query_cache_key, parse_session_history_limit, projection_digest,
+    refresh_native_js_session_graph, refresh_native_persistent_project,
+    refresh_native_session_graph, same_canonical_json, serve_jsonl,
+    structural_facts_canonical_json, structural_facts_digest, structural_topology_digest,
 };
 use crate::store::open_native_store;
 use crate::structural_graph::build_structural_graph;
@@ -14,6 +15,34 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Cursor;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+// Independent Rust oracle for JavaScript core-compatibility `stableJson`:
+// object keys sort recursively, while array order and JSON scalar encoding stay
+// unchanged. Do not depend on serde_json Map's compile-time storage policy.
+fn stable_json(value: &Value) -> String {
+    match value {
+        Value::Array(values) => format!(
+            "[{}]",
+            values.iter().map(stable_json).collect::<Vec<_>>().join(",")
+        ),
+        Value::Object(entries) => {
+            let mut keys = entries.keys().collect::<Vec<_>>();
+            keys.sort_unstable();
+            format!(
+                "{{{}}}",
+                keys.into_iter()
+                    .map(|key| format!(
+                        "{}:{}",
+                        serde_json::to_string(key).expect("object key serializes"),
+                        stable_json(&entries[key])
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        }
+        scalar => serde_json::to_string(scalar).expect("JSON scalar serializes"),
+    }
+}
 
 fn responses(input: &str) -> Vec<Value> {
     let mut output = Vec::new();
@@ -45,6 +74,105 @@ fn request(request_id: &str, method: &str, params: Value) -> String {
         "params": params,
     }))
     .unwrap()
+}
+
+#[test]
+fn immutable_query_memo_is_digest_bound_and_precedes_fact_hydration() {
+    let params = json!({
+        "projectRoot": "/definitely/not/a/repository",
+        "projectId": "project:memo",
+        "factsDigest": format!("sha256:{}", "a".repeat(64)),
+        "query": "cached",
+    });
+    let key = native_query_cache_key("findNodes", &params).unwrap();
+    let changed_key = native_query_cache_key(
+        "findNodes",
+        &json!({
+            "projectRoot": "/definitely/not/a/repository",
+            "projectId": "project:memo",
+            "factsDigest": format!("sha256:{}", "b".repeat(64)),
+            "query": "cached",
+        }),
+    )
+    .unwrap();
+    assert_ne!(key, changed_key);
+
+    let mut session = NativeProtocolSession::default();
+    session.retain_query_result(
+        key,
+        super::success_response(
+            "original-request".to_string(),
+            json!({ "query": "cached", "results": [] }),
+        ),
+    );
+    let response = handle_request(
+        &mut session,
+        NativeRequest {
+            protocol_version: NATIVE_PROTOCOL_VERSION.to_string(),
+            request_id: "memo-hit".to_string(),
+            method: "findNodes".to_string(),
+            params,
+        },
+    )
+    .0;
+    let response = serde_json::to_value(response).unwrap();
+    assert_eq!(response["status"], "ok");
+    assert_eq!(response["requestId"], "memo-hit");
+    assert_eq!(
+        response["result"],
+        json!({ "query": "cached", "results": [] })
+    );
+
+    let missing_params = json!({
+        "projectRoot": "/definitely/not/a/repository",
+        "projectId": "project:memo",
+        "factsDigest": format!("sha256:{}", "a".repeat(64)),
+        "flowId": "flow:missing",
+    });
+    let missing_key = native_query_cache_key("getNativeFlowLensCore", &missing_params).unwrap();
+    session.retain_query_result(
+        missing_key,
+        super::error_response(
+            Some("original-missing".to_string()),
+            "missing-flow",
+            "No native flow matches params.flowId.",
+        ),
+    );
+    let missing = handle_request(
+        &mut session,
+        NativeRequest {
+            protocol_version: NATIVE_PROTOCOL_VERSION.to_string(),
+            request_id: "memo-missing-hit".to_string(),
+            method: "getNativeFlowLensCore".to_string(),
+            params: missing_params,
+        },
+    )
+    .0;
+    let missing = serde_json::to_value(missing).unwrap();
+    assert_eq!(missing["requestId"], "memo-missing-hit");
+    assert_eq!(missing["status"], "error");
+    assert_eq!(missing["error"]["code"], "missing-flow");
+}
+
+#[test]
+fn immutable_query_memo_remains_strictly_bounded() {
+    let mut session = NativeProtocolSession::default();
+    for index in 0..300 {
+        session.retain_query_result(
+            format!("query-{index:03}"),
+            super::success_response(format!("request-{index}"), json!(index)),
+        );
+    }
+    assert!(session.query_result("query-000").is_none());
+    assert!(session.query_result("query-043").is_none());
+    assert_eq!(
+        serde_json::to_value(session.query_result("query-044").unwrap()).unwrap()["result"],
+        json!(44)
+    );
+    assert_eq!(
+        serde_json::to_value(session.query_result("query-299").unwrap()).unwrap()["result"],
+        json!(299)
+    );
 }
 
 #[test]
@@ -345,6 +473,7 @@ fn persistent_native_project_reuses_one_sqlite_connection_for_changed_path_refre
     fs::create_dir_all(root.join("src")).unwrap();
     let source = root.join("src/main.ts");
     fs::write(&source, "export const initial = true;\n").unwrap();
+    fs::write(root.join("src/stable.ts"), "export const stable = true;\n").unwrap();
     let mut session = NativeProtocolSession::default();
     let initial =
         refresh_native_persistent_project(&mut session, &json!({ "projectRoot": root })).unwrap();
@@ -360,7 +489,28 @@ fn persistent_native_project_reuses_one_sqlite_connection_for_changed_path_refre
     assert!(query["batch"].is_object());
     assert_eq!(session.persistent_connections.len(), 1);
     assert_eq!(session.persistent_git_metadata.len(), 1);
-    fs::write(&source, "export const changed = true;\n").unwrap();
+    let (changed_revisions_before, stable_revisions_before) = {
+        let connection = session.persistent_connections.values().next().unwrap();
+        (
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM node_revisions_v2 WHERE path = 'src/main.ts'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM node_revisions_v2 WHERE path = 'src/stable.ts'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+        )
+    };
+    // Preserve every structural identity while changing the source-backed
+    // revision. This selects the verified changed-record identity fast path.
+    fs::write(&source, "export const initial = false;\n").unwrap();
     let refreshed = refresh_native_persistent_project(
         &mut session,
         &json!({
@@ -384,7 +534,39 @@ fn persistent_native_project_reuses_one_sqlite_connection_for_changed_path_refre
         1
     );
     assert_eq!(refreshed["receipt"]["profile"]["usedFactPatch"], true);
+    assert_eq!(
+        refreshed["receipt"]["profile"]["reusedStructuralProjection"],
+        true
+    );
     assert!(refreshed["receipt"]["profile"]["factPatchReconstructionMs"].is_number());
+    let connection = session.persistent_connections.values().next().unwrap();
+    let changed_revisions_after = connection
+        .query_row(
+            "SELECT COUNT(*) FROM node_revisions_v2 WHERE path = 'src/main.ts'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap();
+    let stable_revisions_after = connection
+        .query_row(
+            "SELECT COUNT(*) FROM node_revisions_v2 WHERE path = 'src/stable.ts'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap();
+    assert!(changed_revisions_after > changed_revisions_before);
+    assert_eq!(stable_revisions_after, stable_revisions_before);
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM edge_presence_v2 WHERE last_graph_version IS NOT NULL",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0,
+        "source-only refresh must not churn edge membership intervals"
+    );
     drop(session);
     fs::remove_dir_all(root).unwrap();
 }
@@ -466,6 +648,18 @@ fn persistent_native_project_explicit_no_op_reuses_the_session_snapshot_without_
     assert_eq!(reused["receipt"]["stored"], false);
     assert_eq!(reused["sourceRefresh"]["mode"], "no-op-session");
     assert_eq!(reused["sourceRefresh"]["parsedFiles"], 0);
+    assert_eq!(
+        reused["publicGraphReuse"]["envelope"]["state"]["status"],
+        "native-current"
+    );
+    assert_eq!(
+        reused["publicGraphReuse"]["envelope"]["analysis"]["graphState"]["status"],
+        "unchanged"
+    );
+    assert_eq!(
+        reused["publicGraphReuse"]["envelope"]["analysis"]["graphState"]["persistence"],
+        "sqlite"
+    );
     assert_eq!(session.persistent_connections.len(), 1);
     drop(session);
     fs::remove_dir_all(root).unwrap();
@@ -491,7 +685,23 @@ fn canonical_json_equality_ignores_object_member_order_but_not_array_order() {
 }
 
 #[test]
-fn structural_fact_digest_serialization_matches_the_legacy_material_projection() {
+fn projection_digest_survives_sqlite_envelope_component_reassembly_order() {
+    let assembled: Value = serde_json::from_str(
+        r#"{"schemaVersion":"snapshot/v1","nodes":[{"label":"A","id":"a"}],"state":{"status":"complete","version":2}}"#,
+    )
+    .unwrap();
+    let reconstructed: Value = serde_json::from_str(
+        r#"{"state":{"version":2,"status":"complete"},"schemaVersion":"snapshot/v1","nodes":[{"id":"a","label":"A"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        projection_digest(&assembled).unwrap(),
+        projection_digest(&reconstructed).unwrap()
+    );
+}
+
+#[test]
+fn structural_fact_digest_serialization_matches_the_javascript_stable_json_contract() {
     let mut batch = structural_facts(json!({
         "symbols": [{ "type": "function", "name": "checkout" }]
     }));
@@ -515,7 +725,7 @@ fn structural_fact_digest_serialization_matches_the_legacy_material_projection()
         .and_then(Value::as_object_mut)
         .unwrap()
         .remove("graphVersion");
-    let expected = serde_json::to_string(&Value::Object(legacy)).unwrap();
+    let expected = stable_json(&Value::Object(legacy));
     let actual = structural_facts_canonical_json(batch.as_object().unwrap()).unwrap();
     assert_eq!(actual, expected);
     assert_eq!(
@@ -525,7 +735,27 @@ fn structural_fact_digest_serialization_matches_the_legacy_material_projection()
 }
 
 #[test]
-fn structural_topology_digest_serialization_matches_the_legacy_projection() {
+fn structural_fact_digest_accepts_canonical_raw_records_from_persistent_cache() {
+    let batch = structural_facts(json!({
+        "symbols": [{ "type": "function", "name": "checkout" }]
+    }));
+    let expected = structural_facts_digest(batch.as_object().unwrap()).unwrap();
+    let mut compact = batch;
+    for record in compact
+        .get_mut("records")
+        .and_then(Value::as_array_mut)
+        .unwrap()
+    {
+        *record = Value::String(stable_json(record));
+    }
+    assert_eq!(
+        structural_facts_digest(compact.as_object().unwrap()).unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn structural_topology_digest_serialization_matches_the_stable_json_projection() {
     let mut batch = structural_facts(json!({
         "symbols": [{ "type": "function", "name": "checkout" }]
     }));
@@ -567,7 +797,7 @@ fn structural_topology_digest_serialization_matches_the_legacy_projection() {
     {
         record.as_object_mut().unwrap().remove("sourceHash");
     }
-    let expected = serde_json::to_string(&Value::Object(legacy)).unwrap();
+    let expected = stable_json(&Value::Object(legacy));
     assert_eq!(
         structural_topology_digest(batch.as_object().unwrap()).unwrap(),
         format!("sha256:{:x}", Sha256::digest(expected)),
@@ -1005,6 +1235,102 @@ fn native_public_lifecycle_allocates_versions_and_reuses_a_noop() {
         result[3]["result"]["receipt"]["profile"]["incrementalStructuralPath"],
         "src/index.js"
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn structural_fact_patch_accepts_a_new_record_without_full_batch_fallback() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "flopeek-native-structural-patch-added-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+
+    let mut first = structural_facts(json!({
+        "symbols": [{ "type": "function", "name": "stable" }]
+    }));
+    first["publicGraphContext"] = json!({
+        "schemaVersion": 5,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "project": { "projectId": "project:fixture" },
+        "state": {
+            "graphVersion": 0,
+            "materialFingerprint": null,
+            "sourceFingerprint": "sha256:test",
+            "sourceRevision": null,
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "status": "unpersisted"
+        },
+        "analysis": {
+            "coverage": null,
+            "refresh": { "mode": "initial", "analyzedFiles": 1, "reusedFiles": 0, "removedFiles": 0, "changedPaths": [] }
+        },
+        "stats": { "scannedFiles": 1, "parsedFiles": 1, "inventoryOnlyFiles": 0, "parseFailedFiles": 0 }
+    });
+    first["records"][0]["sourceScope"] = json!("application");
+    first["factsDigest"] =
+        Value::String(structural_facts_digest(first.as_object().unwrap()).unwrap());
+    first["projectRoot"] = Value::String(root.to_string_lossy().to_string());
+
+    let mut second = first.clone();
+    second["records"].as_array_mut().unwrap().push(json!({
+        "recordOrder": 1,
+        "relativePath": "src/added.js",
+        "sourceHash": "c".repeat(64),
+        "sourceScope": "application",
+        "result": { "symbols": [{ "type": "function", "name": "added" }] },
+    }));
+    second["lifecycleContext"]["sourceFingerprint"] =
+        Value::String(format!("sha256:{}", "c".repeat(64)));
+    second["lifecycleContext"]["refresh"] = json!({
+        "mode": "incremental",
+        "analyzedFiles": 1,
+        "reusedFiles": 1,
+        "removedFiles": 0,
+        "changedPaths": ["src/added.js"],
+    });
+    second["factsDigest"] =
+        Value::String(structural_facts_digest(second.as_object().unwrap()).unwrap());
+
+    let mut patch_batch = first.clone();
+    patch_batch.as_object_mut().unwrap().remove("records");
+    patch_batch.as_object_mut().unwrap().remove("factsDigest");
+    let manifest = second["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|record| {
+            json!({
+                "relativePath": record["relativePath"],
+                "sourceHash": record["sourceHash"],
+                "sourceScope": "application",
+                "recordOrder": record["recordOrder"],
+            })
+        })
+        .collect::<Vec<_>>();
+    let patch = json!({
+        "schemaVersion": STRUCTURAL_FACT_PATCH_SCHEMA,
+        "projectId": first["projectId"],
+        "baseFactsDigest": first["factsDigest"],
+        "projectRoot": root.to_string_lossy(),
+        "batch": patch_batch,
+        "manifest": manifest,
+        "changedRecords": [second["records"][1]],
+    });
+    let result = responses(&format!(
+        "{}\n{}\n{}\n",
+        request("first", "persistNativePublicGraph", first),
+        request("added", "persistNativePublicGraphPatch", patch),
+        request("stop", "shutdown", json!({})),
+    ));
+    assert_eq!(result[0]["result"]["status"], "promoted");
+    assert_eq!(result[1]["status"], "ok");
+    assert_eq!(result[1]["result"]["status"], "promoted");
+    assert_eq!(result[1]["result"]["publicGraphVersion"], 2);
     fs::remove_dir_all(root).unwrap();
 }
 

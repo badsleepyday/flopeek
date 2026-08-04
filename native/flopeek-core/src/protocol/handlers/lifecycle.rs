@@ -6,6 +6,7 @@ pub(in crate::protocol) struct PersistedStructuralGraph {
     public_snapshot: Value,
     public_collection_patch: Option<Value>,
     public_snapshot_materialization_ms: u64,
+    projection_consumed: bool,
 }
 
 const NATIVE_PUBLIC_GRAPH_COLLECTIONS: [(&str, bool); 4] = [
@@ -14,6 +15,21 @@ const NATIVE_PUBLIC_GRAPH_COLLECTIONS: [(&str, bool); 4] = [
     ("flows", false),
     ("diagnosticFlows", false),
 ];
+
+fn native_promotion_error(error: rusqlite::Error) -> NativeProtocolError {
+    let message = error.to_string();
+    // A completed newer graph is authoritative.  The older in-flight writer
+    // is rejected at the locked SQLite boundary and must not be retried as a
+    // full batch or allowed to move the pointer backwards.  `native-error`
+    // is the established bounded-protocol conflict surface consumed by the
+    // cross-process recovery contract.
+    let code = if message.contains("concurrent native graph candidate superseded") {
+        "native-error"
+    } else {
+        "store-promote-failed"
+    };
+    NativeProtocolError { code, message }
+}
 
 pub(in crate::protocol) fn native_public_graph_envelope(public_graph: &Value) -> Value {
     let object = public_graph
@@ -190,7 +206,8 @@ pub(in crate::protocol) fn persist_reused_structural_projection(
     params: &Value,
     connection: &mut rusqlite::Connection,
     receipt: Value,
-    previous_projection: &Value,
+    previous_projection: Option<&Value>,
+    previous_projection_owned: Option<Value>,
     previous_public_snapshot: Option<&Value>,
     changed_record_paths: Option<&BTreeSet<String>>,
 ) -> Result<PersistedStructuralGraph, NativeProtocolError> {
@@ -219,9 +236,22 @@ pub(in crate::protocol) fn persist_reused_structural_projection(
                 "StructuralFactBatch/v1 flowContext.graphVersion must be a non-negative integer."
                     .to_string(),
         })?;
+    // A persistent handle-only refresh already retains the public snapshot.
+    // Move the SQLite-hydrated projection out of the session cache instead of
+    // cloning the complete JSON projection; on errors the cache is deliberately
+    // left empty and the next refresh rehydrates the verified SQLite payload.
+    let projection_was_owned = previous_projection_owned.is_some();
     let projection_clone_started = Instant::now();
-    let mut projection = previous_projection.clone();
-    let projection_clone_ms = elapsed_ms(projection_clone_started);
+    let mut projection = previous_projection_owned.unwrap_or_else(|| {
+        previous_projection
+            .expect("reused projection has an owned or borrowed previous payload")
+            .clone()
+    });
+    let projection_clone_ms = if projection_was_owned {
+        0
+    } else {
+        elapsed_ms(projection_clone_started)
+    };
     projection["flowContext"] = batch["flowContext"].clone();
     projection["lifecycleContext"] = batch["lifecycleContext"].clone();
     projection["publicGraphContext"] = batch["publicGraphContext"].clone();
@@ -240,12 +270,32 @@ pub(in crate::protocol) fn persist_reused_structural_projection(
         // `cached` supplies the exact public collections for affected-node and
         // flow evidence; the independently built envelopes retain current
         // source/version/refresh semantics for the adjacent delta.
-        let previous_context = native_public_graph_context(previous_projection, None)?;
+        let fallback_previous_context = if previous_public_snapshot.is_none() {
+            Some(native_public_graph_context(
+                previous_projection.expect("reused projection has a previous payload"),
+                None,
+            )?)
+        } else {
+            None
+        };
+        // `flowLenses` is part of the static projection and is unchanged on
+        // this source-only reuse path. Borrow it from the moved projection
+        // instead of cloning another lens-sized JSON value. The cached public
+        // snapshot is the exact previous envelope, so it is also the previous
+        // delta context without reconstructing a cloned context object.
+        let previous_delta_payload = if projection_was_owned {
+            &projection
+        } else {
+            previous_projection.expect("reused projection has a previous payload")
+        };
+        let previous_context = previous_public_snapshot
+            .or(fallback_previous_context.as_ref())
+            .expect("previous public context");
         let mut current_context = native_public_graph_context(&projection, None)?;
         current_context["stats"] = cached["stats"].clone();
         let delta = native_public_graph_delta_with_reused_collections(
-            previous_projection,
-            &previous_context,
+            previous_delta_payload,
+            previous_context,
             &projection,
             &current_context,
             cached,
@@ -253,6 +303,8 @@ pub(in crate::protocol) fn persist_reused_structural_projection(
         (current_context, delta)
     } else {
         let public_snapshot = native_public_graph_snapshot(&projection)?;
+        let previous_projection =
+            previous_projection.expect("reused projection has a previous payload");
         let previous_public = native_public_graph_snapshot(previous_projection)?;
         let delta = native_public_graph_delta_from_public_snapshots(
             previous_projection,
@@ -287,10 +339,7 @@ pub(in crate::protocol) fn persist_reused_structural_projection(
             reuse_public_components: true,
         },
     )
-    .map_err(|error| NativeProtocolError {
-        code: "store-promote-failed",
-        message: error.to_string(),
-    })?;
+    .map_err(native_promotion_error)?;
     let persistence_ms = elapsed_ms(persistence_started);
     Ok(PersistedStructuralGraph {
         receipt: json!({
@@ -331,20 +380,23 @@ pub(in crate::protocol) fn persist_reused_structural_projection(
         public_snapshot,
         public_collection_patch: None,
         public_snapshot_materialization_ms,
+        projection_consumed: false,
     })
 }
 
 pub(in crate::protocol) struct PersistStructuralGraphOptions<'a> {
     validated_receipt: Option<Value>,
     previous_projection: Option<&'a Value>,
+    previous_projection_owned: Option<Value>,
     previous_public_snapshot: Option<&'a Value>,
     reuse_previous_projection: bool,
     isolated_incremental_path: Option<&'a str>,
     changed_record_paths: Option<&'a BTreeSet<String>>,
+    consume_cold_projection_into_public: bool,
 }
 
 pub(in crate::protocol) fn persist_structural_graph_internal(
-    params: &Value,
+    params: &mut Value,
     connection: &mut rusqlite::Connection,
     options: PersistStructuralGraphOptions<'_>,
 ) -> Result<PersistedStructuralGraph, NativeProtocolError> {
@@ -360,20 +412,21 @@ pub(in crate::protocol) fn persist_structural_graph_internal(
         None => submit_structural_facts(params)?,
     };
     if options.reuse_previous_projection {
-        let previous =
-            options.previous_projection.ok_or_else(|| {
-                NativeProtocolError {
-            code: "store-integrity-failed",
-            message:
-                "A structural projection reuse request requires the current complete projection."
-                    .to_string(),
+        let previous_projection_owned = options.previous_projection_owned;
+        if options.previous_projection.is_none() && previous_projection_owned.is_none() {
+            return Err(NativeProtocolError {
+                code: "store-integrity-failed",
+                message:
+                    "A structural projection reuse request requires the current complete projection."
+                        .to_string(),
+            });
         }
-            })?;
         return persist_reused_structural_projection(
             params,
             connection,
             receipt,
-            previous,
+            options.previous_projection,
+            previous_projection_owned,
             options.previous_public_snapshot,
             options.changed_record_paths,
         );
@@ -392,10 +445,6 @@ pub(in crate::protocol) fn persist_structural_graph_internal(
         })?,
     };
     let native_traversal_order = structural_edge_traversal_order(batch, &graph);
-    let mut projection = serde_json::to_value(&graph).map_err(|error| NativeProtocolError {
-        code: "structural-graph-serialize-failed",
-        message: error.to_string(),
-    })?;
     let graph_assembly_ms = elapsed_ms(assembly_started);
     let flows_started = Instant::now();
     let (primary_tests, primary_fixtures) = configured_flow_scope(batch, "primary");
@@ -420,10 +469,44 @@ pub(in crate::protocol) fn persist_structural_graph_internal(
         .collect::<Result<Vec<_>, _>>()?;
     let flow_lenses_ms = elapsed_ms(flow_lenses_started);
     let flow_assembly_ms = elapsed_ms(flows_started);
+    let flow_context = batch["flowContext"].clone();
+    let lifecycle_context = batch["lifecycleContext"].clone();
+    let public_graph_context = batch["publicGraphContext"].clone();
+    if options.consume_cold_projection_into_public && options.previous_projection.is_none() {
+        let batch = if params.get("batch").is_some() {
+            params.get_mut("batch")
+        } else {
+            Some(&mut *params)
+        }
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| NativeProtocolError {
+            code: "invalid-structural-facts",
+            message: "StructuralFactBatch/v1 must be an object.".to_string(),
+        })?;
+        let records = batch
+            .get_mut("records")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| NativeProtocolError {
+                code: "invalid-structural-facts",
+                message: "StructuralFactBatch/v1 requires records[].".to_string(),
+            })?;
+        for record in records {
+            let payload = serde_json::to_string(record).map_err(|error| NativeProtocolError {
+                code: "structural-graph-serialize-failed",
+                message: error.to_string(),
+            })?;
+            *record = Value::String(payload);
+        }
+    }
     let serialization_started = Instant::now();
-    projection["flowContext"] = batch["flowContext"].clone();
-    projection["lifecycleContext"] = batch["lifecycleContext"].clone();
-    projection["publicGraphContext"] = batch["publicGraphContext"].clone();
+    let mut projection =
+        structural_graph_projection_into_value(graph).map_err(|message| NativeProtocolError {
+            code: "structural-graph-serialize-failed",
+            message,
+        })?;
+    projection["flowContext"] = flow_context;
+    projection["lifecycleContext"] = lifecycle_context;
+    projection["publicGraphContext"] = public_graph_context;
     projection["nativeTraversalOrder"] =
         serde_json::to_value(native_traversal_order).map_err(|error| NativeProtocolError {
             code: "structural-graph-serialize-failed",
@@ -452,20 +535,18 @@ pub(in crate::protocol) fn persist_structural_graph_internal(
     projection["projectId"] = Value::String(project_id.to_string());
     let projection_digest = projection_digest(&projection)?;
     let serialization_ms = elapsed_ms(serialization_started);
-    // Public response construction needs only nodes and edges. Retain this
-    // typed snapshot alongside the JSON persistence projection so a newly
-    // promoted graph is not deserialized from JSON merely to serialize the
-    // equivalent public node/edge response again.
-    let snapshot = StructuralGraphSnapshot {
-        nodes: graph.nodes,
-        edges: graph.edges,
-    };
-    // Build this exactly once for both adjacent-delta comparison and the
-    // public lifecycle response. Reconstructing nodes/edges twice here used
-    // to clone and sort the entire public graph on every changed refresh.
+    let consume_cold_projection_into_public = options.consume_cold_projection_into_public;
     let public_snapshot_started = Instant::now();
-    let public_snapshot = native_public_graph_snapshot_from_snapshot(&snapshot, &projection, None)?;
-    let public_snapshot_materialization_ms = elapsed_ms(public_snapshot_started);
+    let mut public_snapshot = if consume_cold_projection_into_public {
+        Value::Null
+    } else {
+        native_public_graph_snapshot_from_projection(&projection, None)?
+    };
+    let mut public_snapshot_materialization_ms = if consume_cold_projection_into_public {
+        0
+    } else {
+        elapsed_ms(public_snapshot_started)
+    };
     let facts_digest = receipt
         .get("factsDigest")
         .and_then(Value::as_str)
@@ -483,6 +564,11 @@ pub(in crate::protocol) fn persist_structural_graph_internal(
             && current.source_fingerprint == facts_digest
             && current.public_graph_version == Some(public_graph_version)
         {
+            if public_snapshot.is_null() {
+                let materialization_started = Instant::now();
+                public_snapshot = native_public_graph_snapshot_from_projection(&projection, None)?;
+                public_snapshot_materialization_ms = elapsed_ms(materialization_started);
+            }
             return Ok(PersistedStructuralGraph {
                 receipt: json!({
                     "schemaVersion": "flopeek-native-shadow-store-receipt/v1",
@@ -498,6 +584,7 @@ pub(in crate::protocol) fn persist_structural_graph_internal(
                 public_snapshot,
                 public_collection_patch: None,
                 public_snapshot_materialization_ms,
+                projection_consumed: false,
             });
         }
         Some(current)
@@ -554,6 +641,12 @@ pub(in crate::protocol) fn persist_structural_graph_internal(
             )
         })
         .transpose()?;
+    // The compact public patch and adjacent delta now own every value needed
+    // from the previous public snapshot. Release that full derived graph
+    // before SQLite component promotion so an incremental refresh does not
+    // hold previous projection + previous public graph + next public graph at
+    // the same peak.
+    drop(previous_public_snapshot);
     let delta_ms = elapsed_ms(persistence_started);
     let candidate =
         begin_graph_build(connection, project_id, facts_digest, facts_digest).map_err(|error| {
@@ -578,10 +671,13 @@ pub(in crate::protocol) fn persist_structural_graph_internal(
             reuse_public_components: false,
         },
     )
-    .map_err(|error| NativeProtocolError {
-        code: "store-promote-failed",
-        message: error.to_string(),
-    })?;
+    .map_err(native_promotion_error)?;
+    let projection_consumed = consume_cold_projection_into_public && previous.is_none();
+    if projection_consumed {
+        let materialization_started = Instant::now();
+        public_snapshot = take_native_public_graph_snapshot_from_projection(&mut projection)?;
+        public_snapshot_materialization_ms = elapsed_ms(materialization_started);
+    }
     let persistence_ms = elapsed_ms(persistence_started);
     Ok(PersistedStructuralGraph {
         receipt: json!({
@@ -599,6 +695,7 @@ pub(in crate::protocol) fn persist_structural_graph_internal(
         public_snapshot,
         public_collection_patch,
         public_snapshot_materialization_ms,
+        projection_consumed,
     })
 }
 
@@ -623,16 +720,19 @@ pub(in crate::protocol) fn persist_structural_graph(
             message: error.to_string(),
         }
     })?;
+    let mut owned_params = params.clone();
     Ok(persist_structural_graph_internal(
-        params,
+        &mut owned_params,
         &mut connection,
         PersistStructuralGraphOptions {
             validated_receipt: None,
             previous_projection: None,
+            previous_projection_owned: None,
             previous_public_snapshot: None,
             reuse_previous_projection: false,
             isolated_incremental_path: None,
             changed_record_paths: None,
+            consume_cold_projection_into_public: false,
         },
     )?
     .receipt)
@@ -675,7 +775,11 @@ pub(in crate::protocol) fn versioned_native_lifecycle_params(
     state.insert("graphVersion".to_string(), json!(public_graph_version));
     state.insert(
         "status".to_string(),
-        Value::String("native-pending-promotion".to_string()),
+        // This owned batch is persisted atomically and is never observable
+        // between candidate creation and commit. Store the post-commit public
+        // state so SQLite-backed queries and the returned graph expose the
+        // same lifecycle contract after a successful promotion.
+        Value::String("native-advanced".to_string()),
     );
     if !validated_facts_digest.starts_with("sha256:")
         || !is_sha256_hex(&validated_facts_digest[7..])
@@ -696,6 +800,69 @@ pub(in crate::protocol) fn versioned_native_lifecycle_params(
     Ok(())
 }
 
+fn persistent_fact_header_from_value(
+    value: &Value,
+) -> Result<NativePersistentFactHeader, NativeProtocolError> {
+    let parsed;
+    let object = if let Value::String(raw) = value {
+        parsed = serde_json::from_str::<Value>(raw).map_err(|error| NativeProtocolError {
+            code: "store-integrity-failed",
+            message: format!("Cached StructuralFactBatch record is invalid JSON: {error}"),
+        })?;
+        parsed.as_object().ok_or_else(|| NativeProtocolError {
+            code: "store-integrity-failed",
+            message: "Cached StructuralFactBatch record must be an object.".to_string(),
+        })?
+    } else {
+        value.as_object().ok_or_else(|| NativeProtocolError {
+            code: "store-integrity-failed",
+            message: "Cached StructuralFactBatch record must be an object.".to_string(),
+        })?
+    };
+    let header = NativePersistentFactHeader {
+        relative_path: string_field(object, "relativePath")?.to_string(),
+        source_hash: string_field(object, "sourceHash")?.to_string(),
+        source_scope: string_field(object, "sourceScope")?.to_string(),
+        record_order: object
+            .get("recordOrder")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| NativeProtocolError {
+                code: "store-integrity-failed",
+                message: "Cached StructuralFactBatch recordOrder is invalid.".to_string(),
+            })?,
+    };
+    if !is_portable_repository_path(&header.relative_path) || !is_sha256_hex(&header.source_hash) {
+        return Err(NativeProtocolError {
+            code: "store-integrity-failed",
+            message: "Cached StructuralFactBatch record header is invalid.".to_string(),
+        });
+    }
+    Ok(header)
+}
+
+fn persistent_fact_topology_value(value: &Value) -> Result<Value, NativeProtocolError> {
+    let parsed;
+    let object = if let Value::String(raw) = value {
+        parsed = serde_json::from_str::<Value>(raw).map_err(|error| NativeProtocolError {
+            code: "store-integrity-failed",
+            message: format!("Cached StructuralFactBatch record is invalid JSON: {error}"),
+        })?;
+        parsed.as_object().ok_or_else(|| NativeProtocolError {
+            code: "store-integrity-failed",
+            message: "Cached StructuralFactBatch record must be an object.".to_string(),
+        })?
+    } else {
+        value.as_object().ok_or_else(|| NativeProtocolError {
+            code: "store-integrity-failed",
+            message: "Cached StructuralFactBatch record must be an object.".to_string(),
+        })?
+    };
+    topology_record_value(&Value::Object(object.clone())).ok_or_else(|| NativeProtocolError {
+        code: "store-integrity-failed",
+        message: "Cached StructuralFactBatch topology record is invalid.".to_string(),
+    })
+}
+
 /// Rebuild a complete fact batch from the cache attached to SQLite's current
 /// complete graph.  The patch is deliberately rejected on any cache miss or
 /// manifest disagreement: a caller must then submit a normal full batch.  In
@@ -705,7 +872,15 @@ pub(in crate::protocol) fn reconstruct_structural_fact_patch(
     session: &mut NativeProtocolSession,
     params: &Value,
     connection: &rusqlite::Connection,
-) -> Result<(NativePersistentFacts, NativePersistentFacts, Value), NativeProtocolError> {
+) -> Result<
+    (
+        NativePersistentFacts,
+        NativePersistentFacts,
+        Value,
+        BTreeSet<String>,
+    ),
+    NativeProtocolError,
+> {
     let patch = params.as_object().ok_or_else(|| NativeProtocolError {
         code: "invalid-structural-fact-patch",
         message: "Native structural fact patch must be an object.".to_string(),
@@ -767,6 +942,16 @@ pub(in crate::protocol) fn reconstruct_structural_fact_patch(
             code: "invalid-structural-fact-patch",
             message: "Structural fact patch requires changed records.".to_string(),
         })?;
+    // Unchanged records are moved only from `persistent_facts`, which was
+    // loaded from the SQLite-selected complete batch and passed through the
+    // full StructuralFactBatch validator in `ensure_persistent_facts`.  The
+    // patch boundary still validates every record supplied by the caller;
+    // this makes the later verified-digest submit a proof-carrying operation
+    // instead of repeating an O(batch) recursive validation pass.
+    validate_structural_records(changed).map_err(|message| NativeProtocolError {
+        code: "unsafe-structural-fact-patch",
+        message,
+    })?;
     // Move the non-authoritative process cache into the candidate batch so
     // unchanged parser records are not deep-cloned on every compact patch.
     // A later promotion failure intentionally leaves this cache empty; the
@@ -783,10 +968,19 @@ pub(in crate::protocol) fn reconstruct_structural_fact_patch(
     }
     let mut next = NativePersistentFacts {
         project_id: previous.project_id.clone(),
+        graph_version: previous.graph_version,
         facts_digest: previous.facts_digest.clone(),
         topology_digest: previous.topology_digest.clone(),
         payload: std::mem::replace(&mut previous.payload, Value::Null),
+        record_headers: std::mem::take(&mut previous.record_headers),
+        compact_records: previous.compact_records,
     };
+    let mut topology_changed = topology_envelope_value(
+        next.payload
+            .as_object()
+            .expect("cached StructuralFactBatch remains an object"),
+    ) != topology_envelope_value(&batch);
+    let cached_headers = std::mem::take(&mut next.record_headers);
     let cached_records = next
         .payload
         .get_mut("records")
@@ -795,22 +989,6 @@ pub(in crate::protocol) fn reconstruct_structural_fact_patch(
             code: "store-integrity-failed",
             message: "The cached StructuralFactBatch is missing records.".to_string(),
         })?;
-    let mut cached_by_path = BTreeMap::new();
-    for record in std::mem::take(cached_records) {
-        let path = record
-            .get("relativePath")
-            .and_then(Value::as_str)
-            .ok_or_else(|| NativeProtocolError {
-                code: "store-integrity-failed",
-                message: "The cached StructuralFactBatch contains an invalid record.".to_string(),
-            })?;
-        if cached_by_path.insert(path.to_string(), record).is_some() {
-            return Err(NativeProtocolError {
-                code: "store-integrity-failed",
-                message: "The cached StructuralFactBatch repeats a record path.".to_string(),
-            });
-        }
-    }
     let mut changed_by_path = BTreeMap::new();
     for record in changed {
         let path = record
@@ -827,9 +1005,56 @@ pub(in crate::protocol) fn reconstruct_structural_fact_patch(
             });
         }
     }
-    let mut records = Vec::with_capacity(manifest.len());
+    // The common changed-source path preserves record membership and order.
+    // Replace only its declared records in place; rebuilding a path map and a
+    // second Vec for every unchanged record made one-file refresh O(project)
+    // in allocations even though validation and hashing were already linear.
+    let same_layout = cached_records.len() == manifest.len()
+        && cached_records.iter().enumerate().all(|(index, record)| {
+            let Some(path) = manifest
+                .get(index)
+                .and_then(|header| header.get("relativePath"))
+                .and_then(Value::as_str)
+            else {
+                return false;
+            };
+            if let Some(header) = cached_headers.get(index) {
+                header.relative_path == path
+            } else {
+                persistent_fact_header_from_value(record)
+                    .is_ok_and(|header| header.relative_path == path)
+            }
+        });
+    let mut records = if same_layout {
+        std::mem::take(cached_records)
+    } else {
+        topology_changed = true;
+        Vec::with_capacity(manifest.len())
+    };
+    let mut cached_by_path = BTreeMap::new();
+    if !same_layout {
+        for (index, record) in std::mem::take(cached_records).into_iter().enumerate() {
+            let header = cached_headers
+                .get(index)
+                .cloned()
+                .map(Ok)
+                .unwrap_or_else(|| persistent_fact_header_from_value(&record));
+            let header = header?;
+            if cached_by_path
+                .insert(header.relative_path.clone(), (record, header))
+                .is_some()
+            {
+                return Err(NativeProtocolError {
+                    code: "store-integrity-failed",
+                    message: "The cached StructuralFactBatch repeats a record path.".to_string(),
+                });
+            }
+        }
+    }
     let mut manifest_paths = BTreeMap::new();
-    for header in manifest {
+    let mut manifest_record_orders = BTreeSet::new();
+    let mut manifest_headers = Vec::with_capacity(manifest.len());
+    for (index, header) in manifest.iter().enumerate() {
         let object = header.as_object().ok_or_else(|| NativeProtocolError {
             code: "invalid-structural-fact-patch",
             message: "Structural fact patch manifest records must be objects.".to_string(),
@@ -847,35 +1072,76 @@ pub(in crate::protocol) fn reconstruct_structural_fact_patch(
         if !is_portable_repository_path(path)
             || !is_sha256_hex(source_hash)
             || manifest_paths.insert(path.to_string(), ()).is_some()
+            || !manifest_record_orders.insert(record_order)
         {
             return Err(NativeProtocolError {
                 code: "invalid-structural-fact-patch",
                 message: "Structural fact patch manifest is invalid.".to_string(),
             });
         }
-        let cached_record = cached_by_path
-            .remove(path)
-            .ok_or_else(|| NativeProtocolError {
-                code: "structural-fact-patch-miss",
-                message: format!(
-                    "Structural fact patch is missing cached record {path}; submit a full batch."
-                ),
-            })?;
-        let record = changed_by_path
-            .remove(path)
-            .cloned()
-            .unwrap_or(cached_record);
-        if record.get("relativePath").and_then(Value::as_str) != Some(path)
-            || record.get("sourceHash").and_then(Value::as_str) != Some(source_hash)
-            || record.get("sourceScope").and_then(Value::as_str) != Some(source_scope)
-            || record.get("recordOrder").and_then(Value::as_u64) != Some(record_order)
+        let (_record, record_header) = if same_layout {
+            if let Some(changed) = changed_by_path.remove(path) {
+                if persistent_fact_topology_value(&records[index])?
+                    != persistent_fact_topology_value(changed)?
+                {
+                    topology_changed = true;
+                }
+                let changed_header = persistent_fact_header_from_value(changed)?;
+                records[index] = changed.clone();
+                (&records[index], changed_header)
+            } else {
+                let header = cached_headers
+                    .get(index)
+                    .cloned()
+                    .map(Ok)
+                    .unwrap_or_else(|| persistent_fact_header_from_value(&records[index]))?;
+                (&records[index], header)
+            }
+        } else {
+            // A changed-path patch may add a file that had no prior cache row.
+            // Consume its complete changed record directly; unchanged manifest
+            // entries still require an exact cached record. This preserves the
+            // strict cache-miss guard without forcing every new file through a
+            // full-batch fallback.
+            let (record, record_header) = match changed_by_path.remove(path).cloned() {
+                Some(record) => {
+                    let header = persistent_fact_header_from_value(&record)?;
+                    (record, header)
+                }
+                None => cached_by_path.remove(path).ok_or_else(|| {
+                    NativeProtocolError {
+                        code: "structural-fact-patch-miss",
+                        message: format!(
+                            "Structural fact patch is missing cached record {path}; submit a full batch."
+                        ),
+                    }
+                })?,
+            };
+            records.push(record);
+            (records.last().expect("record was appended"), record_header)
+        };
+        if record_header.relative_path != path
+            || record_header.source_hash != source_hash
+            || record_header.source_scope != source_scope
+            || record_header.record_order != record_order
         {
             return Err(NativeProtocolError {
                 code: "invalid-structural-fact-patch",
                 message: format!("Structural fact patch record header disagrees for {path}."),
             });
         }
-        records.push(record);
+        manifest_headers.push(record_header);
+    }
+    if !manifest_record_orders
+        .iter()
+        .copied()
+        .eq(0..manifest.len() as u64)
+    {
+        return Err(NativeProtocolError {
+            code: "invalid-structural-fact-patch",
+            message: "Structural fact patch recordOrder values must be contiguous from zero."
+                .to_string(),
+        });
     }
     if !changed_by_path.is_empty() {
         return Err(NativeProtocolError {
@@ -883,6 +1149,26 @@ pub(in crate::protocol) fn reconstruct_structural_fact_patch(
             message: "Structural fact patch includes records absent from its manifest.".to_string(),
         });
     }
+    // The source session reports changed records, but a deletion (or a
+    // rename's old path) has no record to include in `changedRecords`. Any
+    // cached path left unmatched by the new manifest is therefore a durable
+    // cache row that must be removed during selective promotion. Deriving this
+    // from the verified cache and manifest keeps the deletion set authoritative
+    // instead of trusting a caller-provided hint.
+    let removed_record_paths = cached_by_path.keys().cloned().collect::<BTreeSet<_>>();
+    if topology_changed {
+        for record in &mut records {
+            if let Value::String(raw) = record {
+                *record = serde_json::from_str(raw).map_err(|error| NativeProtocolError {
+                    code: "store-integrity-failed",
+                    message: format!("Cached StructuralFactBatch record is invalid JSON: {error}"),
+                })?;
+            }
+        }
+    }
+    let compact_records = records.iter().all(Value::is_string);
+    next.record_headers = manifest_headers;
+    next.compact_records = compact_records;
     batch.insert("records".to_string(), Value::Array(records));
     // The native cache is the only input authority for unchanged records, so
     // native computes the candidate digest when Node intentionally omitted it
@@ -911,23 +1197,27 @@ pub(in crate::protocol) fn reconstruct_structural_fact_patch(
     reconstructed["projectRoot"] = params["projectRoot"].clone();
     let receipt =
         submit_structural_facts_with_verified_digest(&reconstructed, Some(&computed_digest))?;
-    let topology_digest = reconstructed
-        .as_object()
-        .ok_or_else(|| NativeProtocolError {
-            code: "store-integrity-failed",
-            message: "Reconstructed structural fact patch is not an object.".to_string(),
-        })
-        .and_then(|batch| {
-            structural_topology_digest(batch).map_err(|message| NativeProtocolError {
+    let topology_digest = if topology_changed {
+        reconstructed
+            .as_object()
+            .ok_or_else(|| NativeProtocolError {
                 code: "store-integrity-failed",
-                message,
+                message: "Reconstructed structural fact patch is not an object.".to_string(),
             })
-        })?;
+            .and_then(|batch| {
+                structural_topology_digest(batch).map_err(|message| NativeProtocolError {
+                    code: "store-integrity-failed",
+                    message,
+                })
+            })?
+    } else {
+        next.topology_digest.clone()
+    };
     next.project_id = project_id;
     next.facts_digest = computed_digest;
     next.topology_digest = topology_digest;
     next.payload = reconstructed;
-    Ok((next, previous, receipt))
+    Ok((next, previous, receipt, removed_record_paths))
 }
 
 pub(in crate::protocol) fn persist_native_public_graph_patch(
@@ -946,10 +1236,10 @@ pub(in crate::protocol) fn persist_native_public_graph_patch_using_connection(
     connection: &mut rusqlite::Connection,
 ) -> Result<Value, NativeProtocolError> {
     let reconstruction_started = Instant::now();
-    let (mut next, previous, receipt) =
+    let (mut next, previous, receipt, removed_record_paths) =
         reconstruct_structural_fact_patch(session, params, connection)?;
     let reconstruction_ms = elapsed_ms(reconstruction_started);
-    let changed_paths = params
+    let mut changed_paths = params
         .get("changedRecords")
         .and_then(Value::as_array)
         .ok_or_else(|| NativeProtocolError {
@@ -971,37 +1261,33 @@ pub(in crate::protocol) fn persist_native_public_graph_patch_using_connection(
                 })
         })
         .collect::<Result<BTreeSet<_>, _>>()?;
-    let project_root =
-        next.payload
-            .get("projectRoot")
-            .cloned()
-            .ok_or_else(|| NativeProtocolError {
-                code: "invalid-structural-facts",
-                message: "Reconstructed structural fact patch is missing projectRoot.".to_string(),
-            })?;
+    changed_paths.extend(removed_record_paths);
+    if next.payload.get("projectRoot").is_none() {
+        return Err(NativeProtocolError {
+            code: "invalid-structural-facts",
+            message: "Reconstructed structural fact patch is missing projectRoot.".to_string(),
+        });
+    }
     // Keep the previous cache identity available during promotion. Its payload
     // was moved into `next`, so a failed promotion clears this derived cache
     // rather than risking stale process-local parser facts.
     session.persistent_facts = Some(previous);
-    // Keep patch membership outside StructuralFactBatch/v1 so it can optimize
-    // the SQLite record cache without becoming parser evidence or affecting
-    // the canonical public facts digest.
     let persistence_started = Instant::now();
-    let persistence_params_started = Instant::now();
-    let mut persistence_params = json!({
-        "batch": std::mem::replace(&mut next.payload, Value::Null),
-        "projectRoot": project_root,
-        "nativeFactPatchChangedPaths": changed_paths,
-    });
-    let persistence_params_ms = elapsed_ms(persistence_params_started);
+    // Patch membership is passed as an internal promotion override. The
+    // reconstructed batch is already owned and validated, so wrapping it in a
+    // second JSON object only to move it back out adds O(batch) allocator churn.
+    let persistence_params_ms = 0;
     let native_lifecycle_started = Instant::now();
     let mut result = match persist_native_public_graph_with_receipt_using_connection(
         session,
-        &mut persistence_params,
+        &mut next.payload,
         receipt,
-        false,
-        Some(next.topology_digest.clone()),
-        None,
+        PersistNativePublicGraphOptions {
+            retain_persistent_facts: false,
+            verified_topology_digest: Some(next.topology_digest.clone()),
+            changed_record_paths_override: Some(changed_paths),
+            retain_public_snapshot: true,
+        },
         connection,
     ) {
         Ok(result) => result,
@@ -1011,16 +1297,8 @@ pub(in crate::protocol) fn persist_native_public_graph_patch_using_connection(
         }
     };
     let native_lifecycle_ms = elapsed_ms(native_lifecycle_started);
-    // Only update the process cache after the durable graph promotion succeeds.
-    // Removing `batch` transfers the already-validated exact value rather than
-    // copying it; an error above leaves the prior cache valid for retry.
     let session_cache_started = Instant::now();
-    let payload = persistence_params
-        .as_object_mut()
-        .and_then(|object| object.remove("batch"))
-        .expect("patch persistence parameters retain their batch");
-    next.payload = payload;
-    session.persistent_facts = Some(next);
+    session.persistent_facts = None;
     let session_cache_ms = elapsed_ms(session_cache_started);
     let persistence_ms = elapsed_ms(persistence_started);
     if let Some(profile) = result
@@ -1118,22 +1396,36 @@ pub(in crate::protocol) fn persist_native_public_graph_with_receipt(
         session,
         params,
         receipt,
-        retain_persistent_facts,
-        verified_topology_digest,
-        None,
+        PersistNativePublicGraphOptions {
+            retain_persistent_facts,
+            verified_topology_digest,
+            changed_record_paths_override: None,
+            retain_public_snapshot: true,
+        },
         &mut connection,
     )
+}
+
+pub(in crate::protocol) struct PersistNativePublicGraphOptions {
+    pub(in crate::protocol) retain_persistent_facts: bool,
+    pub(in crate::protocol) verified_topology_digest: Option<String>,
+    pub(in crate::protocol) changed_record_paths_override: Option<BTreeSet<String>>,
+    pub(in crate::protocol) retain_public_snapshot: bool,
 }
 
 pub(in crate::protocol) fn persist_native_public_graph_with_receipt_using_connection(
     session: &mut NativeProtocolSession,
     params: &mut Value,
     receipt: Value,
-    retain_persistent_facts: bool,
-    verified_topology_digest: Option<String>,
-    changed_record_paths_override: Option<BTreeSet<String>>,
+    options: PersistNativePublicGraphOptions,
     connection: &mut rusqlite::Connection,
 ) -> Result<Value, NativeProtocolError> {
+    let PersistNativePublicGraphOptions {
+        retain_persistent_facts,
+        verified_topology_digest,
+        changed_record_paths_override,
+        retain_public_snapshot,
+    } = options;
     let lifecycle_started = Instant::now();
     let preflight_started = Instant::now();
     let changed_record_paths = match changed_record_paths_override {
@@ -1201,8 +1493,7 @@ pub(in crate::protocol) fn persist_native_public_graph_with_receipt_using_connec
     if unchanged {
         let current = current.expect("unchanged requires a complete graph");
         versioned_native_lifecycle_params(params, public_graph_version, &facts_digest)?;
-        let persistent_payload_cache_hit =
-            ensure_persistent_payload(session, connection, &project_id, current.graph_version)?;
+        ensure_persistent_payload(session, connection, &project_id, current.graph_version)?;
         let persistent = session
             .persistent_graph
             .as_ref()
@@ -1212,8 +1503,7 @@ pub(in crate::protocol) fn persist_native_public_graph_with_receipt_using_connec
         // instead of serializing and transferring the whole graph again. A
         // restarted process has no public snapshot and conservatively returns
         // one complete graph so the caller can establish its local baseline.
-        let can_reuse_public_collections =
-            persistent_payload_cache_hit && persistent.public_snapshot.is_some();
+        let can_reuse_public_collections = persistent.public_snapshot.is_some();
         let mut public_graph = if can_reuse_public_collections {
             let mut context =
                 native_public_graph_context(&persistent.payload, params.get("publicGraphContext"))?;
@@ -1269,11 +1559,15 @@ pub(in crate::protocol) fn persist_native_public_graph_with_receipt_using_connec
                     })
                 })?,
         };
+        let payload = take_owned_structural_batch(params)?;
         session.persistent_facts = Some(NativePersistentFacts {
             project_id: project_id.clone(),
+            graph_version: current.graph_version,
             facts_digest: facts_digest.clone(),
             topology_digest: current_topology_digest,
-            payload: current_batch.clone(),
+            payload,
+            record_headers: Vec::new(),
+            compact_records: false,
         });
         let mut response = json!({
             "schemaVersion": "flopeek-native-public-lifecycle/v1",
@@ -1292,6 +1586,20 @@ pub(in crate::protocol) fn persist_native_public_graph_with_receipt_using_connec
         } else {
             response["graph"] = public_graph;
         }
+        let proof_topology_digest = session
+            .persistent_facts
+            .as_ref()
+            .expect("persistent facts were retained")
+            .topology_digest
+            .clone();
+        remember_persistent_fact_proof(
+            session,
+            connection,
+            &project_id,
+            current.graph_version,
+            &facts_digest,
+            &proof_topology_digest,
+        );
         return Ok(response);
     }
     let topology_digest = match verified_topology_digest {
@@ -1334,23 +1642,42 @@ pub(in crate::protocol) fn persist_native_public_graph_with_receipt_using_connec
         })
     };
     let mut persistent_payload_cache_hit = false;
-    let previous_projection = if let Some(previous) = current.as_ref() {
+    if let Some(previous) = current.as_ref() {
         let cache_hit =
             ensure_persistent_payload(session, connection, &project_id, previous.graph_version)?;
         persistent_payload_cache_hit = cache_hit;
-        Some(
+    }
+    // `cached_or_load_persistent_payload` above may replace the cache. Read
+    // its public snapshot only afterwards, when both references are immutable
+    // and guaranteed to point at the SQLite-selected prior graph version.
+    let has_previous_public_snapshot = current.as_ref().is_some_and(|previous| {
+        session
+            .persistent_graph
+            .as_ref()
+            .filter(|cached| {
+                cached.project_id == project_id && cached.graph_version == previous.graph_version
+            })
+            .is_some_and(|cached| cached.public_snapshot.is_some())
+    });
+    let previous_projection_owned = if reuse_previous_projection && has_previous_public_snapshot {
+        session
+            .persistent_graph
+            .as_mut()
+            .map(|cached| std::mem::take(&mut cached.payload))
+    } else {
+        None
+    };
+    let previous_projection = if previous_projection_owned.is_none() {
+        current.as_ref().map(|_| {
             &session
                 .persistent_graph
                 .as_ref()
                 .expect("persistent payload is ensured")
-                .payload,
-        )
+                .payload
+        })
     } else {
         None
     };
-    // `cached_or_load_persistent_payload` above may replace the cache. Read
-    // its public snapshot only afterwards, when both references are immutable
-    // and guaranteed to point at the SQLite-selected prior graph version.
     let previous_public_snapshot = current.as_ref().and_then(|previous| {
         session
             .persistent_graph
@@ -1369,10 +1696,12 @@ pub(in crate::protocol) fn persist_native_public_graph_with_receipt_using_connec
         PersistStructuralGraphOptions {
             validated_receipt: Some(receipt),
             previous_projection,
+            previous_projection_owned,
             previous_public_snapshot,
             reuse_previous_projection,
             isolated_incremental_path: isolated_incremental_path.as_deref(),
             changed_record_paths: changed_record_paths.as_ref(),
+            consume_cold_projection_into_public: !retain_public_snapshot && current.is_none(),
         },
     )?;
     let native_graph_version = stored
@@ -1383,6 +1712,7 @@ pub(in crate::protocol) fn persist_native_public_graph_with_receipt_using_connec
             code: "store-promote-failed",
             message: "Native persistence receipt is missing graphVersion.".to_string(),
         })?;
+    let projection_consumed = stored.projection_consumed;
     let projection = stored.projection;
     let mut public_graph = stored.public_snapshot;
     let public_collection_patch = stored.public_collection_patch;
@@ -1504,23 +1834,53 @@ pub(in crate::protocol) fn persist_native_public_graph_with_receipt_using_connec
                 snapshot_object.insert(key.clone(), value.clone());
             }
         }
+    } else if projection_consumed {
+        // The complete projection was committed to SQLite before its public
+        // collections were moved into the response. Reload it on demand for a
+        // later refresh instead of retaining a second in-process copy now.
+        session.persistent_graph = None;
     } else {
         session.persistent_graph = Some(NativePersistentGraph {
             project_id: project_id.clone(),
             graph_version: native_graph_version,
             payload: projection,
-            public_snapshot: Some(public_graph.clone()),
+            public_snapshot: retain_public_snapshot.then(|| public_graph.clone()),
         });
     }
     let session_graph_cache_ms = elapsed_ms(session_graph_cache_started);
     let session_facts_cache_started = Instant::now();
     if retain_persistent_facts {
+        let payload = take_owned_structural_batch(params)?;
         session.persistent_facts = Some(NativePersistentFacts {
             project_id: project_id.clone(),
+            graph_version: native_graph_version,
             facts_digest: facts_digest.clone(),
-            topology_digest,
-            payload: structural_batch(params)?.clone(),
+            topology_digest: topology_digest.clone(),
+            payload,
+            record_headers: Vec::new(),
+            compact_records: false,
         });
+    } else {
+        let compactable = structural_batch(params)
+            .ok()
+            .and_then(|batch| batch.get("records"))
+            .and_then(Value::as_array)
+            .is_some_and(|records| records.iter().all(Value::is_object));
+        if compactable {
+            let payload = take_owned_structural_batch(params)?;
+            session.persistent_facts = Some(compact_persistent_fact_batch(
+                payload,
+                &project_id,
+                native_graph_version,
+                &facts_digest,
+                &topology_digest,
+            )?);
+        } else {
+            // A compact patch already owns its process-local record headers;
+            // reparsing every retained raw record here would erase the fast
+            // path. Its next refresh will rebuild a verified cache if needed.
+            session.persistent_facts = None;
+        }
     }
     let session_facts_cache_ms = elapsed_ms(session_facts_cache_started);
     if let Some(profile) = stored
@@ -1596,7 +1956,109 @@ pub(in crate::protocol) fn persist_native_public_graph_with_receipt_using_connec
             json!(elapsed_ms(lifecycle_started)),
         );
     }
+    remember_persistent_fact_proof(
+        session,
+        connection,
+        &project_id,
+        native_graph_version,
+        &facts_digest,
+        &topology_digest,
+    );
     Ok(response)
+}
+
+fn compact_persistent_fact_batch(
+    mut payload: Value,
+    project_id: &str,
+    graph_version: i64,
+    facts_digest: &str,
+    topology_digest: &str,
+) -> Result<NativePersistentFacts, NativeProtocolError> {
+    let records = payload
+        .get_mut("records")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| NativeProtocolError {
+            code: "store-integrity-failed",
+            message: "Persistent StructuralFactBatch is missing records.".to_string(),
+        })?;
+    let mut headers = Vec::with_capacity(records.len());
+    for record in records {
+        let object = match &*record {
+            Value::String(raw) => {
+                serde_json::from_str::<Value>(raw).map_err(|error| NativeProtocolError {
+                    code: "store-integrity-failed",
+                    message: format!(
+                        "Persistent StructuralFactBatch contains invalid record JSON: {error}"
+                    ),
+                })?
+            }
+            value => value.clone(),
+        };
+        let object = object.as_object().ok_or_else(|| NativeProtocolError {
+            code: "store-integrity-failed",
+            message: "Persistent StructuralFactBatch records must be objects.".to_string(),
+        })?;
+        let header = NativePersistentFactHeader {
+            relative_path: string_field(object, "relativePath")?.to_string(),
+            source_hash: string_field(object, "sourceHash")?.to_string(),
+            source_scope: string_field(object, "sourceScope")?.to_string(),
+            record_order: object
+                .get("recordOrder")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| NativeProtocolError {
+                    code: "store-integrity-failed",
+                    message: "Persistent StructuralFactBatch recordOrder is invalid.".to_string(),
+                })?,
+        };
+        if !is_portable_repository_path(&header.relative_path)
+            || !is_sha256_hex(&header.source_hash)
+        {
+            return Err(NativeProtocolError {
+                code: "store-integrity-failed",
+                message: "Persistent StructuralFactBatch record header is invalid.".to_string(),
+            });
+        }
+        let object_value = Value::Object(object.clone());
+        let canonical = serde_json::to_string(&CanonicalValue(&object_value)).map_err(|error| {
+            NativeProtocolError {
+                code: "store-integrity-failed",
+                message: error.to_string(),
+            }
+        })?;
+        *record = Value::String(canonical);
+        headers.push(header);
+    }
+    Ok(NativePersistentFacts {
+        project_id: project_id.to_string(),
+        graph_version,
+        facts_digest: facts_digest.to_string(),
+        topology_digest: topology_digest.to_string(),
+        payload,
+        record_headers: headers,
+        compact_records: true,
+    })
+}
+
+fn take_owned_structural_batch(params: &mut Value) -> Result<Value, NativeProtocolError> {
+    if params.get("batch").is_some() {
+        params
+            .as_object_mut()
+            .and_then(|object| object.remove("batch"))
+            .filter(Value::is_object)
+            .ok_or_else(|| NativeProtocolError {
+                code: "invalid-structural-facts",
+                message:
+                    "Native structural query params.batch must be a StructuralFactBatch/v1 object."
+                        .to_string(),
+            })
+    } else if params.is_object() {
+        Ok(std::mem::take(params))
+    } else {
+        Err(NativeProtocolError {
+            code: "invalid-structural-facts",
+            message: "StructuralFactBatch/v1 must be an object.".to_string(),
+        })
+    }
 }
 
 // The cache-disabled counterpart to persist_native_public_graph. It uses the

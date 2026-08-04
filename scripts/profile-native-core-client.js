@@ -8,13 +8,6 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
-const { createCoreCompatibilityDigest } = require("../src/core-compatibility");
-const { createJsCoreClient } = require("../src/js-core-client");
-const { createNativeCoreClient } = require("../src/native-core-client");
-const { createScanCoordinator } = require("../src/scan-coordinator");
-const { NativeProtocolClient } = require("../src/native-protocol-client");
-const { copyRepository, sourceFiles } = require("./benchmark-native-incremental");
-const { releaseNativeOptions, stateRequest } = require("./benchmark-native-core-client");
 
 const QUERY_SAMPLES = Number.isSafeInteger(Number(process.env.FLOPEEK_PROFILE_QUERY_SAMPLES))
   ? Math.max(3, Math.min(101, Number(process.env.FLOPEEK_PROFILE_QUERY_SAMPLES)))
@@ -157,6 +150,12 @@ async function profileQueries(core, graph, nativeProtocol = null) {
     const transport = [];
     for (let index = 0; index < QUERY_SAMPLES; index += 1) {
       const measurement = await elapsed(operation);
+      if (targetStatus === "present") {
+        assert.notEqual(measurement.result, null, `${name} declared a present profile target but returned null.`);
+        assert.notEqual(measurement.result, undefined, `${name} declared a present profile target but returned undefined.`);
+      } else if (name === "flowProjection") {
+        assert.equal(measurement.result, null, "Absent Flow Projection profile targets must retain the CoreClient null contract.");
+      }
       samples.push(measurement.milliseconds);
       const stats = nativeProtocol?.getLastResponseStats?.();
       if (stats && Number.isFinite(stats.roundTripMilliseconds)) transport.push(stats);
@@ -174,20 +173,34 @@ async function profileState(coordinator, core, request, phases, nativeProtocol =
   const memoryAfter = combinedMemorySnapshot(nativeProtocol);
   assert.equal(scan.result.outcome.status, "complete", scan.result.outcome.failure?.message || "Profile coordinator scan failed.");
   const concurrentMemory = stopMemoryMonitor();
-  const queries = await profileQueries(core, scan.result.graph, nativeProtocol);
+  const materialization = await elapsed(() => core.materializeGraph(scan.result.graph));
+  const materializedGraph = materialization.result;
+  const queries = await profileQueries(core, materializedGraph, nativeProtocol);
   return {
     milliseconds: Number(scan.milliseconds.toFixed(3)),
     phases: phases.slice(phaseStart),
     memoryBefore,
     memoryAfter,
     concurrentMemory,
+    parityMaterialization: {
+      required: materializedGraph !== scan.result.graph,
+      milliseconds: Number(materialization.milliseconds.toFixed(3)),
+      memoryAfter: combinedMemorySnapshot(nativeProtocol),
+    },
     database: nativeStoreSnapshot(coordinator.root),
     queries,
-    graph: scan.result.graph,
+    graph: materializedGraph,
   };
 }
 
 async function main() {
+  const { createCoreCompatibilityDigest } = require("../src/core-compatibility");
+  const { createScanCoordinator } = require("../src/scan-coordinator");
+  const { copyRepository, sourceFiles } = require("./benchmark-native-incremental");
+  const { releaseNativeOptions, stateRequest } = require("./native-benchmark-contract");
+  const { createJsCoreClient } = require("../src/js-core-client");
+  const { createNativeCoreClient } = require("../src/native-core-client");
+  const { NativeProtocolClient } = require("../src/native-protocol-client");
   const source = path.resolve(process.argv[2] || "");
   if (!source || !fs.statSync(source).isDirectory()) throw new Error("Supply an existing repository path.");
   const worker = path.join(__dirname, "profile-native-core-worker.js");

@@ -10,6 +10,7 @@ const { createContextRef, parseContextRef } = require("../../src/context-card");
 const { resolveContextRef } = require("../../src/graph-service");
 const { createJsCoreClient } = require("../../src/js-core-client");
 const { createNativeCoreClient } = require("../../src/native-core-client");
+const { nativeTestCommand } = require("../helpers/native-test-command");
 const { NativeProtocolClient } = require("../../src/native-protocol-client");
 const { createSurfaceCoreRuntime } = require("../../src/core-runtime");
 const { createScanCoordinator } = require("../../src/scan-coordinator");
@@ -17,8 +18,7 @@ const { scanRepository, writeGraphCache } = require("../../src/scanner");
 
 const ROOT = path.join(__dirname, "..", "..");
 const SOURCE = path.join(__dirname, "..", "fixtures", "typescript-order-flow");
-const MANIFEST = path.join(ROOT, "native", "flopeek-core", "Cargo.toml");
-const NATIVE = { command: "cargo", args: ["run", "--quiet", "--manifest-path", MANIFEST, "--"] };
+const NATIVE = nativeTestCommand(ROOT);
 const expectedBundledNativeFallback = () => {
   const packet = JSON.parse(fs.readFileSync(path.join(ROOT, "packaging", "native-rollout-evidence.json"), "utf8"));
   return packet.status === "complete" ? "native-public-core-unavailable" : "native-rollout-gate-blocked";

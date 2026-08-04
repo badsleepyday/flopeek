@@ -15,17 +15,15 @@ const { createCoreCompatibilityDigest, createCoreCompatibilityProjection } = req
 const { COLLATION_LOCALE } = require("../../src/collation");
 const { getAgentBootstrap, getChangedContexts, getEntryFlows, getNodeDetails, getRelatedTests, projectView } = require("../../src/graph-service");
 const { canonicalRealpath } = require("../../src/canonical-path");
+const { nativeTestCommand } = require("../helpers/native-test-command");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const FIXTURE = path.join(ROOT, "test", "fixtures", "typescript-order-flow");
-const MANIFEST = path.join(ROOT, "native", "flopeek-core", "Cargo.toml");
 const CORE_BASELINE = JSON.parse(fs.readFileSync(path.join(ROOT, "benchmarks", "js-core-baseline.json"), "utf8"));
 
 function nativeClient() {
   return new NativeProtocolClient({
-    command: "cargo",
-    args: ["run", "--quiet", "--manifest-path", MANIFEST, "--"],
-    cwd: ROOT,
+    ...nativeTestCommand(ROOT),
     // `cargo run` may need a first-source build while other Node test files
     // exercise the release binary in parallel. Product clients still retain
     // their normal timeout; this source-backed harness must include compile
@@ -1061,6 +1059,8 @@ test("experimental NativeCoreClient preserves graph, core-query, and stale-conte
     assert.deepEqual(await native.getContextCard(first, node.id), javascript.getContextCard(first, node.id), `${fixture.id}: nodeContextCard`);
     assert.deepEqual(await native.getEntryFlows(first, "", "application"), javascript.getEntryFlows(first, "", "application"), `${fixture.id}: entryFlows`);
     assert.deepEqual(await native.getRequestFlows(first, "", "application"), javascript.getRequestFlows(first, "", "application"), `${fixture.id}: requestFlows`);
+    assert.equal(await native.getFlowProjection(first, "flow:__missing__"), null, `${fixture.id}: missingFlowLens`);
+    assert.equal(await native.getFlowContextCard(first, "flow:__missing__"), null, `${fixture.id}: missingFlowContextCard`);
     const changedPath = first.nodes.find((candidate) => candidate.kind === "file" && candidate.sourceScope !== "test")?.path;
     assert.ok(changedPath, `${fixture.id}: needs one application file`);
     assert.deepEqual(await native.getChangeImpact(first, [changedPath], { maxDepth: 4 }), javascript.getChangeImpact(first, [changedPath], { maxDepth: 4 }), `${fixture.id}: impact`);
@@ -1118,6 +1118,10 @@ test("strict Rust source authority parses and resolves a TypeScript graph withou
   assert.equal(createCoreCompatibilityDigest(unchanged), createCoreCompatibilityDigest(unchangedOracle));
   assert.equal(unchanged.state.graphVersion, refreshed.state.graphVersion);
   assert.deepEqual(unchanged.analysis.refresh, unchangedOracle.analysis.refresh);
+  assert.equal(unchanged.state.status, "native-current");
+  assert.equal(unchanged.analysis.graphState.status, "unchanged");
+  assert.equal(unchanged.analysis.graphState.persistence, "sqlite");
+  assert.equal(fs.existsSync(path.join(root, ".flopeek", "graph.json")), false);
 });
 
 test("strict Rust source authority preserves registered inventory-only files in mixed repositories", async (context) => {

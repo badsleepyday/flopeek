@@ -3,7 +3,6 @@ const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { getGraphDelta } = require("./graph-delta");
-const { scanRepository } = require("./scanner");
 const { resolveProjectIdentity } = require("./project-identity");
 
 const HISTORY_SCHEMA = "flopeek-git-history/v1";
@@ -163,7 +162,7 @@ function scanCommit(root, commit) {
     // snapshot read-only and never checks out the caller's working tree.
     const archive = git(root, ["archive", "--format=tar", commit.revision], { maxBuffer: MAX_ARCHIVE_BYTES });
     extractGitArchive(archive, temporaryRoot);
-    const graph = scanRepository(temporaryRoot);
+    const graph = require("./scanner").scanRepository(temporaryRoot);
     const identity = resolveProjectIdentity(root);
     graph.project = {
       root,

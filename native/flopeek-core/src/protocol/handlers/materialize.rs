@@ -252,6 +252,292 @@ pub(in crate::protocol) fn native_public_graph_snapshot_from_snapshot(
     Ok(result)
 }
 
+/// Materialize the public compatibility graph directly from the already
+/// transferred JSON projection. This avoids reconstructing a second complete
+/// typed graph solely to clone it into a public `Value`.
+pub(in crate::protocol) fn native_public_graph_snapshot_from_projection(
+    payload: &Value,
+    public_graph_context: Option<&Value>,
+) -> Result<Value, NativeProtocolError> {
+    let nodes = payload
+        .get("nodes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| NativeProtocolError {
+            code: "store-read-failed",
+            message: "Native projection is missing nodes.".to_string(),
+        })?;
+    let edges = payload
+        .get("edges")
+        .and_then(Value::as_array)
+        .ok_or_else(|| NativeProtocolError {
+            code: "store-read-failed",
+            message: "Native projection is missing edges.".to_string(),
+        })?;
+    let mut ordered_nodes = nodes.iter().collect::<Vec<_>>();
+    ordered_nodes.sort_by(|left, right| {
+        let left_label = left
+            .pointer("/metadata/label")
+            .and_then(Value::as_str)
+            .or_else(|| left.get("id").and_then(Value::as_str))
+            .unwrap_or_default();
+        let right_label = right
+            .pointer("/metadata/label")
+            .and_then(Value::as_str)
+            .or_else(|| right.get("id").and_then(Value::as_str))
+            .unwrap_or_default();
+        javascript_ascii_locale_cmp(left_label, right_label).then_with(|| {
+            javascript_ascii_cmp(
+                left.get("id").and_then(Value::as_str).unwrap_or_default(),
+                right.get("id").and_then(Value::as_str).unwrap_or_default(),
+            )
+        })
+    });
+    let traversal_order = payload
+        .get("nativeTraversalOrder")
+        .and_then(Value::as_object)
+        .map(|order| {
+            order
+                .iter()
+                .filter_map(|(key, index)| index.as_u64().map(|index| (key.as_str(), index)))
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    let edge_key = |edge: &Value| {
+        format!(
+            "{}\0{}\0{}",
+            edge.get("source")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            edge.get("target")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            edge.get("type").and_then(Value::as_str).unwrap_or_default(),
+        )
+    };
+    let mut ordered_edges = edges.iter().collect::<Vec<_>>();
+    ordered_edges.sort_by(|left, right| {
+        let left_key = edge_key(left);
+        let right_key = edge_key(right);
+        traversal_order
+            .get(left_key.as_str())
+            .copied()
+            .unwrap_or(u64::MAX)
+            .cmp(
+                &traversal_order
+                    .get(right_key.as_str())
+                    .copied()
+                    .unwrap_or(u64::MAX),
+            )
+            .then_with(|| javascript_ascii_cmp(&left_key, &right_key))
+    });
+    let public_nodes = ordered_nodes
+        .into_iter()
+        .map(|node| {
+            let mut value = node
+                .get("metadata")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            value.insert("id".to_string(), node["id"].clone());
+            value.insert("kind".to_string(), node["kind"].clone());
+            value.insert("type".to_string(), node["nodeType"].clone());
+            value.insert("path".to_string(), node["path"].clone());
+            Value::Object(value)
+        })
+        .collect::<Vec<_>>();
+    let public_edges = ordered_edges
+        .into_iter()
+        .map(|edge| {
+            json!({
+                "source": edge["source"].clone(),
+                "target": edge["target"].clone(),
+                "type": edge["type"].clone(),
+                "confidence": edge.get("confidence").cloned().unwrap_or(Value::Null),
+                "evidence": edge.get("evidence").cloned().unwrap_or(Value::Null),
+            })
+        })
+        .collect::<Vec<_>>();
+    let summary = payload
+        .pointer("/lifecycleContext/coverage/summary")
+        .and_then(Value::as_object);
+    let coverage_count = |key: &str| {
+        summary
+            .and_then(|summary| summary.get(key))
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+    };
+    let node_count =
+        |predicate: &dyn Fn(&Value) -> bool| nodes.iter().filter(|node| predicate(node)).count();
+    let stats = json!({
+        "scannedFiles": coverage_count("scannedFiles"),
+        "nodes": nodes.len(),
+        "edges": edges.len(),
+        "services": node_count(&|node| node["nodeType"] == "service"),
+        "classes": node_count(&|node| node["kind"] == "symbol" && node["nodeType"] == "class"),
+        "functions": node_count(&|node| node["kind"] == "symbol" && node["nodeType"] == "function"),
+        "calls": edges.iter().filter(|edge| edge["type"] == "calls").count(),
+        "endpoints": node_count(&|node| node["kind"] == "endpoint"),
+        "commandEntries": node_count(&|node| node["kind"] == "command" && matches!(node.pointer("/metadata/entryKind").and_then(Value::as_str), Some("package-script") | Some("django-management-command") | Some("framework-command"))),
+        "scheduledEntries": node_count(&|node| node["kind"] == "schedule" && node.pointer("/metadata/entryKind").and_then(Value::as_str) == Some("node-cron-schedule")),
+        "tests": node_count(&|node| node["nodeType"] == "test"),
+        "runtimeDependencies": node_count(&|node| node.pointer("/metadata/layer").and_then(Value::as_str) == Some("runtime")),
+        "parsedFiles": coverage_count("parsedFiles"),
+        "inventoryOnlyFiles": coverage_count("inventoryOnlyFiles"),
+        "parseFailedFiles": coverage_count("parseFailedFiles"),
+    });
+    let mut result = native_public_graph_context(payload, public_graph_context)?;
+    result["nodes"] = Value::Array(public_nodes);
+    result["edges"] = Value::Array(public_edges);
+    result["stats"] = stats;
+    result["flows"] = payload["flows"].clone();
+    result["diagnosticFlows"] = payload["diagnosticFlows"].clone();
+    Ok(result)
+}
+
+pub(in crate::protocol) fn take_native_public_graph_snapshot_from_projection(
+    payload: &mut Value,
+) -> Result<Value, NativeProtocolError> {
+    let mut result = native_public_graph_context(payload, None)?;
+    let mut nodes = payload["nodes"]
+        .take()
+        .as_array_mut()
+        .map(std::mem::take)
+        .ok_or_else(|| NativeProtocolError {
+            code: "store-read-failed",
+            message: "Native projection is missing nodes.".to_string(),
+        })?;
+    let mut edges = payload["edges"]
+        .take()
+        .as_array_mut()
+        .map(std::mem::take)
+        .ok_or_else(|| NativeProtocolError {
+            code: "store-read-failed",
+            message: "Native projection is missing edges.".to_string(),
+        })?;
+    nodes.sort_by(|left, right| {
+        let left_label = left
+            .pointer("/metadata/label")
+            .and_then(Value::as_str)
+            .or_else(|| left.get("id").and_then(Value::as_str))
+            .unwrap_or_default();
+        let right_label = right
+            .pointer("/metadata/label")
+            .and_then(Value::as_str)
+            .or_else(|| right.get("id").and_then(Value::as_str))
+            .unwrap_or_default();
+        javascript_ascii_locale_cmp(left_label, right_label).then_with(|| {
+            javascript_ascii_cmp(
+                left.get("id").and_then(Value::as_str).unwrap_or_default(),
+                right.get("id").and_then(Value::as_str).unwrap_or_default(),
+            )
+        })
+    });
+    let traversal_order = payload
+        .get("nativeTraversalOrder")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let edge_key = |edge: &Value| {
+        format!(
+            "{}\0{}\0{}",
+            edge["source"].as_str().unwrap_or_default(),
+            edge["target"].as_str().unwrap_or_default(),
+            edge["type"].as_str().unwrap_or_default(),
+        )
+    };
+    edges.sort_by(|left, right| {
+        let left_key = edge_key(left);
+        let right_key = edge_key(right);
+        traversal_order
+            .get(&left_key)
+            .and_then(Value::as_u64)
+            .unwrap_or(u64::MAX)
+            .cmp(
+                &traversal_order
+                    .get(&right_key)
+                    .and_then(Value::as_u64)
+                    .unwrap_or(u64::MAX),
+            )
+            .then_with(|| javascript_ascii_cmp(&left_key, &right_key))
+    });
+    let summary = payload
+        .pointer("/lifecycleContext/coverage/summary")
+        .and_then(Value::as_object);
+    let coverage_count = |key: &str| {
+        summary
+            .and_then(|summary| summary.get(key))
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+    };
+    let node_count =
+        |predicate: &dyn Fn(&Value) -> bool| nodes.iter().filter(|node| predicate(node)).count();
+    result["stats"] = json!({
+        "scannedFiles": coverage_count("scannedFiles"),
+        "nodes": nodes.len(),
+        "edges": edges.len(),
+        "services": node_count(&|node| node["nodeType"] == "service"),
+        "classes": node_count(&|node| node["kind"] == "symbol" && node["nodeType"] == "class"),
+        "functions": node_count(&|node| node["kind"] == "symbol" && node["nodeType"] == "function"),
+        "calls": edges.iter().filter(|edge| edge["type"] == "calls").count(),
+        "endpoints": node_count(&|node| node["kind"] == "endpoint"),
+        "commandEntries": node_count(&|node| node["kind"] == "command" && matches!(node.pointer("/metadata/entryKind").and_then(Value::as_str), Some("package-script") | Some("django-management-command") | Some("framework-command"))),
+        "scheduledEntries": node_count(&|node| node["kind"] == "schedule" && node.pointer("/metadata/entryKind").and_then(Value::as_str) == Some("node-cron-schedule")),
+        "tests": node_count(&|node| node["nodeType"] == "test"),
+        "runtimeDependencies": node_count(&|node| node.pointer("/metadata/layer").and_then(Value::as_str) == Some("runtime")),
+        "parsedFiles": coverage_count("parsedFiles"),
+        "inventoryOnlyFiles": coverage_count("inventoryOnlyFiles"),
+        "parseFailedFiles": coverage_count("parseFailedFiles"),
+    });
+    result["nodes"] = Value::Array(
+        nodes
+            .into_iter()
+            .map(|mut node| {
+                let object = node
+                    .as_object_mut()
+                    .expect("validated structural node remains an object");
+                let mut public = object
+                    .remove("metadata")
+                    .and_then(|value| value.as_object().cloned())
+                    .unwrap_or_default();
+                public.insert("id".to_string(), object.remove("id").unwrap_or(Value::Null));
+                public.insert(
+                    "kind".to_string(),
+                    object.remove("kind").unwrap_or(Value::Null),
+                );
+                public.insert(
+                    "type".to_string(),
+                    object.remove("nodeType").unwrap_or(Value::Null),
+                );
+                public.insert(
+                    "path".to_string(),
+                    object.remove("path").unwrap_or(Value::Null),
+                );
+                Value::Object(public)
+            })
+            .collect(),
+    );
+    result["edges"] = Value::Array(
+        edges
+            .into_iter()
+            .map(|mut edge| {
+                let object = edge
+                    .as_object_mut()
+                    .expect("validated structural edge remains an object");
+                json!({
+                    "source": object.remove("source").unwrap_or(Value::Null),
+                    "target": object.remove("target").unwrap_or(Value::Null),
+                    "type": object.remove("type").unwrap_or(Value::Null),
+                    "confidence": object.remove("confidence").unwrap_or(Value::Null),
+                    "evidence": object.remove("evidence").unwrap_or(Value::Null),
+                })
+            })
+            .collect(),
+    );
+    result["flows"] = payload["flows"].take();
+    result["diagnosticFlows"] = payload["diagnosticFlows"].take();
+    Ok(result)
+}
+
 pub(in crate::protocol) fn native_public_graph_snapshot(
     payload: &Value,
 ) -> Result<Value, NativeProtocolError> {

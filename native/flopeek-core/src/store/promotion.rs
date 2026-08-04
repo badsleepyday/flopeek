@@ -31,6 +31,10 @@ fn contains_source_body(value: &serde_json::Value) -> bool {
                 "content" | "contents" | "rawsource" | "sourcebody" | "sourcetext" | "text"
             ) || contains_source_body(value)
         }),
+        serde_json::Value::String(raw) if raw.starts_with('{') || raw.starts_with('[') => {
+            serde_json::from_str::<serde_json::Value>(raw)
+                .is_ok_and(|value| contains_source_body(&value))
+        }
         _ => false,
     }
 }
@@ -63,8 +67,7 @@ fn native_public_graph_cache(
         })
         .map(|(field, value)| (field.clone(), value.clone()))
         .collect::<serde_json::Map<_, _>>();
-    let mut components = Vec::new();
-    for (field, kind) in NATIVE_PUBLIC_GRAPH_COMPONENT_KINDS {
+    for (field, _) in NATIVE_PUBLIC_GRAPH_COMPONENT_KINDS {
         let Some(values) = payload.get(field) else {
             continue;
         };
@@ -85,44 +88,10 @@ fn native_public_graph_cache(
         if reuse_public_components {
             continue;
         }
-        let mut ids = BTreeSet::new();
-        for (ordinal, value) in values.iter().enumerate() {
-            let payload_json = serde_json::to_string(value)
-                .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-            let digest = format!(
-                "blake3:{}",
-                blake3::hash(format!("{kind}\0{payload_json}").as_bytes()).to_hex()
-            );
-            // Public edge objects intentionally have no `id`. Membership IDs
-            // are therefore internal keys; use a public id where available,
-            // otherwise the internal component digest. A duplicate gets an
-            // ordinal suffix without altering the serialized array.
-            let base_id = value
-                .get("id")
-                .and_then(serde_json::Value::as_str)
-                .filter(|id| !id.is_empty())
-                .map(ToString::to_string)
-                .unwrap_or_else(|| digest.clone());
-            let id = if ids.insert(base_id.clone()) {
-                base_id
-            } else {
-                format!("{base_id}@{ordinal}")
-            };
-            components.push(NativePublicGraphComponent {
-                kind,
-                id,
-                ordinal: i64::try_from(ordinal).map_err(|_| rusqlite::Error::InvalidQuery)?,
-                digest,
-                payload_json,
-            });
-        }
     }
     let envelope_json = serde_json::to_string(&serde_json::Value::Object(envelope))
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-    Ok(NativePublicGraphCache {
-        envelope_json,
-        components,
-    })
+    Ok(NativePublicGraphCache { envelope_json })
 }
 
 fn promote_native_public_graph_cache(
@@ -131,6 +100,7 @@ fn promote_native_public_graph_cache(
     graph_version: i64,
     previous_graph_version: Option<i64>,
     cache: &NativePublicGraphCache,
+    payload: &serde_json::Value,
     reuse_public_components: bool,
 ) -> rusqlite::Result<()> {
     transaction.execute(
@@ -144,7 +114,7 @@ fn promote_native_public_graph_cache(
     // any component/history writes.  Reject an impossible first-version reuse
     // rather than silently creating an envelope with no public collections.
     if reuse_public_components {
-        if previous_graph_version.is_none() || !cache.components.is_empty() {
+        if previous_graph_version.is_none() {
             return Err(rusqlite::Error::InvalidQuery);
         }
         return Ok(());
@@ -171,16 +141,6 @@ fn promote_native_public_graph_cache(
             active.insert((kind, id), (ordinal, digest));
         }
     }
-    let incoming = cache
-        .components
-        .iter()
-        .map(|entry| {
-            (
-                (entry.kind.to_string(), entry.id.clone()),
-                (entry.ordinal, entry.digest.clone()),
-            )
-        })
-        .collect::<HashMap<_, _>>();
     // The interval table is the current-version membership index.  Do not
     // issue a no-op INSERT OR IGNORE for every unchanged component on an
     // incremental refresh: a large graph can otherwise turn one local edit
@@ -188,28 +148,11 @@ fn promote_native_public_graph_cache(
     // Components absent from the active set may be new or merely historical;
     // the SQL conflict clause preserves both cases without changing public
     // graph IDs or history semantics.
-    let active_digests = active
-        .values()
-        .map(|(_, digest)| digest.as_str())
-        .collect::<HashSet<_>>();
     let mut inserted_digests = HashSet::new();
     let mut component = transaction.prepare(
         "INSERT INTO native_public_graph_components(component_digest, component_kind, payload_json)
          VALUES (?1, ?2, ?3) ON CONFLICT(component_digest) DO NOTHING",
     )?;
-    for entry in &cache.components {
-        if active_digests.contains(entry.digest.as_str())
-            || !inserted_digests.insert(entry.digest.as_str())
-        {
-            continue;
-        }
-        component.execute(rusqlite::params![
-            entry.digest,
-            entry.kind,
-            entry.payload_json
-        ])?;
-    }
-    drop(component);
     let previous_graph_version = previous_graph_version.unwrap_or(graph_version.saturating_sub(1));
     let mut close = transaction.prepare(
         "UPDATE native_public_graph_component_history
@@ -221,33 +164,63 @@ fn promote_native_public_graph_cache(
         "INSERT INTO native_public_graph_component_history(project_pk, component_kind, component_id, first_graph_version, last_graph_version, ordinal, component_digest)
          VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6)",
     )?;
-    for (key, (ordinal, digest)) in &incoming {
-        if active
-            .get(key)
-            .is_some_and(|(active_ordinal, active_digest)| {
-                active_ordinal == ordinal && active_digest == digest
-            })
-        {
+    for (field, kind) in NATIVE_PUBLIC_GRAPH_COMPONENT_KINDS {
+        let Some(values) = payload.get(field) else {
             continue;
-        }
-        if active.contains_key(key) {
-            close.execute(rusqlite::params![
-                previous_graph_version,
+        };
+        let values = values.as_array().ok_or(rusqlite::Error::InvalidQuery)?;
+        let mut ids = BTreeSet::new();
+        for (ordinal, value) in values.iter().enumerate() {
+            let payload_json = serde_json::to_string(value)
+                .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+            let digest = format!(
+                "blake3:{}",
+                blake3::hash(format!("{kind}\0{payload_json}").as_bytes()).to_hex()
+            );
+            let base_id = value
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .filter(|id| !id.is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| digest.clone());
+            let id = if ids.insert(base_id.clone()) {
+                base_id
+            } else {
+                format!("{base_id}@{ordinal}")
+            };
+            let ordinal = i64::try_from(ordinal).map_err(|_| rusqlite::Error::InvalidQuery)?;
+            let key = (kind.to_string(), id);
+            let previous = active.remove(&key);
+            if previous
+                .as_ref()
+                .is_some_and(|(active_ordinal, active_digest)| {
+                    active_ordinal == &ordinal && active_digest == &digest
+                })
+            {
+                continue;
+            }
+            if previous.is_some() {
+                close.execute(rusqlite::params![
+                    previous_graph_version,
+                    project_pk,
+                    key.0,
+                    key.1
+                ])?;
+            }
+            if inserted_digests.insert(digest.clone()) {
+                component.execute(rusqlite::params![digest, kind, payload_json])?;
+            }
+            open.execute(rusqlite::params![
                 project_pk,
                 key.0,
-                key.1
+                key.1,
+                graph_version,
+                ordinal,
+                digest
             ])?;
         }
-        open.execute(rusqlite::params![
-            project_pk,
-            key.0,
-            key.1,
-            graph_version,
-            ordinal,
-            digest
-        ])?;
     }
-    for key in active.keys().filter(|key| !incoming.contains_key(*key)) {
+    for key in active.keys() {
         close.execute(rusqlite::params![
             previous_graph_version,
             project_pk,
@@ -290,32 +263,6 @@ fn promote_native_structural_batch_cache(
         .collect();
     let envelope_json = serde_json::to_string(&serde_json::Value::Object(envelope))
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
-    let mut parsed_records = Vec::with_capacity(records.len());
-    let mut next_paths = BTreeSet::new();
-    for record in records {
-        let item = record.as_object().ok_or(rusqlite::Error::InvalidQuery)?;
-        let path = item
-            .get("relativePath")
-            .and_then(serde_json::Value::as_str)
-            .filter(|value| !value.is_empty())
-            .ok_or(rusqlite::Error::InvalidQuery)?;
-        let source_hash = item
-            .get("sourceHash")
-            .and_then(serde_json::Value::as_str)
-            .filter(|value| {
-                value.len() == 64 && value.chars().all(|character| character.is_ascii_hexdigit())
-            })
-            .ok_or(rusqlite::Error::InvalidQuery)?;
-        let record_order = item
-            .get("recordOrder")
-            .and_then(serde_json::Value::as_i64)
-            .filter(|value| *value >= 0)
-            .ok_or(rusqlite::Error::InvalidQuery)?;
-        if !next_paths.insert(path.to_string()) {
-            return Err(rusqlite::Error::InvalidQuery);
-        }
-        parsed_records.push((path, source_hash, record_order, record));
-    }
     let existing = {
         let mut statement = transaction
             .prepare("SELECT path FROM native_structural_batch_records WHERE project_pk = ?1")?;
@@ -323,6 +270,88 @@ fn promote_native_structural_batch_cache(
             .query_map([project_pk], |row| row.get::<_, String>(0))?
             .collect::<Result<BTreeSet<_>, _>>()?
     };
+    let mut parsed_records =
+        Vec::with_capacity(changed_record_paths.map_or(records.len(), BTreeSet::len));
+    let mut changed_records_seen = BTreeSet::new();
+    let mut next_paths = if changed_record_paths.is_some() {
+        existing.clone()
+    } else {
+        BTreeSet::new()
+    };
+    let changed_present_paths = if changed_record_paths.is_some() {
+        records
+            .iter()
+            .filter_map(|record| {
+                record
+                    .get("relativePath")
+                    .and_then(serde_json::Value::as_str)
+            })
+            .collect::<BTreeSet<_>>()
+    } else {
+        BTreeSet::new()
+    };
+    if let Some(changed_paths) = changed_record_paths {
+        for path in changed_paths {
+            if changed_present_paths.contains(path.as_str()) {
+                next_paths.insert(path.clone());
+            } else {
+                next_paths.remove(path);
+            }
+        }
+    }
+    for record in records {
+        // Compact process-local patches carry canonical raw JSON for every
+        // unchanged record. SQLite already has those rows, so only changed
+        // object records need to be decoded and considered for an UPSERT.
+        if changed_record_paths.is_some() && record.is_string() {
+            continue;
+        }
+        let parsed;
+        let item = if let Some(payload) = record.as_str() {
+            parsed = serde_json::from_str::<serde_json::Value>(payload)
+                .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+            parsed.as_object().ok_or(rusqlite::Error::InvalidQuery)?
+        } else {
+            record.as_object().ok_or(rusqlite::Error::InvalidQuery)?
+        };
+        let path = item
+            .get("relativePath")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or(rusqlite::Error::InvalidQuery)?
+            .to_string();
+        let source_hash = item
+            .get("sourceHash")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| {
+                value.len() == 64 && value.chars().all(|character| character.is_ascii_hexdigit())
+            })
+            .ok_or(rusqlite::Error::InvalidQuery)?
+            .to_string();
+        let record_order = item
+            .get("recordOrder")
+            .and_then(serde_json::Value::as_i64)
+            .filter(|value| *value >= 0)
+            .ok_or(rusqlite::Error::InvalidQuery)?;
+        if changed_record_paths.is_none() && !next_paths.insert(path.clone()) {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        if let Some(changed_paths) = changed_record_paths {
+            if !changed_paths.contains(&path) {
+                // A compatibility patch may still carry unchanged object
+                // records (older callers did not compact them).  They are
+                // already represented by the durable cache; only the
+                // explicitly changed paths are eligible for this selective
+                // write.
+                continue;
+            }
+            if !changed_records_seen.insert(path.clone()) {
+                return Err(rusqlite::Error::InvalidQuery);
+            }
+            next_paths.insert(path.clone());
+        }
+        parsed_records.push((path, source_hash, record_order, record));
+    }
     for path in existing.difference(&next_paths) {
         transaction.execute(
             "DELETE FROM native_structural_batch_records WHERE project_pk = ?1 AND path = ?2",
@@ -345,11 +374,14 @@ fn promote_native_structural_batch_cache(
         // whose header or payload may differ.  Avoid serializing and issuing
         // a guarded UPSERT for all of the other records; a full batch keeps
         // the conservative whole-record behavior.
-        if changed_record_paths.is_some_and(|paths| !paths.contains(path)) {
+        if changed_record_paths.is_some_and(|paths| !paths.contains(&path)) {
             continue;
         }
-        let payload_json = serde_json::to_string(record)
-            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        let payload_json = match record.as_str() {
+            Some(payload) => payload.to_string(),
+            None => serde_json::to_string(record)
+                .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?,
+        };
         upsert.execute(rusqlite::params![
             project_pk,
             path,
@@ -383,7 +415,14 @@ pub fn begin_graph_build(
     material_fingerprint: &str,
     source_fingerprint: &str,
 ) -> rusqlite::Result<NativeGraphVersion> {
-    let transaction = connection.transaction()?;
+    // Graph version allocation is part of the cross-process write protocol.
+    // A deferred transaction can let two cold writers read the same MAX()
+    // snapshot before either candidate is committed, producing duplicate
+    // building versions or a stale current-pointer promotion.  Reserve the
+    // SQLite writer slot before reading the project lineage so every caller
+    // observes the immediately preceding durable graph version.
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let project_pk = project_pk(&transaction, project_id)?;
     let graph_version = transaction.query_row(
         "SELECT COALESCE(MAX(graph_version), 0) + 1 FROM graph_versions WHERE project_pk = ?1",
@@ -441,13 +480,41 @@ pub fn promote_graph_build_with_changed_records(
         }
     }
     let transaction_started = Instant::now();
-    let transaction = connection.transaction()?;
+    // The promotion transaction is the single cross-process authority
+    // boundary.  It must acquire the writer slot before reading the current
+    // pointer; otherwise a slower older candidate can observe a newer pointer
+    // only after it has already opened identity intervals and move the pointer
+    // backwards.
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let project_pk = project_pk(&transaction, request.project_id)?;
     let previous_graph_version: Option<i64> = transaction.query_row(
         "SELECT current_graph_version FROM projects WHERE project_pk = ?1",
         [project_pk],
         |row| row.get(0),
     )?;
+    if previous_graph_version.is_some_and(|current| current >= request.graph_version) {
+        // A candidate may finish assembly after another process has already
+        // promoted a newer graph.  It is a bounded writer conflict, not a
+        // reason to mutate identity intervals or move the current pointer
+        // backwards.  Remove this still-building candidate inside the same
+        // locked transaction and surface an explicit protocol-level conflict.
+        transaction.execute(
+            "DELETE FROM graph_versions
+             WHERE project_pk = ?1 AND graph_version = ?2 AND status = 'building'",
+            rusqlite::params![project_pk, request.graph_version],
+        )?;
+        transaction.commit()?;
+        return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+            io::Error::new(
+                io::ErrorKind::WouldBlock,
+                format!(
+                    "concurrent native graph candidate superseded by current graph version {}",
+                    previous_graph_version.unwrap_or_default()
+                ),
+            ),
+        )));
+    }
     let changed = transaction.execute(
         "UPDATE graph_versions SET status = 'complete', compatibility_digest = ?1, public_graph_version = ?2, completed_at_ms = ?3
          WHERE project_pk = ?4 AND graph_version = ?5 AND status = 'building'",
@@ -463,6 +530,7 @@ pub fn promote_graph_build_with_changed_records(
         request.graph_version,
         previous_graph_version,
         &public_graph_cache,
+        request.payload,
         request.reuse_public_components,
     )?;
     crash_at_test_boundary("after-graph-payload-write");
@@ -513,14 +581,37 @@ pub fn promote_graph_build_with_changed_records(
     // Identity v2 is an additive dual-write in schema v11. It participates in
     // the same transaction as the compatibility graph, so invalid canonical
     // identity input can never advance the project pointer independently.
-    sync_identity_v2(
-        &transaction,
-        project_pk,
-        request.project_id,
-        request.graph_version,
-        request.payload,
-        request.structural_batch,
-    )?;
+    if request.reuse_public_components {
+        if let Some(changed_record_paths) = request.changed_record_paths {
+            sync_identity_v2_changed_records(
+                &transaction,
+                project_pk,
+                request.project_id,
+                request.graph_version,
+                request.payload,
+                request.structural_batch,
+                changed_record_paths,
+            )?;
+        } else {
+            sync_identity_v2(
+                &transaction,
+                project_pk,
+                request.project_id,
+                request.graph_version,
+                request.payload,
+                request.structural_batch,
+            )?;
+        }
+    } else {
+        sync_identity_v2(
+            &transaction,
+            project_pk,
+            request.project_id,
+            request.graph_version,
+            request.payload,
+            request.structural_batch,
+        )?;
+    }
     crash_at_test_boundary("after-fact-storage");
     let project_pointer_started = Instant::now();
     crash_at_test_boundary("before-current-pointer-promotion");

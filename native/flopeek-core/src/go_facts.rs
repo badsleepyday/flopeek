@@ -39,11 +39,14 @@ fn evidence(path: &str, node: Node<'_>) -> NativeJsEvidence {
 }
 
 fn diagnostic_nodes(node: Node<'_>) -> usize {
-    usize::from(node.is_error() || node.is_missing())
-        + children(node)
-            .into_iter()
-            .map(diagnostic_nodes)
-            .sum::<usize>()
+    let mut count = 0;
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        count += usize::from(current.is_error() || current.is_missing());
+        let mut cursor = current.walk();
+        stack.extend(current.named_children(&mut cursor));
+    }
+    count
 }
 
 fn unquote_go_string(value: &str) -> Option<String> {

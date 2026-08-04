@@ -6,13 +6,9 @@ const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
-const { createCoreCompatibilityDigest } = require("../src/core-compatibility");
-const { createJsCoreClient } = require("../src/js-core-client");
-const { createNativeCoreClient } = require("../src/native-core-client");
-const { NativeProtocolClient } = require("../src/native-protocol-client");
 const { createScanCoordinator } = require("../src/scan-coordinator");
 const { copyRepository, sourceFiles } = require("./benchmark-native-incremental");
-const { releaseNativeOptions, repositoryBinding, stateRequest } = require("./benchmark-native-core-client");
+const { releaseNativeOptions, repositoryBinding, stateRequest } = require("./native-benchmark-contract");
 const { profileState } = require("./profile-native-core-client");
 
 async function main() {
@@ -25,13 +21,19 @@ async function main() {
   const target = path.join(sandbox, "repository");
   copyRepository(source, target);
   const phases = [];
-  const nativeProtocol = implementation === "native" ? new NativeProtocolClient(releaseNativeOptions()) : null;
+  const nativeProtocol = implementation === "native"
+    ? new (require("../src/native-protocol-client").NativeProtocolClient)(releaseNativeOptions())
+    : null;
   const core = implementation === "native"
-    ? createNativeCoreClient({ native: nativeProtocol, sourceAuthority: "rust" })
-    : createJsCoreClient();
+    ? require("../src/native-core-client").createNativeCoreClient({ native: nativeProtocol, sourceAuthority: "rust" })
+    : require("../src/js-core-client").createJsCoreClient();
   const coordinator = createScanCoordinator(target, {
     cache: true,
     coreClient: core,
+    // Profile the same handle-only transport used by the server and MCP
+    // product surfaces. Full graph materialization below is parity evidence,
+    // not part of the steady native scan lifecycle.
+    nativeGraphHandle: implementation === "native",
     onCoreProfile: (entry) => phases.push(entry),
   });
   try {
@@ -70,7 +72,7 @@ async function main() {
         rustVersion,
         binarySha256: binary ? createHash("sha256").update(fs.readFileSync(binary)).digest("hex") : null,
       },
-      compatibilityDigest: createCoreCompatibilityDigest(result.graph),
+      compatibilityDigest: require("../src/core-compatibility").createCoreCompatibilityDigest(result.graph),
       stats: result.graph.stats,
       measurement: {
         milliseconds: result.milliseconds,
@@ -78,6 +80,7 @@ async function main() {
         memoryBefore: result.memoryBefore,
         memoryAfter: result.memoryAfter,
         concurrentMemory: result.concurrentMemory,
+        parityMaterialization: result.parityMaterialization,
         database: result.database,
         queryLatency: result.queries,
       },

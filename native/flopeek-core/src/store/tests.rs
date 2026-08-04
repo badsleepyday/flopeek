@@ -501,6 +501,83 @@ fn promotes_only_complete_graphs_and_recovers_building_candidates() {
 }
 
 #[test]
+fn rejects_an_older_candidate_after_a_newer_candidate_wins_the_pointer() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "flopeek-native-concurrent-promotion-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let mut connection = open_native_store(&root).unwrap();
+    let first = begin_graph_build(
+        &mut connection,
+        "project:concurrent",
+        "material:1",
+        "source:1",
+    )
+    .unwrap();
+    let second = begin_graph_build(
+        &mut connection,
+        "project:concurrent",
+        "material:2",
+        "source:2",
+    )
+    .unwrap();
+    let digest_one = format!("sha256:{}", "1".repeat(64));
+    let digest_two = format!("sha256:{}", "2".repeat(64));
+    let payload = json!({ "schemaVersion": "native-shadow/v1", "nodes": [] });
+    promote_graph_build(
+        &mut connection,
+        NativeGraphPromotionRequest {
+            project_id: "project:concurrent",
+            graph_version: second.graph_version,
+            public_graph_version: 1,
+            payload: &payload,
+            compatibility_digest: &digest_two,
+            adjacent_delta: None,
+            facts_digest: None,
+            structural_batch: None,
+            changed_record_paths: None,
+            reuse_public_components: false,
+        },
+    )
+    .unwrap();
+    let stale = promote_graph_build(
+        &mut connection,
+        NativeGraphPromotionRequest {
+            project_id: "project:concurrent",
+            graph_version: first.graph_version,
+            public_graph_version: 1,
+            payload: &payload,
+            compatibility_digest: &digest_one,
+            adjacent_delta: None,
+            facts_digest: None,
+            structural_batch: None,
+            changed_record_paths: None,
+            reuse_public_components: false,
+        },
+    )
+    .unwrap_err();
+    assert!(
+        stale
+            .to_string()
+            .contains("concurrent native graph candidate superseded")
+    );
+    assert_eq!(
+        current_complete_graph(&connection, "project:concurrent")
+            .unwrap()
+            .unwrap()
+            .graph_version,
+        second.graph_version
+    );
+    drop(connection);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn stores_public_graph_components_once_and_reconstructs_historical_payloads() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

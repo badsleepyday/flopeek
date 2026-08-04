@@ -17,6 +17,11 @@ surface ask bounded questions of that same state.
 The public product identity and its explicit pre-release brand boundary are in
 [the product identity note](docs/product-identity.md).
 
+> **Development status:** the `development` branch is WIP for the native/Rust
+> core migration. The stable public baseline remains JavaScript on `main`; the
+> current package is a beta and native remains opt-in until its evidence gates
+> pass. See [DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md).
+
 ## The five-minute change-context loop
 
 Flopeek is most useful when a change forces you to reconstruct a technical

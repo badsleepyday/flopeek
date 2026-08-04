@@ -8,10 +8,11 @@ const test = require("node:test");
 const { createNativeCoreClient } = require("../../src/native-core-client");
 const { NativeProtocolClient } = require("../../src/native-protocol-client");
 const { startServer } = require("../../src/server");
+const { nativeTestCommand } = require("../helpers/native-test-command");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const FIXTURE = path.join(ROOT, "test", "fixtures", "typescript-order-flow");
-const MANIFEST = path.join(ROOT, "native", "flopeek-core", "Cargo.toml");
+const NATIVE = nativeTestCommand(ROOT);
 
 test("native server retains a handle and explicitly materializes the broad HTTP compatibility surface", async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-native-server-surface-"));
@@ -21,9 +22,7 @@ test("native server retains a handle and explicitly materializes the broad HTTP 
   fs.writeFileSync(path.join(root, ".flopeek", "graph.json"), staleGraph);
   const native = createNativeCoreClient({
     native: new NativeProtocolClient({
-      command: "cargo",
-      args: ["run", "--quiet", "--manifest-path", MANIFEST, "--"],
-      cwd: ROOT,
+      ...NATIVE,
       requestTimeoutMs: 120_000,
     }),
     sourceAuthority: "rust",

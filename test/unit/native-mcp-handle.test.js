@@ -8,10 +8,11 @@ const test = require("node:test");
 const { createMcpServer } = require("../../src/mcp");
 const { createNativeCoreClient } = require("../../src/native-core-client");
 const { NativeProtocolClient } = require("../../src/native-protocol-client");
+const { nativeTestCommand } = require("../helpers/native-test-command");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const FIXTURE = path.join(ROOT, "test", "fixtures", "typescript-order-flow");
-const MANIFEST = path.join(ROOT, "native", "flopeek-core", "Cargo.toml");
+const NATIVE = nativeTestCommand(ROOT);
 const payload = (result) => JSON.parse(result.content.find((item) => item.type === "text").text);
 
 test("MCP keeps the primary native graph handle-only in Node", async (t) => {
@@ -19,9 +20,7 @@ test("MCP keeps the primary native graph handle-only in Node", async (t) => {
   fs.cpSync(FIXTURE, root, { recursive: true });
   const native = createNativeCoreClient({
     native: new NativeProtocolClient({
-      command: "cargo",
-      args: ["run", "--quiet", "--manifest-path", MANIFEST, "--"],
-      cwd: ROOT,
+      ...NATIVE,
       requestTimeoutMs: 120_000,
     }),
     sourceAuthority: "rust",
@@ -117,9 +116,7 @@ test("cache-disabled MCP lazily materializes from the owning native session with
   fs.cpSync(FIXTURE, root, { recursive: true, filter: (source) => path.basename(source) !== ".flopeek" });
   const native = createNativeCoreClient({
     native: new NativeProtocolClient({
-      command: "cargo",
-      args: ["run", "--quiet", "--manifest-path", MANIFEST, "--"],
-      cwd: ROOT,
+      ...NATIVE,
       requestTimeoutMs: 120_000,
     }),
     sourceAuthority: "rust",

@@ -46,11 +46,36 @@ pub(super) struct NativePersistentGraph {
 // SQLite's current pointer is checked before every reuse; this cache is never
 // authoritative and is discarded when another process advances the graph.
 #[derive(Clone)]
+pub(super) struct NativePersistentFactHeader {
+    pub(super) relative_path: String,
+    pub(super) source_hash: String,
+    pub(super) source_scope: String,
+    pub(super) record_order: u64,
+}
+
+#[derive(Clone)]
 pub(super) struct NativePersistentFacts {
     pub(super) project_id: String,
+    pub(super) graph_version: i64,
     pub(super) facts_digest: String,
     pub(super) topology_digest: String,
     pub(super) payload: Value,
+    pub(super) record_headers: Vec<NativePersistentFactHeader>,
+    pub(super) compact_records: bool,
+}
+
+// A process-local provenance marker for the SQLite fact cache.  It is created
+// only after an atomic promotion of a fully validated batch and is checked
+// against both the complete graph version and SQLite's external-write
+// watermark before a later patch reuses the cache.  A restarted process has
+// no marker and therefore performs the full cache validation again.
+#[derive(Clone)]
+pub(super) struct NativePersistentFactProof {
+    pub(super) project_id: String,
+    pub(super) graph_version: i64,
+    pub(super) facts_digest: String,
+    pub(super) topology_digest: String,
+    pub(super) sqlite_data_version: i64,
 }
 
 pub(super) struct NativeProtocolSession {
@@ -74,15 +99,24 @@ pub(super) struct NativeProtocolSession {
     pub(super) persistent_connections: BTreeMap<String, rusqlite::Connection>,
     pub(super) persistent_graph: Option<NativePersistentGraph>,
     pub(super) persistent_facts: Option<NativePersistentFacts>,
+    pub(super) persistent_fact_proof: Option<NativePersistentFactProof>,
     // Git branch/revision metadata is repository-level observational context,
     // not parser evidence. A source-only incremental event cannot alter HEAD
     // or branch, and the source session already retains its matching graph
     // lineage. Reuse this bounded snapshot to avoid spawning `git status` on
     // every changed file; a reconciled source acquisition refreshes it.
     pub(super) persistent_git_metadata: BTreeMap<String, Value>,
+    // Query results are immutable for an exact graph handle. Keep a bounded
+    // process-local memo so repeated MCP/HTTP reads do not clone the complete
+    // fact batch and rebuild the same structural graph on every request.
+    // The key includes the verified facts digest (or session graph handle),
+    // so advancing a graph can never return a result from an older authority.
+    query_results: BTreeMap<String, NativeResponse>,
+    query_result_order: VecDeque<String>,
 }
 
 pub(super) const DEFAULT_NATIVE_SESSION_HISTORY: usize = 2;
+const MAX_NATIVE_QUERY_RESULTS: usize = 256;
 const MAX_NATIVE_SESSION_HISTORY: usize = 1_000;
 
 pub(super) fn parse_session_history_limit(value: Option<&str>) -> Result<usize, String> {
@@ -112,8 +146,32 @@ impl NativeProtocolSession {
             persistent_connections: BTreeMap::new(),
             persistent_graph: None,
             persistent_facts: None,
+            persistent_fact_proof: None,
             persistent_git_metadata: BTreeMap::new(),
+            query_results: BTreeMap::new(),
+            query_result_order: VecDeque::new(),
         }
+    }
+
+    pub(super) fn query_result(&self, key: &str) -> Option<NativeResponse> {
+        self.query_results.get(key).cloned()
+    }
+
+    pub(super) fn retain_query_result(&mut self, key: String, result: NativeResponse) {
+        if let std::collections::btree_map::Entry::Occupied(mut entry) =
+            self.query_results.entry(key.clone())
+        {
+            entry.insert(result);
+            return;
+        }
+        while self.query_results.len() >= MAX_NATIVE_QUERY_RESULTS {
+            let Some(expired) = self.query_result_order.pop_front() else {
+                break;
+            };
+            self.query_results.remove(&expired);
+        }
+        self.query_result_order.push_back(key.clone());
+        self.query_results.insert(key, result);
     }
 
     pub(super) fn from_env() -> Result<Self, String> {
@@ -220,7 +278,12 @@ pub(super) fn ensure_persistent_payload(
     let cache_hit = session.persistent_graph.as_ref().is_some_and(|cached| {
         cached.project_id == project_id && cached.graph_version == graph_version
     });
-    if !cache_hit {
+    let payload_ready = cache_hit
+        && session
+            .persistent_graph
+            .as_ref()
+            .is_some_and(|cached| !cached.payload.is_null());
+    if !payload_ready {
         let stored = complete_graph_payload(connection, project_id, graph_version)
             .map_err(|error| NativeProtocolError {
                 code: "store-read-failed",
@@ -230,11 +293,18 @@ pub(super) fn ensure_persistent_payload(
                 code: "store-read-failed",
                 message: "Current complete native graph payload is unavailable.".to_string(),
             })?;
+        let public_snapshot = session
+            .persistent_graph
+            .as_ref()
+            .filter(|cached| {
+                cached.project_id == project_id && cached.graph_version == graph_version
+            })
+            .and_then(|cached| cached.public_snapshot.clone());
         session.persistent_graph = Some(NativePersistentGraph {
             project_id: project_id.to_string(),
             graph_version,
             payload: stored.payload,
-            public_snapshot: None,
+            public_snapshot,
         });
     }
     Ok(cache_hit)
@@ -251,16 +321,40 @@ pub(super) fn ensure_persistent_facts(
             code: "store-read-failed",
             message: error.to_string(),
         })?;
-    if !current.is_some_and(|graph| graph.material_fingerprint == facts_digest) {
+    let Some(current_graph) = current
+        .as_ref()
+        .filter(|graph| graph.material_fingerprint == facts_digest)
+    else {
         return Err(NativeProtocolError {
             code: "structural-fact-patch-miss",
             message:
                 "The SQLite current graph no longer matches the patch base; submit a full batch."
                     .to_string(),
         });
-    }
+    };
+    let sqlite_data_version = connection
+        .query_row("PRAGMA data_version", [], |row| row.get::<_, i64>(0))
+        .map_err(|error| NativeProtocolError {
+            code: "store-read-failed",
+            message: error.to_string(),
+        })?;
+    let proof_matches = session.persistent_fact_proof.as_ref().is_some_and(|proof| {
+        proof.project_id == project_id
+            && proof.graph_version == current_graph.graph_version
+            && proof.facts_digest == facts_digest
+            && proof.sqlite_data_version == sqlite_data_version
+    });
     let cache_hit = session.persistent_facts.as_ref().is_some_and(|cached| {
-        cached.project_id == project_id && cached.facts_digest == facts_digest
+        cached.project_id == project_id
+            && cached.graph_version == current_graph.graph_version
+            && cached.facts_digest == facts_digest
+            && proof_matches
+            && cached.topology_digest
+                == session
+                    .persistent_fact_proof
+                    .as_ref()
+                    .expect("proof match was checked")
+                    .topology_digest
     });
     if !cache_hit {
         let payload = current_structural_batch(connection, project_id, facts_digest)
@@ -295,10 +389,57 @@ pub(super) fn ensure_persistent_facts(
             })?;
         session.persistent_facts = Some(NativePersistentFacts {
             project_id: project_id.to_string(),
+            graph_version: current_graph.graph_version,
             facts_digest: facts_digest.to_string(),
             topology_digest,
             payload,
+            record_headers: Vec::new(),
+            compact_records: false,
         });
+    }
+    Ok(())
+}
+
+pub(super) fn remember_persistent_fact_proof(
+    session: &mut NativeProtocolSession,
+    connection: &rusqlite::Connection,
+    project_id: &str,
+    graph_version: i64,
+    facts_digest: &str,
+    topology_digest: &str,
+) {
+    let Ok(sqlite_data_version) =
+        connection.query_row("PRAGMA data_version", [], |row| row.get::<_, i64>(0))
+    else {
+        session.persistent_fact_proof = None;
+        return;
+    };
+    session.persistent_fact_proof = Some(NativePersistentFactProof {
+        project_id: project_id.to_string(),
+        graph_version,
+        facts_digest: facts_digest.to_string(),
+        topology_digest: topology_digest.to_string(),
+        sqlite_data_version,
+    });
+}
+
+fn expand_compact_fact_payload(payload: &mut Value) -> Result<(), NativeProtocolError> {
+    let records = payload
+        .get_mut("records")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| NativeProtocolError {
+            code: "store-integrity-failed",
+            message: "Verified native fact cache is missing its records array.".to_string(),
+        })?;
+    for record in records {
+        if let Value::String(raw) = record {
+            *record = serde_json::from_str(raw).map_err(|error| NativeProtocolError {
+                code: "store-integrity-failed",
+                message: format!(
+                    "Verified native fact cache contains invalid record JSON: {error}"
+                ),
+            })?;
+        }
     }
     Ok(())
 }
@@ -308,6 +449,7 @@ pub(super) fn ensure_persistent_facts(
 // cache: the current complete graph must still have the requested digest, and
 // a mismatch is deliberately reported so the caller can retry with its exact
 // in-memory batch for a historical graph or concurrent promotion.
+#[cfg(test)]
 pub(super) fn hydrate_cached_query_batch(
     session: &mut NativeProtocolSession,
     params: &mut Value,
@@ -321,6 +463,87 @@ pub(super) fn hydrate_cached_query_batch(
     })
 }
 
+pub(super) fn move_cached_query_batch(
+    session: &mut NativeProtocolSession,
+    params: &mut Value,
+) -> Result<(), NativeProtocolError> {
+    let root = project_root(params)?;
+    with_persistent_session_connection(session, &root, |session, connection| {
+        let project_id = params
+            .get("projectId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| NativeProtocolError {
+                code: "invalid-params",
+                message: "Cached native query requires params.projectId.".to_string(),
+            })?
+            .to_string();
+        let facts_digest = params
+            .get("factsDigest")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| NativeProtocolError {
+                code: "invalid-params",
+                message: "Cached native query requires params.factsDigest.".to_string(),
+            })?
+            .to_string();
+        if let Err(error) = ensure_persistent_facts(session, connection, &project_id, &facts_digest)
+        {
+            if error.code == "structural-fact-patch-miss" {
+                return Err(NativeProtocolError {
+                    code: "native-query-fact-cache-miss",
+                    message: "The requested graph is not the current verified native fact cache."
+                        .to_string(),
+                });
+            }
+            return Err(error);
+        }
+        let cached = session
+            .persistent_facts
+            .as_mut()
+            .filter(|cached| cached.project_id == project_id && cached.facts_digest == facts_digest)
+            .ok_or_else(|| NativeProtocolError {
+                code: "store-read-failed",
+                message: "Verified native fact cache was unavailable after lookup.".to_string(),
+            })?;
+        if cached.compact_records {
+            // Query handlers consume the typed StructuralFactBatch contract.
+            // Expand the process-local canonical raw records only when a
+            // query actually needs them; the scan/patch path keeps its compact
+            // representation and avoids retaining a second multi-megabyte
+            // object graph during promotion.
+            expand_compact_fact_payload(&mut cached.payload)?;
+            cached.compact_records = false;
+        }
+        params
+            .as_object_mut()
+            .ok_or_else(|| NativeProtocolError {
+                code: "invalid-params",
+                message: "Cached native query params must be an object.".to_string(),
+            })?
+            .insert("batch".to_string(), std::mem::take(&mut cached.payload));
+        Ok(())
+    })
+}
+
+pub(super) fn restore_moved_cached_query_batch(
+    session: &mut NativeProtocolSession,
+    params: &mut Value,
+) {
+    let Some(batch) = params
+        .as_object_mut()
+        .and_then(|object| object.remove("batch"))
+    else {
+        return;
+    };
+    if let Some(cached) = session.persistent_facts.as_mut()
+        && cached.payload.is_null()
+    {
+        cached.payload = batch;
+    }
+}
+
+#[cfg(test)]
 pub(super) fn hydrate_cached_query_batch_using_connection(
     session: &mut NativeProtocolSession,
     params: &mut Value,
@@ -354,15 +577,18 @@ pub(super) fn hydrate_cached_query_batch_using_connection(
         }
         return Err(error);
     }
-    let batch = session
+    let cached = session
         .persistent_facts
         .as_ref()
         .filter(|cached| cached.project_id == project_id && cached.facts_digest == facts_digest)
-        .map(|cached| cached.payload.clone())
         .ok_or_else(|| NativeProtocolError {
             code: "store-read-failed",
             message: "Verified native fact cache was unavailable after lookup.".to_string(),
         })?;
+    let mut batch = cached.payload.clone();
+    if cached.compact_records {
+        expand_compact_fact_payload(&mut batch)?;
+    }
     let object = params.as_object_mut().ok_or_else(|| NativeProtocolError {
         code: "invalid-params",
         message: "Cached native query params must be an object.".to_string(),

@@ -416,7 +416,9 @@ pub fn scan_native_rust_facts(input_root: &Path) -> Result<NativeRustFactsStatus
             connection
                 .execute(
                     "INSERT INTO parser_facts(project_pk, path, source_hash, adapter_version, payload_json)
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                     VALUES (?1, ?2, ?3, ?4, ?5)
+                     ON CONFLICT(project_pk, path, source_hash, adapter_version)
+                     DO UPDATE SET payload_json = excluded.payload_json",
                     params![project_pk, path, source_hash, NATIVE_RUST_ADAPTER_VERSION, serde_json::to_string(&parsed).map_err(|error| error.to_string())?],
                 )
                 .map_err(|error| error.to_string())?;

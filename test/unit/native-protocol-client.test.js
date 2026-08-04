@@ -5,20 +5,39 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const { NativeProtocolClient } = require("../../src/native-protocol-client");
+const { NativeProtocolClient, nativeProcessEnvironment } = require("../../src/native-protocol-client");
 const { createRepositoryScanner } = require("../../src/scanner");
 const { createStructuralFactBatch } = require("../../src/structural-fact-adapter-host");
 const { getAdapterRegistry } = require("../../src/adapter-registry");
+const { nativeTestCommand } = require("../helpers/native-test-command");
 
 const ROOT = path.resolve(__dirname, "..", "..");
-const MANIFEST = path.join(ROOT, "native", "flopeek-core", "Cargo.toml");
+const NATIVE = nativeTestCommand(ROOT);
+
+test("native protocol applies bounded Linux allocator defaults without overriding operator values", () => {
+  assert.deepEqual(nativeProcessEnvironment("linux", { PATH: "/bin" }), {
+    PATH: "/bin",
+    MALLOC_ARENA_MAX: "1",
+    MALLOC_TRIM_THRESHOLD_: "131072",
+  });
+  assert.deepEqual(nativeProcessEnvironment("linux", {
+    MALLOC_ARENA_MAX: "4",
+    MALLOC_TRIM_THRESHOLD_: "262144",
+  }, {
+    MALLOC_ARENA_MAX: "2",
+  }), {
+    MALLOC_ARENA_MAX: "2",
+    MALLOC_TRIM_THRESHOLD_: "262144",
+  });
+  assert.deepEqual(nativeProcessEnvironment("win32", { PATH: "C:\\Windows" }), {
+    PATH: "C:\\Windows",
+  });
+});
 
 test("persistent native protocol client preserves one session and reports typed errors", async (context) => {
   const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "flopeek-native-protocol-client-"));
   const client = new NativeProtocolClient({
-    command: "cargo",
-    args: ["run", "--quiet", "--manifest-path", MANIFEST, "--"],
-    cwd: ROOT,
+    ...NATIVE,
     requestTimeoutMs: 120_000,
   });
   context.after(async () => {
@@ -81,9 +100,7 @@ test("persistent native protocol client preserves one session and reports typed 
 
 test("native protocol abort terminates the isolated process and permits a clean session restart", async (context) => {
   const client = new NativeProtocolClient({
-    command: "cargo",
-    args: ["run", "--quiet", "--manifest-path", MANIFEST, "--"],
-    cwd: ROOT,
+    ...NATIVE,
     requestTimeoutMs: 120_000,
   });
   context.after(() => client.close());

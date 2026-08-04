@@ -3,18 +3,12 @@
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const { invalidateArtifactCache } = require("./artifact-cache");
-const { scanRepositoryBounded } = require("./bounded-scan");
 const { readGraphCacheResult, summarizeCacheResult } = require("./graph-cache");
 const { resolveProjectIdentity } = require("./project-identity");
 const { readGitMetadata } = require("./git-metadata");
-const { writeGraphCache } = require("./scanner");
 const { readRepositoryScope } = require("./scope");
-const { advanceSessionGraph } = require("./session-graph-state");
 const { assertCoreClient } = require("./core-client");
 const { selectCoreMode } = require("./core-mode");
-const { observeCoreRuntime } = require("./core-runtime");
-const { createJsCoreClient } = require("./js-core-client");
-const { createNativeIncrementalSession, scanWithNativeIncremental } = require("./native-incremental-coordinator");
 
 const SCAN_OUTCOME_SCHEMA = "flopeek-scan-outcome/v1";
 
@@ -105,8 +99,8 @@ function createScanCoordinator(inputRoot, options = {}) {
   // A coordinator owns one bounded/no-cache lineage for its entire lifetime.
   // Rust receives this exact identity on every refresh.
   const sessionProjectId = `session:${randomUUID()}`;
-  const core = assertCoreClient(options.coreClient || createJsCoreClient());
-  const effectiveCoreRuntime = () => observeCoreRuntime(coreMode, core);
+  const core = assertCoreClient(options.coreClient || require("./js-core-client").createJsCoreClient());
+  const effectiveCoreRuntime = () => require("./core-runtime").observeCoreRuntime(coreMode, core);
   const nativeStorageAuthority = () => core.implementation === "native-experimental";
   let graph = null;
   let previousGraph = null;
@@ -281,7 +275,7 @@ function createScanCoordinator(inputRoot, options = {}) {
             }),
           };
         }
-        const result = await scanRepositoryBounded(root, {
+        const result = await require("./bounded-scan").scanRepositoryBounded(root, {
           timeBudgetMs: options.timeBudgetMs,
           maxFiles: options.maxFiles,
           maxBytes: options.maxBytes,
@@ -318,9 +312,9 @@ function createScanCoordinator(inputRoot, options = {}) {
         graph = result.graph;
         graph.analysis.packageSelection = result.discovery.selection;
         if (cacheEnabled) {
-          graph.analysis.cacheState = summarizeCacheResult(writeGraphCache(root, graph, { reason, changedPaths }));
+          graph.analysis.cacheState = summarizeCacheResult(require("./scanner").writeGraphCache(root, graph, { reason, changedPaths }));
         } else {
-          advanceSessionGraph(graph, previousGraph, { reason, changedPaths });
+          require("./session-graph-state").advanceSessionGraph(graph, previousGraph, { reason, changedPaths });
           graph.analysis.cacheState = disabledCacheState(root, packageScoped ? "package-scoped-session" : "cache-disabled");
         }
         graph.analysis.derivedCacheInvalidation = cacheEnabled
@@ -342,8 +336,9 @@ function createScanCoordinator(inputRoot, options = {}) {
 
       let nativeProfile = null;
       if (coreMode.nativeShadow && cacheEnabled) {
-        if (!nativeSession) nativeSession = createNativeIncrementalSession(options.native, { cwd: options.nativeCwd });
-        const nativeResult = await scanWithNativeIncremental(root, {
+        const incremental = require("./native-incremental-coordinator");
+        if (!nativeSession) nativeSession = incremental.createNativeIncrementalSession(options.native, { cwd: options.nativeCwd });
+        const nativeResult = await incremental.scanWithNativeIncremental(root, {
           session: nativeSession,
           persistIdentity: cacheEnabled,
           onProfile: options.onNativeProfile,
@@ -368,7 +363,7 @@ function createScanCoordinator(inputRoot, options = {}) {
       graph.analysis.cacheState = nativeSqlite
         ? nativeSqliteCacheState(root, graph)
         : cacheEnabled
-          ? summarizeCacheResult(writeGraphCache(root, graph, { reason, changedPaths: effectiveChangedPaths }))
+          ? summarizeCacheResult(require("./scanner").writeGraphCache(root, graph, { reason, changedPaths: effectiveChangedPaths }))
           : disabledCacheState(root, "cache-disabled");
       graph.analysis.derivedCacheInvalidation = cacheEnabled
         ? invalidateArtifactCache(root, graph, effectiveChangedPaths || [], { topologyChanged: Boolean(graph.analysis.latestDelta?.topologyChanged) })

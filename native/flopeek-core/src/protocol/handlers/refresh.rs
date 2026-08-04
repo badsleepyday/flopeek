@@ -162,7 +162,12 @@ pub(in crate::protocol) fn refresh_native_project(
         code: "native-bounded-execution-failed",
         message,
     })?;
-    let supported_paths = status.facts.keys().cloned().collect::<BTreeSet<_>>();
+    let supported_paths = status
+        .facts
+        .keys()
+        .chain(status.compacted_facts.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
     let unsupported_paths = status
         .candidate_paths
         .iter()
@@ -267,16 +272,48 @@ pub(in crate::protocol) fn load_native_js_facts_status(
                 .map(str::to_string)
                 .collect::<Vec<_>>()
         });
+    // Move the process-local source cache into the refresh. Keeping the old
+    // status in the map while cloning a complete replacement doubled facts,
+    // resolution, and structural records across the promotion peak. SQLite is
+    // still authoritative; a failed refresh deliberately leaves this derived
+    // cache empty so the next request reconciles from durable state.
+    let previous = (!ephemeral)
+        .then(|| session.persistent_sources.remove(&session_key))
+        .flatten();
     let status = (if ephemeral {
         scan_native_js_facts_ephemeral(&root, session_project_id)
-    } else if let (Some(previous), Some(paths)) = (
-        session.persistent_sources.get(&session_key),
-        changed_paths.as_deref(),
-    ) {
+    } else if let (Some(mut previous), Some(paths)) = (previous, changed_paths.as_deref()) {
         if paths.is_empty() {
-            Ok(reuse_native_js_facts_session(previous))
+            Ok(reuse_native_js_facts_session_owned(previous))
+        } else if previous.facts.is_empty()
+            && previous.compacted_facts.is_empty()
+            && !previous.candidate_paths.is_empty()
+        {
+            let promoted_facts_digest = previous.promoted_facts_digest.take();
+            let previous_record_digests = std::mem::take(&mut previous.structural_record_digests);
+            scan_native_js_facts(&root).map(|mut reconciled| {
+                reconciled.initial_scan = false;
+                reconciled.changed_paths = paths.to_vec();
+                let next_record_digests =
+                    native_structural_record_digests(&reconciled.structural_records);
+                reconciled.changed_record_paths = next_record_digests
+                    .iter()
+                    .filter(|(path, digest)| previous_record_digests.get(*path) != Some(*digest))
+                    .map(|(path, _)| path.clone())
+                    .chain(
+                        previous_record_digests
+                            .keys()
+                            .filter(|path| !next_record_digests.contains_key(*path))
+                            .cloned(),
+                    )
+                    .collect();
+                reconciled.structural_record_digests = next_record_digests;
+                reconciled.promoted_facts_digest = promoted_facts_digest;
+                reconciled
+            })
         } else {
-            refresh_native_js_facts_session(previous, paths)
+            hydrate_native_js_source_facts_for_changed_paths(&mut previous, paths)
+                .and_then(|()| refresh_native_js_facts_session_owned(previous, paths))
         }
     } else {
         scan_native_js_facts(&root)
@@ -289,11 +326,6 @@ pub(in crate::protocol) fn load_native_js_facts_status(
         },
         message,
     })?;
-    if !ephemeral {
-        session
-            .persistent_sources
-            .insert(session_key, status.clone());
-    }
     Ok(status)
 }
 
@@ -306,7 +338,12 @@ pub(in crate::protocol) fn native_js_structural_facts(
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let status = load_native_js_facts_status(session, params)?;
-    let supported_paths = status.facts.keys().cloned().collect::<BTreeSet<_>>();
+    let supported_paths = status
+        .facts
+        .keys()
+        .chain(status.compacted_facts.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
     let unsupported_paths = status
         .candidate_paths
         .iter()
@@ -314,7 +351,7 @@ pub(in crate::protocol) fn native_js_structural_facts(
         .cloned()
         .collect::<Vec<_>>();
     let native_envelope = native_js_batch_envelope(&status)?;
-    Ok(json!({
+    let result = json!({
         "schemaVersion": "flopeek-native-source-facts/v1",
         "adapterVersion": status.adapter_version,
         "persistence": if ephemeral { "session-memory" } else { "sqlite" },
@@ -341,74 +378,90 @@ pub(in crate::protocol) fn native_js_structural_facts(
         "records": status.structural_records,
         "entryFacts": status.entry_facts,
         "nativeEnvelope": native_envelope,
-    }))
+    });
+    if !ephemeral {
+        session
+            .persistent_sources
+            .insert(status.project_root.display().to_string(), status);
+    }
+    Ok(result)
 }
 
 // A caller that explicitly supplies an empty changed-path list is asserting
 // that its watcher observed no source event.  Once this JSONL process already
-// owns the matching Rust source session and public snapshot, do not rebuild a
-// complete fact envelope merely to rediscover the same SQLite graph.  The
-// SQLite pointer is still read and matched first: another process may have
-// promoted a newer graph, in which case the normal lifecycle path safely
-// re-establishes this process-local cache.
+// owns the matching Rust source session, do not rebuild a complete fact
+// envelope merely to rediscover the same SQLite graph. SQLite remains the
+// authority: its current pointer and payload are matched to the promoted
+// source digest before a compact public envelope is reconstructed.
 pub(in crate::protocol) fn reuse_native_persistent_project_no_op(
     session: &mut NativeProtocolSession,
     root: &Path,
     status: &NativeJsFactsStatus,
 ) -> Result<Option<Value>, NativeProtocolError> {
     let project_id = status.project_identity.project_id.clone();
-    let cached = match (&session.persistent_graph, &session.persistent_facts) {
-        (Some(graph), Some(facts))
-            if graph.project_id == project_id
-                && facts.project_id == project_id
-                && graph.public_snapshot.is_some() =>
-        {
-            (
-                graph.graph_version,
-                facts.facts_digest.clone(),
-                graph
-                    .public_snapshot
-                    .as_ref()
-                    .expect("checked public snapshot")
-                    .clone(),
-            )
-        }
-        _ => return Ok(None),
-    };
-    let current = with_persistent_session_connection(session, root, |_session, connection| {
-        current_complete_graph(connection, &project_id).map_err(|error| NativeProtocolError {
-            code: "store-read-failed",
-            message: error.to_string(),
-        })
-    })?;
-    let Some(current) = current else {
+    let Some(expected_facts_digest) = status.promoted_facts_digest.as_ref() else {
         return Ok(None);
     };
-    if current.graph_version != cached.0
-        || current.material_fingerprint != cached.1
+    let current = with_persistent_session_connection(session, root, |_session, connection| {
+        let current = current_complete_graph(connection, &project_id).map_err(|error| {
+            NativeProtocolError {
+                code: "store-read-failed",
+                message: error.to_string(),
+            }
+        })?;
+        let payload = current
+            .as_ref()
+            .map(|current| complete_graph_payload(connection, &project_id, current.graph_version))
+            .transpose()
+            .map_err(|error| NativeProtocolError {
+                code: "store-read-failed",
+                message: error.to_string(),
+            })?
+            .flatten();
+        Ok((current, payload))
+    })?;
+    let (Some(current), Some(stored)) = current else {
+        return Ok(None);
+    };
+    if current.material_fingerprint != expected_facts_digest.as_str()
         || current.public_graph_version.unwrap_or_default() < 1
     {
         return Ok(None);
     }
-    let mut envelope = native_public_graph_envelope(&cached.2);
+    let public_graph = native_public_graph_snapshot(&stored.payload)?;
+    let mut envelope = native_public_graph_envelope(&public_graph);
     envelope["analysis"]["refresh"] = json!({
         "strategy": "incremental-content-analysis",
         "mode": "incremental",
         "analyzedFiles": 0,
-        "reusedFiles": status.reused_files,
+        "reusedFiles": status.candidate_paths.len(),
         "removedFiles": 0,
         "changedPaths": [],
     });
+    envelope["state"]["status"] = Value::String("native-current".to_string());
     envelope["analysis"]["latestDelta"] = Value::Null;
     let public_graph_version = current
         .public_graph_version
         .expect("positive public graph version was checked");
+    envelope["analysis"]["graphState"] = json!({
+        "schemaVersion": "flopeek-native-graph-state/v1",
+        "status": "unchanged",
+        "persistence": "sqlite",
+        "nativeGraphVersion": current.graph_version,
+        "graphVersion": public_graph_version,
+        "materialFingerprint": expected_facts_digest,
+        "sourceFingerprint": envelope["state"]["sourceFingerprint"].clone(),
+        "sourceRevision": envelope["state"]["sourceRevision"].clone(),
+        "updatedAt": envelope["state"]["updatedAt"].clone(),
+        "latestDelta": Value::Null,
+        "limitation": "Native graph versions are retained in the repository-local SQLite store. They identify static graph state and do not prove runtime behavior.",
+    });
     Ok(Some(json!({
         "schemaVersion": "flopeek-native-public-lifecycle/v1",
         "status": "reused",
         "nativeGraphVersion": current.graph_version,
         "publicGraphVersion": public_graph_version,
-        "factsDigest": cached.1,
+        "factsDigest": expected_facts_digest,
         "receipt": {
             "schemaVersion": "flopeek-native-source-session-no-op/v1",
             "stored": false,
@@ -432,6 +485,22 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
 ) -> Result<Value, NativeProtocolError> {
     let root = project_root(params)?;
     let handle_only_public_graph = requests_handle_only_public_graph(params)?;
+    // Retaining public collections is an explicit session-cache choice.
+    // Handle-only callers need it for native queries; materialized CoreClient
+    // callers opt in so the next changed-path refresh can reuse the snapshot
+    // without changing the cold recovery timeout contract.
+    let retain_public_snapshot = match params.get("retainPublicSnapshot") {
+        None => handle_only_public_graph,
+        Some(Value::Bool(value)) => *value,
+        Some(_) => {
+            return Err(NativeProtocolError {
+                code: "invalid-params",
+                message:
+                    "refreshNativePersistentProject params.retainPublicSnapshot must be a boolean."
+                        .to_string(),
+            });
+        }
+    };
     let session_key = root.display().to_string();
     let source_refresh_started = Instant::now();
     let explicit_no_op = params
@@ -439,7 +508,18 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
         .and_then(Value::as_array)
         .is_some_and(Vec::is_empty)
         && session.persistent_sources.contains_key(&session_key);
-    let status = load_native_js_facts_status(session, params)?;
+    // An explicit no-op first validates the lightweight session checkpoint
+    // against SQLite. Its parser facts were deliberately evicted after the
+    // preceding promotion, so routing it through source-adapter validation
+    // would misclassify every known path as unsupported before reuse can run.
+    let mut status = if explicit_no_op {
+        session
+            .persistent_sources
+            .remove(&session_key)
+            .expect("explicit no-op requires the checked session checkpoint")
+    } else {
+        load_native_js_facts_status(session, params)?
+    };
     let source_refresh_ms = elapsed_ms(source_refresh_started);
     if explicit_no_op
         && let Some(mut response) = reuse_native_persistent_project_no_op(session, &root, &status)?
@@ -448,7 +528,7 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
         response["sourceRefresh"] = json!({
             "mode": "no-op-session",
             "parsedFiles": 0,
-            "reusedFiles": status.reused_files,
+            "reusedFiles": status.candidate_paths.len(),
             "changedPaths": [],
             "removedPaths": [],
         });
@@ -462,9 +542,24 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
         if handle_only_public_graph {
             replace_public_graph_with_handle_envelope(&mut response)?;
         }
+        session.persistent_sources.insert(session_key, status);
         return Ok(response);
     }
-    let supported_paths = status.facts.keys().cloned().collect::<BTreeSet<_>>();
+    if explicit_no_op {
+        // SQLite moved independently or the cached lineage no longer matches.
+        // Restore the checkpoint so the ordinary durable reconciliation path
+        // can compare it, then acquire a complete verified status.
+        session
+            .persistent_sources
+            .insert(session_key.clone(), status);
+        status = load_native_js_facts_status(session, params)?;
+    }
+    let supported_paths = status
+        .facts
+        .keys()
+        .chain(status.compacted_facts.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
     let unsupported_paths = status
         .candidate_paths
         .iter()
@@ -505,13 +600,7 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
     // the exact batch before SQLite promotion, so factsDigest and public graph
     // compatibility remain byte-for-byte equivalent to a full refresh.
     let cached_base_digest = (!status.initial_scan)
-        .then(|| {
-            session
-                .persistent_facts
-                .as_ref()
-                .filter(|facts| facts.project_id == status.project_identity.project_id)
-                .map(|facts| facts.facts_digest.clone())
-        })
+        .then(|| status.promoted_facts_digest.clone())
         .flatten();
     let (mut result, facts_digest, used_fact_patch, envelope_build_ms, persistent_promotion_ms) =
         if let Some(base_digest) = cached_base_digest {
@@ -519,6 +608,12 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
             let patch = native_js_structural_fact_patch(&status, &base_digest, &git_metadata)?;
             let envelope_build_ms = elapsed_ms(envelope_started);
             let promotion_started = Instant::now();
+            // `patch` now owns the changed records needed by promotion. Drop
+            // the parser/source cache before graph assembly so one-file
+            // refresh does not retain two copies of those facts at peak. A
+            // concurrent SQLite advance is rare and reacquires a complete
+            // verified source status below before attempting the full batch.
+            evict_native_js_source_cache(&mut status);
             match persist_native_public_graph_patch(session, &patch) {
                 Ok(result) => {
                     let facts_digest = result
@@ -543,8 +638,18 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
                 // malformed internal patches stay loud rather than being hidden by
                 // a full-batch retry.
                 Err(error) if error.code == "structural-fact-patch-miss" => {
+                    status = load_native_js_facts_status(session, params)?;
+                    ensure_complete_native_js_structural_records(&mut status).map_err(
+                        |message| NativeProtocolError {
+                            code: "native-source-facts-failed",
+                            message,
+                        },
+                    )?;
                     let full_envelope_started = Instant::now();
-                    let mut batch = native_js_batch_envelope_with_git(&status, &git_metadata)?;
+                    let mut batch = native_js_batch_envelope_with_git_owned_records(
+                        &mut status,
+                        &git_metadata,
+                    )?;
                     batch["projectRoot"] = Value::String(root.to_string_lossy().to_string());
                     let facts_digest = batch
                     .get("factsDigest")
@@ -562,6 +667,7 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
                         .collect::<BTreeSet<_>>();
                     let full_envelope_build_ms = elapsed_ms(full_envelope_started);
                     let full_promotion_started = Instant::now();
+                    evict_native_js_source_cache(&mut status);
                     let result = with_persistent_session_connection(
                         session,
                         &root,
@@ -571,9 +677,20 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
                                 session,
                                 &mut batch,
                                 receipt,
-                                true,
-                                None,
-                                Some(changed_record_paths),
+                                PersistNativePublicGraphOptions {
+                                    retain_persistent_facts: false,
+                                    verified_topology_digest: None,
+                                    changed_record_paths_override: Some(changed_record_paths),
+                                    // The normal compatibility lifecycle also retains the
+                                    // committed public collections.  The next changed-path
+                                    // refresh can then reuse them for its adjacent delta and
+                                    // publicGraphReuse envelope instead of reconstructing every
+                                    // collection from the SQLite projection.  Handle-only mode
+                                    // is not the only caller that benefits from this cache: the
+                                    // benchmark and product CoreClient both retain a materialized
+                                    // graph across refreshes.
+                                    retain_public_snapshot,
+                                },
                                 connection,
                             )
                         },
@@ -589,8 +706,15 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
                 Err(error) => return Err(error),
             }
         } else {
+            ensure_complete_native_js_structural_records(&mut status).map_err(|message| {
+                NativeProtocolError {
+                    code: "native-source-facts-failed",
+                    message,
+                }
+            })?;
             let envelope_started = Instant::now();
-            let mut batch = native_js_batch_envelope_with_git(&status, &git_metadata)?;
+            let mut batch =
+                native_js_batch_envelope_with_git_owned_records(&mut status, &git_metadata)?;
             batch["projectRoot"] = Value::String(root.to_string_lossy().to_string());
             let facts_digest = batch
                 .get("factsDigest")
@@ -611,6 +735,7 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
             });
             let envelope_build_ms = elapsed_ms(envelope_started);
             let promotion_started = Instant::now();
+            evict_native_js_source_cache(&mut status);
             let result =
                 with_persistent_session_connection(session, &root, |session, connection| {
                     let receipt = submit_structural_facts(&batch)?;
@@ -618,9 +743,12 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
                         session,
                         &mut batch,
                         receipt,
-                        true,
-                        None,
-                        changed_record_paths,
+                        PersistNativePublicGraphOptions {
+                            retain_persistent_facts: false,
+                            verified_topology_digest: None,
+                            changed_record_paths_override: changed_record_paths,
+                            retain_public_snapshot,
+                        },
                         connection,
                     )
                 })?;
@@ -632,6 +760,7 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
                 elapsed_ms(promotion_started),
             )
         };
+    status.promoted_facts_digest = Some(facts_digest.clone());
     let project_id = status.project_identity.project_id.clone();
     if let Some(profile) = result
         .pointer_mut("/receipt/profile")
@@ -662,6 +791,27 @@ pub(in crate::protocol) fn refresh_native_persistent_project(
     });
     if handle_only_public_graph {
         replace_public_graph_with_handle_envelope(&mut result)?;
+    }
+    // Keep complete source facts available until every incremental fallback
+    // path has either promoted or failed. Only then evict the derived parser
+    // cache; SQLite and the retained record digests remain the durable lineage.
+    evict_native_js_source_cache(&mut status);
+    session.persistent_sources.insert(session_key, status);
+    // Retain only the committed public snapshot for the next adjacent delta.
+    // SQLite remains authoritative: lifecycle code gates every reuse by project
+    // and graph version, while this process-local cache avoids reconstructing
+    // the previous public collections during the next refresh.
+    let committed_graph_version = result.get("nativeGraphVersion").and_then(Value::as_i64);
+    if let Some(cached) = session.persistent_graph.as_mut()
+        && cached.project_id == project_id
+        && committed_graph_version == Some(cached.graph_version)
+        && cached.public_snapshot.is_some()
+    {
+        // The public snapshot is the only derived cache needed before the next
+        // refresh. Drop the duplicate projection; ensure_persistent_payload
+        // rehydrates it from the verified SQLite graph while preserving this
+        // snapshot for adjacent-delta reuse.
+        cached.payload = Value::Null;
     }
     Ok(result)
 }
@@ -840,11 +990,28 @@ pub(in crate::protocol) fn native_js_batch_envelope(
     native_js_batch_envelope_for_package(status, None)
 }
 
-pub(in crate::protocol) fn native_js_batch_envelope_with_git(
-    status: &crate::js_facts::NativeJsFactsStatus,
+pub(in crate::protocol) fn native_js_batch_envelope_with_git_owned_records(
+    status: &mut crate::js_facts::NativeJsFactsStatus,
     git_metadata: &Value,
 ) -> Result<Value, NativeProtocolError> {
-    native_js_batch_envelope_for_package_with_records(status, None, true, Some(git_metadata))
+    let mut batch =
+        native_js_batch_envelope_for_package_with_records(status, None, false, Some(git_metadata))?;
+    let records = take_complete_native_js_structural_records(status).map_err(|message| {
+        NativeProtocolError {
+            code: "native-source-facts-incomplete",
+            message,
+        }
+    })?;
+    batch["records"] = Value::Array(records);
+    let facts_digest = structural_facts_digest(
+        batch.as_object().expect("native batch is an object"),
+    )
+    .map_err(|message| NativeProtocolError {
+        code: "native-source-facts-failed",
+        message,
+    })?;
+    batch["factsDigest"] = Value::String(facts_digest);
+    Ok(batch)
 }
 
 pub(in crate::protocol) fn native_js_structural_fact_patch(
@@ -858,8 +1025,12 @@ pub(in crate::protocol) fn native_js_structural_fact_patch(
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
-    let manifest = status
-        .structural_records
+    let record_manifest = if status.structural_records_complete {
+        &status.structural_records
+    } else {
+        &status.structural_record_manifest
+    };
+    let manifest = record_manifest
         .iter()
         .map(|record| {
             json!({
@@ -921,6 +1092,13 @@ pub(in crate::protocol) fn native_js_batch_envelope_for_package_with_records(
     include_records: bool,
     git_metadata: Option<&Value>,
 ) -> Result<Value, NativeProtocolError> {
+    if include_records && !status.structural_records_complete {
+        return Err(NativeProtocolError {
+            code: "native-source-facts-incomplete",
+            message: "A complete StructuralFactBatch requires complete native source records."
+                .to_string(),
+        });
+    }
     let scope = read_native_scope(&status.project_root).map_err(|message| NativeProtocolError {
         code: "native-source-facts-failed",
         message,
@@ -956,7 +1134,12 @@ pub(in crate::protocol) fn native_js_batch_envelope_for_package_with_records(
     let mut summary = json!({"scannedFiles":0,"parsedFiles":0,"parsedWithDiagnosticsFiles":0,"inventoryOnlyFiles":0,"parseFailedFiles":0});
     let mut by_language =
         BTreeMap::<String, (usize, usize, usize, usize, usize, BTreeSet<String>)>::new();
-    for record in &status.structural_records {
+    let record_view = if status.structural_records_complete {
+        &status.structural_records
+    } else {
+        &status.structural_record_manifest
+    };
+    for record in record_view {
         let language = record
             .get("language")
             .and_then(Value::as_str)
@@ -999,7 +1182,7 @@ pub(in crate::protocol) fn native_js_batch_envelope_for_package_with_records(
     }
     let by_language = by_language.into_iter().map(|(language, (files, parsed, parsed_with_diagnostics, inventory_only, parse_failed, parsers))| json!({"language":language,"files":files,"parsed":parsed,"parsedWithDiagnostics":parsed_with_diagnostics,"inventoryOnly":inventory_only,"parseFailed":parse_failed,"parsers":parsers})).collect::<Vec<_>>();
     let coverage = json!({"summary":summary,"byLanguage":by_language,"interpretation":"Coverage counts syntax-tree analysis status, not runtime execution coverage or relationship precision."});
-    let source_fingerprint = native_js_source_fingerprint(&status.structural_records);
+    let source_fingerprint = native_js_source_fingerprint(record_view);
     // Inventory and parser status are the source of lifecycle telemetry. Do
     // not label every persistent refresh as an initial full scan merely
     // because graph assembly receives a complete compatibility envelope.
@@ -1051,7 +1234,7 @@ pub(in crate::protocol) fn native_js_batch_envelope_for_package_with_records(
         }
     }
     let mut batch = json!({
-        "schemaVersion":STRUCTURAL_FACT_BATCH_SCHEMA,"projectId":status.project_identity.project_id,"packageCommands":status.entry_facts["packageCommands"],"entryMetadata":status.entry_facts["entryMetadata"],"entryEdgeMetadata":status.entry_facts["edgeMetadata"],"manualDescriptions":native_manual_descriptions(&status.project_root, &status.structural_records),
+        "schemaVersion":STRUCTURAL_FACT_BATCH_SCHEMA,"projectId":status.project_identity.project_id,"packageCommands":status.entry_facts["packageCommands"],"entryMetadata":status.entry_facts["entryMetadata"],"entryEdgeMetadata":status.entry_facts["edgeMetadata"],"manualDescriptions":native_manual_descriptions(&status.project_root, record_view),
         "flowContext":{"graphVersion":0,"sourceRevision":git["revision"]},"flowEntries":{"primary":{"tests":scope.flow_entries_tests,"fixtures":scope.flow_entries_fixtures},"diagnostic":{"tests":true,"fixtures":true}},
         "lifecycleContext":{"sourceFingerprint":source_fingerprint,"sourceRevision":git["revision"],"updatedAt":generated_at,"refresh":refresh,"coverage":coverage},"publicGraphContext":public_graph_context
     });
@@ -1137,6 +1320,75 @@ pub(in crate::protocol) struct ObjectWithoutKeys<'a> {
     omitted: &'static [&'static str],
 }
 
+pub(in crate::protocol) struct CanonicalValue<'a>(pub(in crate::protocol) &'a Value);
+
+struct RawJsonValue<'a>(&'a str);
+
+const RAW_VALUE_TOKEN: &str = "$serde_json::private::RawValue";
+
+impl Serialize for RawJsonValue<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut value = serializer.serialize_struct(RAW_VALUE_TOKEN, 1)?;
+        value.serialize_field(RAW_VALUE_TOKEN, self.0)?;
+        value.end()
+    }
+}
+
+struct RecordsCanonical<'a>(&'a Value);
+
+impl Serialize for RecordsCanonical<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let Some(records) = self.0.as_array() else {
+            return self.0.serialize(serializer);
+        };
+        let mut sequence = serializer.serialize_seq(Some(records.len()))?;
+        for record in records {
+            match record {
+                // Compact process-local records were canonicalized before
+                // entering this envelope. RawValue lets the SHA-256 stream
+                // reuse those bytes without reparsing and reallocating every
+                // unchanged parser fact.
+                Value::String(raw) => sequence.serialize_element(&RawJsonValue(raw))?,
+                value => sequence.serialize_element(&CanonicalValue(value))?,
+            }
+        }
+        sequence.end()
+    }
+}
+
+impl Serialize for CanonicalValue<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self.0 {
+            Value::Array(values) => {
+                let mut sequence = serializer.serialize_seq(Some(values.len()))?;
+                for value in values {
+                    sequence.serialize_element(&CanonicalValue(value))?;
+                }
+                sequence.end()
+            }
+            Value::Object(entries) => {
+                let mut keys = entries.keys().collect::<Vec<_>>();
+                keys.sort_unstable();
+                let mut map = serializer.serialize_map(Some(keys.len()))?;
+                for key in keys {
+                    map.serialize_entry(key, &CanonicalValue(&entries[key]))?;
+                }
+                map.end()
+            }
+            value => value.serialize(serializer),
+        }
+    }
+}
+
 impl Serialize for ObjectWithoutKeys<'_> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -1150,9 +1402,11 @@ impl Serialize for ObjectWithoutKeys<'_> {
             .filter(|key| !self.omitted.contains(&key.as_str()))
             .count();
         let mut map = serializer.serialize_map(Some(retained))?;
-        for (key, value) in object {
+        let mut keys = object.keys().collect::<Vec<_>>();
+        keys.sort_unstable();
+        for key in keys {
             if !self.omitted.contains(&key.as_str()) {
-                map.serialize_entry(key, value)?;
+                map.serialize_entry(key, &CanonicalValue(&object[key]))?;
             }
         }
         map.end()
@@ -1171,10 +1425,13 @@ impl Serialize for StructuralFactsCanonical<'_> {
             .filter(|key| !ROOT_OMITTED.contains(&key.as_str()))
             .count();
         let mut map = serializer.serialize_map(Some(retained))?;
-        for (key, value) in self.0 {
+        let mut keys = self.0.keys().collect::<Vec<_>>();
+        keys.sort_unstable();
+        for key in keys {
             if ROOT_OMITTED.contains(&key.as_str()) {
                 continue;
             }
+            let value = &self.0[key];
             match key.as_str() {
                 "lifecycleContext" => map.serialize_entry(
                     key,
@@ -1190,7 +1447,8 @@ impl Serialize for StructuralFactsCanonical<'_> {
                         omitted: &["graphVersion"],
                     },
                 )?,
-                _ => map.serialize_entry(key, value)?,
+                "records" => map.serialize_entry(key, &RecordsCanonical(value))?,
+                _ => map.serialize_entry(key, &CanonicalValue(value))?,
             }
         }
         map.end()
@@ -1232,10 +1490,13 @@ impl Serialize for StructuralTopologyCanonical<'_> {
             .filter(|key| !ROOT_OMITTED.contains(&key.as_str()))
             .count();
         let mut map = serializer.serialize_map(Some(retained))?;
-        for (key, value) in self.0 {
+        let mut keys = self.0.keys().collect::<Vec<_>>();
+        keys.sort_unstable();
+        for key in keys {
             if ROOT_OMITTED.contains(&key.as_str()) {
                 continue;
             }
+            let value = &self.0[key];
             match key.as_str() {
                 "lifecycleContext" => map.serialize_entry(
                     key,
@@ -1257,7 +1518,7 @@ impl Serialize for StructuralTopologyCanonical<'_> {
                     },
                 )?,
                 "records" => map.serialize_entry(key, &RecordsWithoutSourceHashes(value))?,
-                _ => map.serialize_entry(key, value)?,
+                _ => map.serialize_entry(key, &CanonicalValue(value))?,
             }
         }
         map.end()
@@ -1555,11 +1816,19 @@ pub(in crate::protocol) fn build_isolated_incremental_graph(
 pub(in crate::protocol) fn projection_digest(
     projection: &Value,
 ) -> Result<String, NativeProtocolError> {
-    let serialized = serde_json::to_vec(projection).map_err(|error| NativeProtocolError {
-        code: "structural-graph-serialize-failed",
-        message: error.to_string(),
+    // SQLite stores public collections separately from their envelope and
+    // reconstructs an equivalent JSON object on read. Object insertion order
+    // is therefore not durable identity. Hash the same recursively sorted
+    // representation used by JavaScript stable JSON so storage layout cannot
+    // turn a valid graph into a false corruption report.
+    let mut writer = Sha256Writer(Sha256::new());
+    serde_json::to_writer(&mut writer, &CanonicalValue(projection)).map_err(|error| {
+        NativeProtocolError {
+            code: "structural-graph-serialize-failed",
+            message: error.to_string(),
+        }
     })?;
-    Ok(format!("sha256:{:x}", Sha256::digest(serialized)))
+    Ok(format!("sha256:{:x}", writer.0.finalize()))
 }
 
 pub(in crate::protocol) fn submit_structural_facts_with_verified_digest(
@@ -1617,91 +1886,102 @@ pub(in crate::protocol) fn submit_structural_facts_with_verified_digest(
             message: "StructuralFactBatch/v1 must remain bounded.".to_string(),
         });
     }
-    validate_structural_records(records).map_err(|message| NativeProtocolError {
-        code: "unsafe-structural-facts",
-        message,
-    })?;
-    let mut record_orders = std::collections::BTreeSet::new();
-    for record in records {
-        let Some(record) = record.as_object() else {
-            return Err(NativeProtocolError {
-                code: "invalid-structural-facts",
-                message: "StructuralFactBatch/v1 records must be objects.".to_string(),
-            });
-        };
-        let relative_path = string_field(record, "relativePath")?;
-        if !is_portable_repository_path(relative_path) {
-            return Err(NativeProtocolError {
+    // With a verified digest, unchanged records came from the already
+    // validated SQLite cache and changed records were validated while the
+    // patch was reconstructed. Revalidating the complete multi-megabyte batch
+    // here added latency without adding an independent trust boundary.
+    if verified_digest.is_none() {
+        validate_structural_records(records).map_err(|message| NativeProtocolError {
+            code: "unsafe-structural-facts",
+            message,
+        })?;
+    }
+    if verified_digest.is_none() {
+        let mut record_orders = std::collections::BTreeSet::new();
+        for record in records {
+            let Some(record) = record.as_object() else {
+                return Err(NativeProtocolError {
+                    code: "invalid-structural-facts",
+                    message: "StructuralFactBatch/v1 records must be objects.".to_string(),
+                });
+            };
+            let relative_path = string_field(record, "relativePath")?;
+            if !is_portable_repository_path(relative_path) {
+                return Err(NativeProtocolError {
                 code: "invalid-structural-facts",
                 message:
                     "StructuralFactBatch/v1 record paths must be portable and repository-relative."
                         .to_string(),
             });
-        }
-        let record_order = record
-            .get("recordOrder")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| NativeProtocolError {
-                code: "invalid-structural-facts",
-                message: "StructuralFactBatch/v1 recordOrder must be a non-negative integer."
-                    .to_string(),
-            })?;
-        if !record_orders.insert(record_order) {
-            return Err(NativeProtocolError {
-                code: "invalid-structural-facts",
-                message: "StructuralFactBatch/v1 recordOrder values must be unique.".to_string(),
-            });
-        }
-        let source_hash = string_field(record, "sourceHash")?;
-        if !is_sha256_hex(source_hash) {
-            return Err(NativeProtocolError {
-                code: "invalid-structural-facts",
-                message: "StructuralFactBatch/v1 record sourceHash must be a SHA-256 hex digest."
-                    .to_string(),
-            });
-        }
-        if !record.contains_key("result") {
-            return Err(NativeProtocolError {
-                code: "invalid-structural-facts",
-                message: "StructuralFactBatch/v1 records require result facts.".to_string(),
-            });
-        }
-        if let Some(resolved_imports) = record
-            .get("result")
-            .and_then(Value::as_object)
-            .and_then(|result| result.get("resolvedImports"))
-        {
-            let Some(resolved_imports) = resolved_imports.as_array() else {
+            }
+            let record_order = record
+                .get("recordOrder")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| NativeProtocolError {
+                    code: "invalid-structural-facts",
+                    message: "StructuralFactBatch/v1 recordOrder must be a non-negative integer."
+                        .to_string(),
+                })?;
+            if !record_orders.insert(record_order) {
                 return Err(NativeProtocolError {
                     code: "invalid-structural-facts",
-                    message: "StructuralFactBatch/v1 resolvedImports must be an array.".to_string(),
+                    message: "StructuralFactBatch/v1 recordOrder values must be unique."
+                        .to_string(),
                 });
-            };
-            for resolved_import in resolved_imports {
-                let Some(resolved_import) = resolved_import.as_object() else {
+            }
+            let source_hash = string_field(record, "sourceHash")?;
+            if !is_sha256_hex(source_hash) {
+                return Err(NativeProtocolError {
+                    code: "invalid-structural-facts",
+                    message:
+                        "StructuralFactBatch/v1 record sourceHash must be a SHA-256 hex digest."
+                            .to_string(),
+                });
+            }
+            if !record.contains_key("result") {
+                return Err(NativeProtocolError {
+                    code: "invalid-structural-facts",
+                    message: "StructuralFactBatch/v1 records require result facts.".to_string(),
+                });
+            }
+            if let Some(resolved_imports) = record
+                .get("result")
+                .and_then(Value::as_object)
+                .and_then(|result| result.get("resolvedImports"))
+            {
+                let Some(resolved_imports) = resolved_imports.as_array() else {
                     return Err(NativeProtocolError {
                         code: "invalid-structural-facts",
-                        message: "StructuralFactBatch/v1 resolvedImports must contain objects."
+                        message: "StructuralFactBatch/v1 resolvedImports must be an array."
                             .to_string(),
                     });
                 };
-                string_field(resolved_import, "specifier")?;
-                let target_path = string_field(resolved_import, "targetPath")?;
-                if !is_portable_repository_path(target_path) {
-                    return Err(NativeProtocolError {
+                for resolved_import in resolved_imports {
+                    let Some(resolved_import) = resolved_import.as_object() else {
+                        return Err(NativeProtocolError {
+                            code: "invalid-structural-facts",
+                            message: "StructuralFactBatch/v1 resolvedImports must contain objects."
+                                .to_string(),
+                        });
+                    };
+                    string_field(resolved_import, "specifier")?;
+                    let target_path = string_field(resolved_import, "targetPath")?;
+                    if !is_portable_repository_path(target_path) {
+                        return Err(NativeProtocolError {
                         code: "invalid-structural-facts",
                         message: "StructuralFactBatch/v1 resolved import target paths must be portable and repository-relative.".to_string(),
                     });
+                    }
                 }
             }
         }
-    }
-    if !record_orders.iter().copied().eq(0..records.len() as u64) {
-        return Err(NativeProtocolError {
-            code: "invalid-structural-facts",
-            message: "StructuralFactBatch/v1 recordOrder values must be contiguous from zero."
-                .to_string(),
-        });
+        if !record_orders.iter().copied().eq(0..records.len() as u64) {
+            return Err(NativeProtocolError {
+                code: "invalid-structural-facts",
+                message: "StructuralFactBatch/v1 recordOrder values must be contiguous from zero."
+                    .to_string(),
+            });
+        }
     }
     Ok(json!({
         "schemaVersion": STRUCTURAL_FACT_BATCH_SCHEMA,

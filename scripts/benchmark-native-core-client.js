@@ -17,6 +17,7 @@ const { createNativeIncrementalSession } = require("../src/native-incremental-co
 const { createScanCoordinator } = require("../src/scan-coordinator");
 const { nativePlatformTarget } = require("../src/native-platform-targets");
 const { copyRepository, executionOrder, parseArguments, sourceFiles, summarize } = require("./benchmark-native-incremental");
+const { releaseNativeOptions, repositoryBinding, stateRequest } = require("./native-benchmark-contract");
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -24,15 +25,6 @@ const ROOT = path.resolve(__dirname, "..");
 // for packaging. The development resolver may legitimately choose a newer
 // debug binary after tests compile it, which makes results non-reproducible and
 // systematically understates native performance.
-function releaseNativeOptions() {
-  const name = process.platform === "win32" ? "flopeek-native-core.exe" : "flopeek-native-core";
-  const command = path.join(ROOT, "native", "flopeek-core", "target", "release", name);
-  if (!fs.existsSync(command)) {
-    throw new Error(`Native release binary is missing: ${command}. Run cargo build --release --manifest-path native/flopeek-core/Cargo.toml before benchmarking.`);
-  }
-  return Object.freeze({ command, args: [] });
-}
-
 function nativeArtifactBinding(command) {
   const platform = nativePlatformTarget();
   if (!platform) throw new Error(`No release target is registered for ${process.platform}/${process.arch}.`);
@@ -51,20 +43,6 @@ function nativeArtifactBinding(command) {
   };
 }
 
-function repositoryBinding(root) {
-  const status = execFileSync("git", ["-C", root, "status", "--porcelain", "--untracked-files=all"], {
-    encoding: "utf8",
-  }).trim();
-  if (status) throw new Error(`Benchmark repository must be clean and revision-bound: ${root}.`);
-  const repositoryRevision = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], {
-    encoding: "utf8",
-  }).trim();
-  const sourceDigest = createHash("sha256")
-    .update(execFileSync("git", ["-C", root, "ls-tree", "-r", "--full-tree", "HEAD"]))
-    .digest("hex");
-  return { repositoryRevision, sourceDigest };
-}
-
 function elapsed(operation) {
   const started = process.hrtime.bigint();
   return Promise.resolve(operation()).then((result) => ({
@@ -76,15 +54,6 @@ function elapsed(operation) {
 function assertEquivalent(js, native, state, rootLabel) {
   assert.equal(createCoreCompatibilityDigest(native), createCoreCompatibilityDigest(js), `Native CoreClient diverged from JS on ${rootLabel} during ${state}.`);
   assert.deepEqual(native.stats, js.stats, `Native CoreClient stats diverged from JS on ${rootLabel} during ${state}.`);
-}
-
-function stateRequest(state, changedPath = null) {
-  if (state === "cold") return { changedPaths: null, reason: "benchmark-cold" };
-  if (state === "unchanged") return { changedPaths: [], reason: "benchmark-unchanged" };
-  if (state === "oneFileChange" && typeof changedPath === "string" && changedPath) {
-    return { changedPaths: [changedPath], reason: "benchmark-one-file-change" };
-  }
-  throw new Error(`Unknown benchmark state or missing changed path: ${state}.`);
 }
 
 async function refreshCoordinator(coordinator, request, implementation, state, rootLabel) {

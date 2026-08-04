@@ -4,7 +4,8 @@ use crate::identity_v2::{
     SemanticIdentity, SemanticIdentityInput, edge_uid, evidence_uid, revision_hash,
     semantic_identity,
 };
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use rusqlite::types::Value as SqlValue;
+use rusqlite::{Connection, OptionalExtension, Transaction, params, params_from_iter};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -76,33 +77,54 @@ fn ensure_project(
     Ok(uid)
 }
 
-#[derive(Debug, Clone)]
-struct PublicNode {
-    public_id: String,
-    kind: String,
-    node_type: Option<String>,
-    path: Option<String>,
-    label: Option<String>,
-    language: Option<String>,
-    signature: Option<String>,
-    evidence: Option<Value>,
-    metadata: Value,
+#[derive(Debug, Clone, Copy)]
+struct PublicNode<'a> {
+    public_id: &'a str,
+    kind: &'a str,
+    node_type: Option<&'a str>,
+    path: Option<&'a str>,
+    label: Option<&'a str>,
+    language: Option<&'a str>,
+    signature: Option<&'a str>,
+    evidence: Option<&'a Value>,
+    object: &'a Map<String, Value>,
 }
 
 #[derive(Debug)]
-struct ResolvedNode {
-    fact: PublicNode,
+struct ResolvedNode<'a> {
+    fact: PublicNode<'a>,
     uid: NodeUid,
     node_pk: Option<i64>,
     owner_public_id: Option<String>,
     semantic: Option<SemanticIdentity>,
 }
 
-fn string_field(object: &Map<String, Value>, name: &str) -> Option<String> {
-    object.get(name).and_then(Value::as_str).map(str::to_string)
+fn string_field<'a>(object: &'a Map<String, Value>, name: &str) -> Option<&'a str> {
+    object.get(name).and_then(Value::as_str)
 }
 
-fn public_nodes(payload: &Value) -> rusqlite::Result<Vec<PublicNode>> {
+impl PublicNode<'_> {
+    fn metadata(&self) -> Value {
+        let mut metadata = self.object.clone();
+        for field in [
+            "id",
+            "kind",
+            "type",
+            "path",
+            "label",
+            "language",
+            "signature",
+            "evidence",
+            "manualDescription",
+            "hierarchy",
+        ] {
+            metadata.remove(field);
+        }
+        Value::Object(metadata)
+    }
+}
+
+fn public_nodes(payload: &Value) -> rusqlite::Result<Vec<PublicNode<'_>>> {
     let values = payload
         .get("nodes")
         .and_then(Value::as_array)
@@ -117,7 +139,7 @@ fn public_nodes(payload: &Value) -> rusqlite::Result<Vec<PublicNode>> {
             let public_id = string_field(object, "id")
                 .filter(|value| !value.is_empty())
                 .ok_or_else(|| invalid_query("public graph nodes require non-empty IDs"))?;
-            if !ids.insert(public_id.clone()) {
+            if !ids.insert(public_id) {
                 return Err(invalid_query(format!(
                     "duplicate public graph node ID {public_id}"
                 )));
@@ -125,21 +147,6 @@ fn public_nodes(payload: &Value) -> rusqlite::Result<Vec<PublicNode>> {
             let kind = string_field(object, "kind")
                 .filter(|value| !value.is_empty())
                 .ok_or_else(|| invalid_query(format!("node {public_id} requires a kind")))?;
-            let mut metadata = object.clone();
-            for field in [
-                "id",
-                "kind",
-                "type",
-                "path",
-                "label",
-                "language",
-                "signature",
-                "evidence",
-                "manualDescription",
-                "hierarchy",
-            ] {
-                metadata.remove(field);
-            }
             Ok(PublicNode {
                 public_id,
                 kind,
@@ -148,14 +155,17 @@ fn public_nodes(payload: &Value) -> rusqlite::Result<Vec<PublicNode>> {
                 label: string_field(object, "label"),
                 language: string_field(object, "language"),
                 signature: string_field(object, "signature"),
-                evidence: object.get("evidence").cloned(),
-                metadata: Value::Object(metadata),
+                evidence: object.get("evidence"),
+                object,
             })
         })
         .collect()
 }
 
-fn source_hashes(structural_batch: Option<&Value>) -> rusqlite::Result<BTreeMap<String, [u8; 32]>> {
+fn source_hashes(
+    structural_batch: Option<&Value>,
+    changed_record_paths: Option<&BTreeSet<String>>,
+) -> rusqlite::Result<BTreeMap<String, [u8; 32]>> {
     let mut hashes = BTreeMap::new();
     for record in structural_batch
         .and_then(|batch| batch.get("records"))
@@ -163,7 +173,14 @@ fn source_hashes(structural_batch: Option<&Value>) -> rusqlite::Result<BTreeMap<
         .into_iter()
         .flatten()
     {
-        let Some(object) = record.as_object() else {
+        let parsed;
+        let Some(object) = (match record {
+            Value::String(raw) if changed_record_paths.is_some() => {
+                parsed = serde_json::from_str::<Value>(raw).map_err(conversion_error)?;
+                parsed.as_object()
+            }
+            value => value.as_object(),
+        }) else {
             continue;
         };
         let (Some(path), Some(hash)) = (
@@ -172,6 +189,9 @@ fn source_hashes(structural_batch: Option<&Value>) -> rusqlite::Result<BTreeMap<
         ) else {
             continue;
         };
+        if changed_record_paths.is_some_and(|paths| !paths.contains(path)) {
+            continue;
+        }
         hashes.insert(path.to_string(), decode_hex_32("sourceHash", hash)?);
     }
     Ok(hashes)
@@ -278,7 +298,7 @@ fn unique_file_move_candidate(
 fn lexical_owners(payload: &Value, nodes: &[PublicNode]) -> HashMap<String, String> {
     let kinds = nodes
         .iter()
-        .map(|node| (node.public_id.as_str(), node.kind.as_str()))
+        .map(|node| (node.public_id, node.kind))
         .collect::<HashMap<_, _>>();
     let mut candidates = HashMap::<String, BTreeSet<String>>::new();
     for edge in payload
@@ -356,9 +376,50 @@ pub(crate) fn sync_identity_v2(
     let project_uid = ensure_project(transaction, project_pk, public_project_id)?;
     let facts = public_nodes(payload)?;
     let owners = lexical_owners(payload, &facts);
-    let source_hashes = source_hashes(structural_batch)?;
-    let content_hashes = content_hashes(transaction, project_pk)?;
+    let source_hashes = source_hashes(structural_batch, None)?;
+    let identity_store_empty = transaction.query_row(
+        "SELECT NOT EXISTS (SELECT 1 FROM nodes_v2 WHERE project_pk = ?1)",
+        [project_pk],
+        |row| row.get::<_, bool>(0),
+    )?;
+    let content_hashes = if identity_store_empty {
+        BTreeMap::new()
+    } else {
+        content_hashes(transaction, project_pk)?
+    };
     let external_ids = existing_external_ids(transaction, project_pk)?;
+    // The first promotion starts from an empty identity store. Avoid parsing
+    // guarded SQL and probing empty revision tables for every public node.
+    let mut cold_node_insert = identity_store_empty
+        .then(|| {
+            transaction.prepare(
+                "INSERT INTO nodes_v2(project_pk, node_uid, kind, language, ecosystem,
+                   lexical_owner_pk, current_semantic_hash, current_canonical_identity,
+                   first_seen_graph_version, last_seen_graph_version, status)
+                 VALUES (?1, ?2, ?3, ?4, NULL, NULL, ?5, ?6, ?7, NULL, 'active')",
+            )
+        })
+        .transpose()?;
+    let mut cold_external_insert = identity_store_empty
+        .then(|| {
+            transaction.prepare(
+                "INSERT INTO node_external_ids_v2(project_pk, node_pk, scheme, external_id,
+                   first_graph_version, last_graph_version)
+                 VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
+            )
+        })
+        .transpose()?;
+    let mut cold_revision_insert = identity_store_empty
+        .then(|| {
+            transaction.prepare(
+                "INSERT INTO node_revisions_v2(node_pk, first_graph_version, last_graph_version,
+                   semantic_hash, canonical_identity, revision_hash, source_sha256, content_blake3,
+                   path, qualified_name, display_name, signature, lexical_owner_pk,
+                   start_line, start_column, end_line, end_column, metadata_json)
+                 VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            )
+        })
+        .transpose()?;
     // Reserve every exact current external-ID match before considering move
     // candidates. Otherwise a lexically earlier same-content copy could steal
     // the durable UID that still belongs to a later exact legacy ID.
@@ -366,7 +427,7 @@ pub(crate) fn sync_identity_v2(
         .iter()
         .filter_map(|fact| {
             external_ids
-                .get(&fact.public_id)
+                .get(fact.public_id)
                 .map(|(node_pk, _)| *node_pk)
         })
         .collect::<HashSet<_>>();
@@ -376,11 +437,11 @@ pub(crate) fn sync_identity_v2(
     // IDs win. A file move may reuse one unique exact content candidate. Every
     // other new entity receives UUIDv7 and remains local-store scoped.
     for fact in facts {
-        let existing = if let Some(existing) = external_ids.get(&fact.public_id).copied() {
+        let existing = if let Some(existing) = external_ids.get(fact.public_id).copied() {
             Some(existing)
-        } else if fact.kind == "file" {
-            let content = fact.path.as_ref().and_then(|path| content_hashes.get(path));
-            let source = fact.path.as_ref().and_then(|path| source_hashes.get(path));
+        } else if fact.kind == "file" && !identity_store_empty {
+            let content = fact.path.and_then(|path| content_hashes.get(path));
+            let source = fact.path.and_then(|path| source_hashes.get(path));
             unique_file_move_candidate(transaction, project_pk, content, source, &claimed)?
         } else {
             None
@@ -391,7 +452,7 @@ pub(crate) fn sync_identity_v2(
         if let Some(node_pk) = node_pk {
             claimed.insert(node_pk);
         }
-        let owner_public_id = owners.get(&fact.public_id).cloned();
+        let owner_public_id = owners.get(fact.public_id).cloned();
         resolved.push(ResolvedNode {
             fact,
             uid,
@@ -404,11 +465,22 @@ pub(crate) fn sync_identity_v2(
     let mut index = resolved
         .iter()
         .enumerate()
-        .map(|(index, node)| (node.fact.public_id.clone(), index))
+        .map(|(index, node)| (node.fact.public_id.to_string(), index))
         .collect::<HashMap<_, _>>();
     let mut order = (0..resolved.len()).collect::<Vec<_>>();
     order.sort_by_key(|index| usize::from(resolved[*index].owner_public_id.is_some()));
 
+    // Resolve semantic identities through one prepared lookup. Preparing the
+    // same statement for every public node made a cold promotion pay SQLite
+    // parse/compile work thousands of times before any identity row changed.
+    let mut semantic_candidates = if identity_store_empty {
+        None
+    } else {
+        Some(transaction.prepare(
+            "SELECT node_pk, node_uid, current_canonical_identity
+             FROM nodes_v2 WHERE project_pk = ?1 AND current_semantic_hash = ?2",
+        )?)
+    };
     for node_index in order {
         let owner_uid = resolved[node_index]
             .owner_public_id
@@ -416,7 +488,7 @@ pub(crate) fn sync_identity_v2(
             .and_then(|owner| index.get(owner))
             .map(|owner_index| resolved[*owner_index].uid);
         let fact = &resolved[node_index].fact;
-        let discriminator = fact.node_type.as_deref().filter(|value| {
+        let discriminator = fact.node_type.filter(|value| {
             !value.is_empty()
                 && value.bytes().all(|byte| {
                     byte.is_ascii_lowercase()
@@ -426,37 +498,35 @@ pub(crate) fn sync_identity_v2(
         });
         let semantic = semantic_identity(SemanticIdentityInput {
             project_uid: &project_uid,
-            kind: &fact.kind,
-            language: fact.language.as_deref(),
+            kind: fact.kind,
+            language: fact.language,
             ecosystem: None,
-            path: fact.path.as_deref().filter(|path| *path != "."),
-            qualified_name: (fact.kind != "file")
-                .then_some(fact.label.as_deref())
-                .flatten(),
+            path: fact.path.filter(|path| *path != "."),
+            qualified_name: (fact.kind != "file").then_some(fact.label).flatten(),
             owner_uid: owner_uid.as_ref(),
-            signature: fact.signature.as_deref(),
+            signature: fact.signature,
             discriminator,
         })
         .map_err(conversion_error)?;
 
         // A semantic digest collision is never trusted. Exact canonical bytes
         // may be reused only when there is one unclaimed candidate.
-        let mut statement = transaction.prepare(
-            "SELECT node_pk, node_uid, current_canonical_identity
-             FROM nodes_v2 WHERE project_pk = ?1 AND current_semantic_hash = ?2",
-        )?;
-        let candidates = statement
-            .query_map(
-                params![project_pk, semantic.hash().as_bytes().as_slice()],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, Vec<u8>>(1)?,
-                        row.get::<_, Vec<u8>>(2)?,
-                    ))
-                },
-            )?
-            .collect::<Result<Vec<_>, _>>()?;
+        let candidates = if let Some(semantic_candidates) = semantic_candidates.as_mut() {
+            semantic_candidates
+                .query_map(
+                    params![project_pk, semantic.hash().as_bytes().as_slice()],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, Vec<u8>>(1)?,
+                            row.get::<_, Vec<u8>>(2)?,
+                        ))
+                    },
+                )?
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            Vec::new()
+        };
         if candidates
             .iter()
             .any(|(_, _, canonical)| canonical != semantic.canonical())
@@ -479,6 +549,7 @@ pub(crate) fn sync_identity_v2(
         }
         resolved[node_index].semantic = Some(semantic);
     }
+    drop(semantic_candidates);
 
     let resolved_node_pks = resolved
         .iter()
@@ -501,40 +572,45 @@ pub(crate) fn sync_identity_v2(
     index = resolved
         .iter()
         .enumerate()
-        .map(|(index, node)| (node.fact.public_id.clone(), index))
+        .map(|(index, node)| (node.fact.public_id.to_string(), index))
         .collect();
-    for node_index in 0..resolved.len() {
-        let owner_uid = resolved[node_index]
-            .owner_public_id
-            .as_ref()
-            .and_then(|owner| index.get(owner))
-            .map(|owner_index| resolved[*owner_index].uid);
-        if owner_uid.is_none() {
-            continue;
-        }
-        let fact = &resolved[node_index].fact;
-        let discriminator = fact.node_type.as_deref().filter(|value| {
-            !value.is_empty()
-                && value.bytes().all(|byte| {
-                    byte.is_ascii_lowercase()
-                        || byte.is_ascii_digit()
-                        || matches!(byte, b'-' | b'_' | b'.')
+    // On an empty identity store every owner UID was allocated locally above,
+    // so no move candidate can alter it. The second semantic pass is therefore
+    // redundant on a cold promotion; retain it for warm/move reconciliation.
+    if !identity_store_empty {
+        for node_index in 0..resolved.len() {
+            let owner_uid = resolved[node_index]
+                .owner_public_id
+                .as_ref()
+                .and_then(|owner| index.get(owner))
+                .map(|owner_index| resolved[*owner_index].uid);
+            if owner_uid.is_none() {
+                continue;
+            }
+            let fact = &resolved[node_index].fact;
+            let discriminator = fact.node_type.filter(|value| {
+                !value.is_empty()
+                    && value.bytes().all(|byte| {
+                        byte.is_ascii_lowercase()
+                            || byte.is_ascii_digit()
+                            || matches!(byte, b'-' | b'_' | b'.')
+                    })
+            });
+            resolved[node_index].semantic = Some(
+                semantic_identity(SemanticIdentityInput {
+                    project_uid: &project_uid,
+                    kind: fact.kind,
+                    language: fact.language,
+                    ecosystem: None,
+                    path: fact.path.filter(|path| *path != "."),
+                    qualified_name: fact.label,
+                    owner_uid: owner_uid.as_ref(),
+                    signature: fact.signature,
+                    discriminator,
                 })
-        });
-        resolved[node_index].semantic = Some(
-            semantic_identity(SemanticIdentityInput {
-                project_uid: &project_uid,
-                kind: &fact.kind,
-                language: fact.language.as_deref(),
-                ecosystem: None,
-                path: fact.path.as_deref().filter(|path| *path != "."),
-                qualified_name: fact.label.as_deref(),
-                owner_uid: owner_uid.as_ref(),
-                signature: fact.signature.as_deref(),
-                discriminator,
-            })
-            .map_err(conversion_error)?,
-        );
+                .map_err(conversion_error)?,
+            );
+        }
     }
 
     let mut public_to_pk = HashMap::new();
@@ -542,7 +618,7 @@ pub(crate) fn sync_identity_v2(
     for node in &mut resolved {
         let semantic = node.semantic.as_ref().expect("calculated");
         let fact = &node.fact;
-        let public_id = fact.public_id.clone();
+        let public_id = fact.public_id.to_string();
         if let Some(node_pk) = node.node_pk {
             transaction.execute(
                 "UPDATE nodes_v2 SET kind = ?1, language = ?2, ecosystem = NULL,
@@ -559,12 +635,8 @@ pub(crate) fn sync_identity_v2(
                 ],
             )?;
         } else {
-            transaction.execute(
-                "INSERT INTO nodes_v2(project_pk, node_uid, kind, language, ecosystem,
-                   lexical_owner_pk, current_semantic_hash, current_canonical_identity,
-                   first_seen_graph_version, last_seen_graph_version, status)
-                 VALUES (?1, ?2, ?3, ?4, NULL, NULL, ?5, ?6, ?7, NULL, 'active')",
-                params![
+            if let Some(statement) = cold_node_insert.as_mut() {
+                statement.execute(params![
                     project_pk,
                     node.uid.as_bytes().as_slice(),
                     fact.kind,
@@ -572,25 +644,53 @@ pub(crate) fn sync_identity_v2(
                     semantic.hash().as_bytes().as_slice(),
                     semantic.canonical(),
                     graph_version
-                ],
-            )?;
+                ])?;
+            } else {
+                transaction.execute(
+                    "INSERT INTO nodes_v2(project_pk, node_uid, kind, language, ecosystem,
+                       lexical_owner_pk, current_semantic_hash, current_canonical_identity,
+                       first_seen_graph_version, last_seen_graph_version, status)
+                     VALUES (?1, ?2, ?3, ?4, NULL, NULL, ?5, ?6, ?7, NULL, 'active')",
+                    params![
+                        project_pk,
+                        node.uid.as_bytes().as_slice(),
+                        fact.kind,
+                        fact.language,
+                        semantic.hash().as_bytes().as_slice(),
+                        semantic.canonical(),
+                        graph_version
+                    ],
+                )?;
+            }
             node.node_pk = Some(transaction.last_insert_rowid());
         }
         let node_pk = node.node_pk.expect("inserted");
         public_to_pk.insert(public_id.clone(), node_pk);
         public_to_uid.insert(public_id.clone(), node.uid);
-        transaction.execute(
-            "INSERT INTO node_external_ids_v2(project_pk, node_pk, scheme, external_id, first_graph_version, last_graph_version)
-             SELECT ?1, ?2, ?3, ?4, ?5, NULL
-             WHERE NOT EXISTS (
-               SELECT 1 FROM node_external_ids_v2
-               WHERE project_pk = ?1 AND scheme = ?3 AND external_id = ?4 AND last_graph_version IS NULL
-             )",
-            params![project_pk, node_pk, LEGACY_PUBLIC_ID_SCHEME, public_id, graph_version],
-        )?;
+        if let Some(statement) = cold_external_insert.as_mut() {
+            statement.execute(params![
+                project_pk,
+                node_pk,
+                LEGACY_PUBLIC_ID_SCHEME,
+                public_id,
+                graph_version
+            ])?;
+        } else {
+            transaction.execute(
+                "INSERT INTO node_external_ids_v2(project_pk, node_pk, scheme, external_id, first_graph_version, last_graph_version)
+                 SELECT ?1, ?2, ?3, ?4, ?5, NULL
+                 WHERE NOT EXISTS (
+                   SELECT 1 FROM node_external_ids_v2
+                   WHERE project_pk = ?1 AND scheme = ?3 AND external_id = ?4 AND last_graph_version IS NULL
+                 )",
+                params![project_pk, node_pk, LEGACY_PUBLIC_ID_SCHEME, public_id, graph_version],
+            )?;
+        }
     }
 
     // Resolve current lexical owners only after every node has a local PK.
+    let mut update_owner =
+        transaction.prepare("UPDATE nodes_v2 SET lexical_owner_pk = ?1 WHERE node_pk = ?2")?;
     for node in &resolved {
         let node_pk = node.node_pk.expect("inserted");
         let owner_pk = node
@@ -598,11 +698,9 @@ pub(crate) fn sync_identity_v2(
             .as_ref()
             .and_then(|owner| public_to_pk.get(owner))
             .copied();
-        transaction.execute(
-            "UPDATE nodes_v2 SET lexical_owner_pk = ?1 WHERE node_pk = ?2",
-            params![owner_pk, node_pk],
-        )?;
+        update_owner.execute(params![owner_pk, node_pk])?;
     }
+    drop(update_owner);
 
     for node in &resolved {
         let node_pk = node.node_pk.expect("inserted");
@@ -612,65 +710,93 @@ pub(crate) fn sync_identity_v2(
             .owner_public_id
             .as_ref()
             .and_then(|owner| public_to_uid.get(owner));
-        let source_sha256 = fact.path.as_ref().and_then(|path| source_hashes.get(path));
+        let source_sha256 = fact.path.and_then(|path| source_hashes.get(path));
         let content_blake3 = (fact.kind == "file")
-            .then(|| fact.path.as_ref().and_then(|path| content_hashes.get(path)))
+            .then(|| fact.path.and_then(|path| content_hashes.get(path)))
             .flatten();
+        let metadata = fact.metadata();
         let revision = revision_hash(RevisionIdentityInput {
             semantic,
             lexical_owner_uid: owner_uid,
-            display_name: fact.label.as_deref(),
+            display_name: fact.label,
             source_sha256,
             content_blake3,
-            evidence: fact.evidence.as_ref(),
-            metadata: Some(&fact.metadata),
+            evidence: fact.evidence,
+            metadata: Some(&metadata),
         })
         .map_err(conversion_error)?;
-        let open_revision = transaction
-            .query_row(
-                "SELECT node_revision_pk, revision_hash FROM node_revisions_v2
-                 WHERE node_pk = ?1 AND last_graph_version IS NULL",
-                [node_pk],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
-            )
-            .optional()?;
-        if open_revision
-            .as_ref()
-            .is_some_and(|(_, hash)| hash.as_slice() == revision.as_bytes())
-        {
-            continue;
-        }
-        if let Some((revision_pk, _)) = open_revision {
+        let (start_line, start_column, end_line, end_column) = evidence_range(fact.evidence);
+        let metadata_json = serde_json::to_string(&metadata).map_err(conversion_error)?;
+        if let Some(statement) = cold_revision_insert.as_mut() {
+            statement.execute(params![
+                node_pk,
+                graph_version,
+                semantic.hash().as_bytes().as_slice(),
+                semantic.canonical(),
+                revision.as_bytes().as_slice(),
+                source_sha256.map(<[u8; 32]>::as_slice),
+                content_blake3.map(<[u8; 32]>::as_slice),
+                fact.path,
+                (fact.kind != "file").then_some(fact.label).flatten(),
+                fact.label,
+                fact.signature,
+                node.owner_public_id
+                    .as_ref()
+                    .and_then(|owner| public_to_pk.get(owner))
+                    .copied(),
+                start_line,
+                start_column,
+                end_line,
+                end_column,
+                metadata_json
+            ])?;
+        } else {
+            let open_revision = transaction
+                .query_row(
+                    "SELECT node_revision_pk, revision_hash FROM node_revisions_v2
+                     WHERE node_pk = ?1 AND last_graph_version IS NULL",
+                    [node_pk],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+                )
+                .optional()?;
+            if open_revision
+                .as_ref()
+                .is_some_and(|(_, hash)| hash.as_slice() == revision.as_bytes())
+            {
+                continue;
+            }
+            if let Some((revision_pk, _)) = open_revision {
+                transaction.execute(
+                    "UPDATE node_revisions_v2 SET last_graph_version = ?1 WHERE node_revision_pk = ?2",
+                    params![close_version(graph_version), revision_pk],
+                )?;
+            }
             transaction.execute(
-                "UPDATE node_revisions_v2 SET last_graph_version = ?1 WHERE node_revision_pk = ?2",
-                params![close_version(graph_version), revision_pk],
+                "INSERT INTO node_revisions_v2(node_pk, first_graph_version, last_graph_version,
+                   semantic_hash, canonical_identity, revision_hash, source_sha256, content_blake3,
+                   path, qualified_name, display_name, signature, lexical_owner_pk,
+                   start_line, start_column, end_line, end_column, metadata_json)
+                 VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                params![node_pk, graph_version, semantic.hash().as_bytes().as_slice(), semantic.canonical(), revision.as_bytes().as_slice(),
+                    source_sha256.map(<[u8; 32]>::as_slice), content_blake3.map(<[u8; 32]>::as_slice), fact.path,
+                    (fact.kind != "file").then_some(fact.label).flatten(), fact.label, fact.signature,
+                    node.owner_public_id.as_ref().and_then(|owner| public_to_pk.get(owner)).copied(),
+                    start_line, start_column, end_line, end_column, metadata_json],
             )?;
         }
-        let (start_line, start_column, end_line, end_column) =
-            evidence_range(fact.evidence.as_ref());
-        let metadata_json = serde_json::to_string(&fact.metadata).map_err(conversion_error)?;
-        transaction.execute(
-            "INSERT INTO node_revisions_v2(node_pk, first_graph_version, last_graph_version,
-               semantic_hash, canonical_identity, revision_hash, source_sha256, content_blake3,
-               path, qualified_name, display_name, signature, lexical_owner_pk,
-               start_line, start_column, end_line, end_column, metadata_json)
-             VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
-            params![node_pk, graph_version, semantic.hash().as_bytes().as_slice(), semantic.canonical(), revision.as_bytes().as_slice(),
-                source_sha256.map(<[u8; 32]>::as_slice), content_blake3.map(<[u8; 32]>::as_slice), fact.path,
-                (fact.kind != "file").then_some(fact.label.as_deref()).flatten(), fact.label, fact.signature,
-                node.owner_public_id.as_ref().and_then(|owner| public_to_pk.get(owner)).copied(),
-                start_line, start_column, end_line, end_column, metadata_json],
-        )?;
     }
 
     let canonical_node_pks = sync_canonical_symbols(
         transaction,
-        project_pk,
-        &project_uid,
-        graph_version,
-        structural_batch,
-        &public_to_pk,
-        &public_to_uid,
+        CanonicalSymbolSync {
+            project_pk,
+            project_uid: &project_uid,
+            graph_version,
+            structural_batch,
+            public_to_pk: &public_to_pk,
+            public_to_uid: &public_to_uid,
+            changed_record_paths: None,
+        },
     )?;
     let canonical_external_pks = sync_canonical_external_import_roots(
         transaction,
@@ -681,7 +807,7 @@ pub(crate) fn sync_identity_v2(
     )?;
     let current_public_ids = resolved
         .iter()
-        .map(|node| node.fact.public_id.as_str())
+        .map(|node| node.fact.public_id)
         .collect::<HashSet<_>>();
     let mut current_node_pks = resolved
         .iter()
@@ -731,20 +857,299 @@ pub(crate) fn sync_identity_v2(
         payload,
         structural_batch,
         &public_identity_index,
-    )
+    )?;
+    Ok(())
+}
+
+/// Advance only source-backed revisions when the validated structural topology
+/// and public collections are unchanged. Durable node identities, placements,
+/// edges, and tombstones are already exact for the prior complete graph, so a
+/// source-only refresh must not rewrite every identity row in the project.
+pub(crate) fn sync_identity_v2_changed_records(
+    transaction: &Transaction<'_>,
+    project_pk: i64,
+    public_project_id: &str,
+    graph_version: i64,
+    payload: &Value,
+    structural_batch: Option<&Value>,
+    changed_record_paths: &BTreeSet<String>,
+) -> rusqlite::Result<()> {
+    if changed_record_paths.is_empty() {
+        return Ok(());
+    }
+    let project_uid = ensure_project(transaction, project_pk, public_project_id)?;
+    let facts = public_nodes(payload)?;
+    let owners = lexical_owners(payload, &facts);
+    let source_hashes = source_hashes(structural_batch, Some(changed_record_paths))?;
+    let content_hashes = content_hashes(transaction, project_pk)?;
+    let external_ids = existing_external_ids(transaction, project_pk)?;
+    let mut public_to_pk = HashMap::with_capacity(facts.len());
+    let mut public_to_uid = HashMap::with_capacity(facts.len());
+    for fact in &facts {
+        let (node_pk, uid) = external_ids.get(fact.public_id).copied().ok_or_else(|| {
+            invalid_query("source-only identity refresh is missing a current public node")
+        })?;
+        public_to_pk.insert(fact.public_id.to_string(), node_pk);
+        public_to_uid.insert(fact.public_id.to_string(), uid);
+    }
+    // Parser symbols share the public node ID but their durable semantic
+    // identity is canonicalized by `sync_canonical_symbols` below (class,
+    // method, overload owner, language). Comparing those rows against the
+    // coarser public `kind: symbol` projection is invalid. Update public file
+    // revisions here and let the canonical-symbol pass own symbol revisions.
+    for fact in facts.into_iter().filter(|fact| {
+        fact.kind == "file"
+            && fact
+                .path
+                .as_ref()
+                .is_some_and(|path| changed_record_paths.contains(*path))
+    }) {
+        let node_pk = public_to_pk[fact.public_id];
+        let owner_public_id = owners.get(fact.public_id);
+        let owner_uid = owner_public_id.and_then(|owner| public_to_uid.get(owner));
+        let discriminator = fact.node_type.filter(|value| {
+            !value.is_empty()
+                && value.bytes().all(|byte| {
+                    byte.is_ascii_lowercase()
+                        || byte.is_ascii_digit()
+                        || matches!(byte, b'-' | b'_' | b'.')
+                })
+        });
+        let semantic = semantic_identity(SemanticIdentityInput {
+            project_uid: &project_uid,
+            kind: fact.kind,
+            language: fact.language,
+            ecosystem: None,
+            path: fact.path.filter(|path| *path != "."),
+            qualified_name: (fact.kind != "file").then_some(fact.label).flatten(),
+            owner_uid,
+            signature: fact.signature,
+            discriminator,
+        })
+        .map_err(conversion_error)?;
+        let stored_identity = transaction.query_row(
+            "SELECT current_semantic_hash, current_canonical_identity, status
+             FROM nodes_v2 WHERE project_pk = ?1 AND node_pk = ?2",
+            params![project_pk, node_pk],
+            |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, Vec<u8>>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )?;
+        if stored_identity.0.as_slice() != semantic.hash().as_bytes()
+            || stored_identity.1 != semantic.canonical()
+            || stored_identity.2 != "active"
+        {
+            return Err(invalid_query(format!(
+                "source-only identity refresh changed durable file identity {} (hashMatch={}, canonicalMatch={}, status={})",
+                fact.public_id,
+                stored_identity.0.as_slice() == semantic.hash().as_bytes(),
+                stored_identity.1 == semantic.canonical(),
+                stored_identity.2,
+            )));
+        }
+        let source_sha256 = fact.path.and_then(|path| source_hashes.get(path));
+        let content_blake3 = (fact.kind == "file")
+            .then(|| fact.path.and_then(|path| content_hashes.get(path)))
+            .flatten();
+        let metadata = fact.metadata();
+        let revision = revision_hash(RevisionIdentityInput {
+            semantic: &semantic,
+            lexical_owner_uid: owner_uid,
+            display_name: fact.label,
+            source_sha256,
+            content_blake3,
+            evidence: fact.evidence,
+            metadata: Some(&metadata),
+        })
+        .map_err(conversion_error)?;
+        let open_revision = transaction
+            .query_row(
+                "SELECT node_revision_pk, revision_hash FROM node_revisions_v2
+                 WHERE node_pk = ?1 AND last_graph_version IS NULL",
+                [node_pk],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+            )
+            .optional()?;
+        if open_revision
+            .as_ref()
+            .is_some_and(|(_, hash)| hash.as_slice() == revision.as_bytes())
+        {
+            continue;
+        }
+        if let Some((revision_pk, _)) = open_revision {
+            transaction.execute(
+                "UPDATE node_revisions_v2 SET last_graph_version = ?1 WHERE node_revision_pk = ?2",
+                params![close_version(graph_version), revision_pk],
+            )?;
+        }
+        let (start_line, start_column, end_line, end_column) = evidence_range(fact.evidence);
+        let metadata_json = serde_json::to_string(&metadata).map_err(conversion_error)?;
+        transaction.execute(
+            "INSERT INTO node_revisions_v2(node_pk, first_graph_version, last_graph_version,
+               semantic_hash, canonical_identity, revision_hash, source_sha256, content_blake3,
+               path, qualified_name, display_name, signature, lexical_owner_pk,
+               start_line, start_column, end_line, end_column, metadata_json)
+             VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            params![node_pk, graph_version, semantic.hash().as_bytes().as_slice(), semantic.canonical(), revision.as_bytes().as_slice(),
+                source_sha256.map(<[u8; 32]>::as_slice), content_blake3.map(<[u8; 32]>::as_slice), fact.path,
+                (fact.kind != "file").then_some(fact.label).flatten(), fact.label, fact.signature,
+                owner_public_id.and_then(|owner| public_to_pk.get(owner)).copied(),
+                start_line, start_column, end_line, end_column, metadata_json],
+        )?;
+    }
+    sync_canonical_symbols(
+        transaction,
+        CanonicalSymbolSync {
+            project_pk,
+            project_uid: &project_uid,
+            graph_version,
+            structural_batch,
+            public_to_pk: &public_to_pk,
+            public_to_uid: &public_to_uid,
+            changed_record_paths: Some(changed_record_paths),
+        },
+    )?;
+    Ok(())
+}
+
+struct CanonicalSymbolSync<'a> {
+    project_pk: i64,
+    project_uid: &'a ProjectUid,
+    graph_version: i64,
+    structural_batch: Option<&'a Value>,
+    public_to_pk: &'a HashMap<String, i64>,
+    public_to_uid: &'a HashMap<String, NodeUid>,
+    changed_record_paths: Option<&'a BTreeSet<String>>,
 }
 
 fn sync_canonical_symbols(
     transaction: &Transaction<'_>,
-    project_pk: i64,
-    project_uid: &ProjectUid,
-    graph_version: i64,
-    structural_batch: Option<&Value>,
-    public_to_pk: &HashMap<String, i64>,
-    public_to_uid: &HashMap<String, NodeUid>,
+    sync: CanonicalSymbolSync<'_>,
 ) -> rusqlite::Result<HashSet<i64>> {
+    let CanonicalSymbolSync {
+        project_pk,
+        project_uid,
+        graph_version,
+        structural_batch,
+        public_to_pk,
+        public_to_uid,
+        changed_record_paths,
+    } = sync;
     let mut current_node_pks = HashSet::new();
     let mut current_external_ids = HashSet::new();
+    let identity_store_empty = transaction.query_row(
+        "SELECT NOT EXISTS (SELECT 1 FROM nodes_v2 WHERE project_pk = ?1)",
+        [project_pk],
+        |row| row.get::<_, bool>(0),
+    )?;
+    // Canonical symbols perform the same identity lookups and revision writes
+    // for every parser symbol. Compile those statements once per promotion so
+    // symbol-heavy repositories spend time on identity work, not SQL parsing.
+    let mut symbol_collision = if identity_store_empty {
+        None
+    } else {
+        Some(transaction.prepare(
+            "SELECT current_canonical_identity FROM nodes_v2
+             WHERE project_pk = ?1 AND current_semantic_hash = ?2
+               AND current_canonical_identity <> ?3 LIMIT 1",
+        )?)
+    };
+    let mut symbol_existing = if identity_store_empty {
+        None
+    } else {
+        Some(transaction.prepare(
+            "SELECT nodes.node_pk, nodes.current_canonical_identity
+             FROM node_external_ids_v2 AS external
+             JOIN nodes_v2 AS nodes ON nodes.node_pk = external.node_pk
+             WHERE external.project_pk = ?1 AND external.scheme = ?2
+               AND external.external_id = ?3 AND external.last_graph_version IS NULL",
+        )?)
+    };
+    let mut symbol_bind_external = transaction.prepare(
+        "INSERT INTO node_external_ids_v2(project_pk, node_pk, scheme, external_id,
+           first_graph_version, last_graph_version)
+         SELECT ?1, ?2, ?3, ?4, ?5, NULL
+         WHERE NOT EXISTS (
+           SELECT 1 FROM node_external_ids_v2
+           WHERE project_pk = ?1 AND scheme = ?3 AND external_id = ?4
+             AND last_graph_version IS NULL
+         )",
+    )?;
+    let mut symbol_cold_external = identity_store_empty
+        .then(|| {
+            transaction.prepare(
+                "INSERT INTO node_external_ids_v2(project_pk, node_pk, scheme, external_id,
+                   first_graph_version, last_graph_version)
+                 VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
+            )
+        })
+        .transpose()?;
+    let mut symbol_insert_node = transaction.prepare(
+        "INSERT INTO nodes_v2(project_pk, node_uid, kind, language, ecosystem,
+           lexical_owner_pk, current_semantic_hash, current_canonical_identity,
+           first_seen_graph_version, last_seen_graph_version, status)
+         VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, ?7, ?8, NULL, 'active')",
+    )?;
+    let mut symbol_insert_external = transaction.prepare(
+        "INSERT INTO node_external_ids_v2(project_pk, node_pk, scheme, external_id,
+           first_graph_version, last_graph_version)
+         VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
+    )?;
+    let mut symbol_update_node = transaction.prepare(
+        "UPDATE nodes_v2 SET kind = ?1, language = ?2, lexical_owner_pk = ?3,
+           current_semantic_hash = ?4, current_canonical_identity = ?5,
+           last_seen_graph_version = NULL, status = 'active' WHERE node_pk = ?6",
+    )?;
+    let mut symbol_open_revision = transaction.prepare(
+        "SELECT node_revision_pk, revision_hash, first_graph_version FROM node_revisions_v2
+         WHERE node_pk = ?1 AND last_graph_version IS NULL",
+    )?;
+    let mut symbol_update_revision = transaction.prepare(
+        "UPDATE node_revisions_v2 SET semantic_hash = ?1, canonical_identity = ?2,
+           revision_hash = ?3, source_sha256 = ?4, content_blake3 = NULL,
+           path = ?5, qualified_name = ?6, display_name = ?7, signature = ?8,
+           lexical_owner_pk = ?9, start_line = ?10, start_column = ?11,
+           end_line = ?12, end_column = ?13, metadata_json = ?14
+         WHERE node_revision_pk = ?15",
+    )?;
+    let mut symbol_cold_update_revision = identity_store_empty
+        .then(|| {
+            transaction.prepare(
+                "UPDATE node_revisions_v2 SET semantic_hash = ?1, canonical_identity = ?2,
+                   revision_hash = ?3, source_sha256 = ?4, content_blake3 = NULL,
+                   path = ?5, qualified_name = ?6, display_name = ?7, signature = ?8,
+                   lexical_owner_pk = ?9, start_line = ?10, start_column = ?11,
+                   end_line = ?12, end_column = ?13, metadata_json = ?14
+                 WHERE node_pk = ?15 AND first_graph_version = ?16
+                   AND last_graph_version IS NULL",
+            )
+        })
+        .transpose()?;
+    let mut symbol_close_revision = transaction.prepare(
+        "UPDATE node_revisions_v2 SET last_graph_version = ?1 WHERE node_revision_pk = ?2",
+    )?;
+    let mut symbol_insert_revision = transaction.prepare(
+        "INSERT INTO node_revisions_v2(node_pk, first_graph_version, last_graph_version,
+           semantic_hash, canonical_identity, revision_hash, source_sha256, content_blake3,
+           path, qualified_name, display_name, signature, lexical_owner_pk,
+           start_line, start_column, end_line, end_column, metadata_json)
+         VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, NULL, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+    )?;
+    let mut symbol_cold_revision = identity_store_empty
+        .then(|| {
+            transaction.prepare(
+                "INSERT INTO node_revisions_v2(node_pk, first_graph_version, last_graph_version,
+                   semantic_hash, canonical_identity, revision_hash, source_sha256, content_blake3,
+                   path, qualified_name, display_name, signature, lexical_owner_pk,
+                   start_line, start_column, end_line, end_column, metadata_json)
+                 VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, NULL, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            )
+        })
+        .transpose()?;
     for record in structural_batch
         .and_then(|batch| batch.get("records"))
         .and_then(Value::as_array)
@@ -765,6 +1170,9 @@ fn sync_canonical_symbols(
         ) else {
             continue;
         };
+        if changed_record_paths.is_some_and(|paths| !paths.contains(path)) {
+            continue;
+        }
         let source_sha256 = record
             .get("sourceHash")
             .and_then(Value::as_str)
@@ -832,33 +1240,38 @@ fn sync_canonical_symbols(
             .map_err(conversion_error)?;
             let external_id = semantic.hash().to_string();
             current_external_ids.insert(external_id.clone());
-            let collision = transaction
-                .query_row(
-                    "SELECT current_canonical_identity FROM nodes_v2
-                     WHERE project_pk = ?1 AND current_semantic_hash = ?2
-                       AND current_canonical_identity <> ?3 LIMIT 1",
-                    params![
-                        project_pk,
-                        semantic.hash().as_bytes().as_slice(),
-                        semantic.canonical()
-                    ],
-                    |row| row.get::<_, Vec<u8>>(0),
-                )
-                .optional()?;
+            let collision = symbol_collision
+                .as_mut()
+                .map(|statement| {
+                    statement
+                        .query_row(
+                            params![
+                                project_pk,
+                                semantic.hash().as_bytes().as_slice(),
+                                semantic.canonical()
+                            ],
+                            |row| row.get::<_, Vec<u8>>(0),
+                        )
+                        .optional()
+                })
+                .transpose()?
+                .flatten();
             if collision.is_some() {
                 return Err(invalid_query("fatal parser symbol semantic hash collision"));
             }
-            let existing = transaction
-                .query_row(
-                    "SELECT nodes.node_pk, nodes.current_canonical_identity
-                     FROM node_external_ids_v2 AS external
-                     JOIN nodes_v2 AS nodes ON nodes.node_pk = external.node_pk
-                     WHERE external.project_pk = ?1 AND external.scheme = ?2
-                       AND external.external_id = ?3 AND external.last_graph_version IS NULL",
-                    params![project_pk, PARSER_SYMBOL_ID_SCHEME, external_id],
-                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
-                )
-                .optional()?;
+            let existing = symbol_existing
+                .as_mut()
+                .map(|statement| {
+                    statement
+                        .query_row(
+                            params![project_pk, PARSER_SYMBOL_ID_SCHEME, external_id],
+                            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+                        )
+                        .optional()
+                })
+                .transpose()?
+                .flatten();
+            let mut node_is_new = false;
             let node_pk = if let Some(public_node_pk) = public_candidate_pk {
                 if existing
                     .as_ref()
@@ -868,23 +1281,26 @@ fn sync_canonical_symbols(
                         "parser symbol identity is already bound to another public entity",
                     ));
                 }
-                transaction.execute(
-                    "INSERT INTO node_external_ids_v2(project_pk, node_pk, scheme, external_id,
-                       first_graph_version, last_graph_version)
-                     SELECT ?1, ?2, ?3, ?4, ?5, NULL
-                     WHERE NOT EXISTS (
-                       SELECT 1 FROM node_external_ids_v2
-                       WHERE project_pk = ?1 AND scheme = ?3 AND external_id = ?4
-                         AND last_graph_version IS NULL
-                     )",
-                    params![
+                if identity_store_empty {
+                    symbol_cold_external
+                        .as_mut()
+                        .expect("cold symbol external statement")
+                        .execute(params![
+                            project_pk,
+                            public_node_pk,
+                            PARSER_SYMBOL_ID_SCHEME,
+                            external_id,
+                            graph_version
+                        ])?;
+                } else {
+                    symbol_bind_external.execute(params![
                         project_pk,
                         public_node_pk,
                         PARSER_SYMBOL_ID_SCHEME,
                         external_id,
                         graph_version
-                    ],
-                )?;
+                    ])?;
+                }
                 public_node_pk
             } else if let Some((node_pk, canonical)) = existing {
                 if canonical != semantic.canonical() {
@@ -892,51 +1308,48 @@ fn sync_canonical_symbols(
                 }
                 node_pk
             } else {
+                node_is_new = true;
                 let node_uid = NodeUid::new_v7();
-                transaction.execute(
-                    "INSERT INTO nodes_v2(project_pk, node_uid, kind, language, ecosystem,
-                       lexical_owner_pk, current_semantic_hash, current_canonical_identity,
-                       first_seen_graph_version, last_seen_graph_version, status)
-                     VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, ?7, ?8, NULL, 'active')",
-                    params![
-                        project_pk,
-                        node_uid.as_bytes().as_slice(),
-                        symbol_type,
-                        language,
-                        owner_pk,
-                        semantic.hash().as_bytes().as_slice(),
-                        semantic.canonical(),
-                        graph_version
-                    ],
-                )?;
+                symbol_insert_node.execute(params![
+                    project_pk,
+                    node_uid.as_bytes().as_slice(),
+                    symbol_type,
+                    language,
+                    owner_pk,
+                    semantic.hash().as_bytes().as_slice(),
+                    semantic.canonical(),
+                    graph_version
+                ])?;
                 let node_pk = transaction.last_insert_rowid();
-                transaction.execute(
-                    "INSERT INTO node_external_ids_v2(project_pk, node_pk, scheme, external_id,
-                       first_graph_version, last_graph_version)
-                     VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
-                    params![
+                if let Some(statement) = symbol_cold_external.as_mut() {
+                    statement.execute(params![
                         project_pk,
                         node_pk,
                         PARSER_SYMBOL_ID_SCHEME,
                         external_id,
                         graph_version
-                    ],
-                )?;
+                    ])?;
+                } else {
+                    symbol_insert_external.execute(params![
+                        project_pk,
+                        node_pk,
+                        PARSER_SYMBOL_ID_SCHEME,
+                        external_id,
+                        graph_version
+                    ])?;
+                }
                 node_pk
             };
-            transaction.execute(
-                "UPDATE nodes_v2 SET kind = ?1, language = ?2, lexical_owner_pk = ?3,
-                   current_semantic_hash = ?4, current_canonical_identity = ?5,
-                   last_seen_graph_version = NULL, status = 'active' WHERE node_pk = ?6",
-                params![
+            if !node_is_new {
+                symbol_update_node.execute(params![
                     symbol_type,
                     language,
                     owner_pk,
                     semantic.hash().as_bytes().as_slice(),
                     semantic.canonical(),
                     node_pk
-                ],
-            )?;
+                ])?;
+            }
             let evidence = symbol.get("evidence");
             let metadata = json!({
                 "parserIdentity": identity,
@@ -955,19 +1368,64 @@ fn sync_canonical_symbols(
             .map_err(conversion_error)?;
             let (start_line, start_column, end_line, end_column) = evidence_range(evidence);
             let metadata_json = serde_json::to_string(&metadata).map_err(conversion_error)?;
-            let open_revision = transaction
-                .query_row(
-                    "SELECT node_revision_pk, revision_hash, first_graph_version FROM node_revisions_v2
-                     WHERE node_pk = ?1 AND last_graph_version IS NULL",
-                    [node_pk],
-                    |row| {
-                        Ok((
-                            row.get::<_, i64>(0)?,
-                            row.get::<_, Vec<u8>>(1)?,
-                            row.get::<_, i64>(2)?,
-                        ))
-                    },
-                )
+            if node_is_new && identity_store_empty {
+                symbol_cold_revision
+                    .as_mut()
+                    .expect("cold symbol revision statement")
+                    .execute(params![
+                        node_pk,
+                        graph_version,
+                        semantic.hash().as_bytes().as_slice(),
+                        semantic.canonical(),
+                        revision.as_bytes().as_slice(),
+                        source_sha256.as_ref().map(|value| value.as_slice()),
+                        path,
+                        qualified_name,
+                        name,
+                        signature,
+                        owner_pk,
+                        start_line,
+                        start_column,
+                        end_line,
+                        end_column,
+                        metadata_json
+                    ])?;
+                current_node_pks.insert(node_pk);
+                continue;
+            }
+            if identity_store_empty {
+                symbol_cold_update_revision
+                    .as_mut()
+                    .expect("cold symbol revision update statement")
+                    .execute(params![
+                        semantic.hash().as_bytes().as_slice(),
+                        semantic.canonical(),
+                        revision.as_bytes().as_slice(),
+                        source_sha256.as_ref().map(|value| value.as_slice()),
+                        path,
+                        qualified_name,
+                        name,
+                        signature,
+                        owner_pk,
+                        start_line,
+                        start_column,
+                        end_line,
+                        end_column,
+                        metadata_json,
+                        node_pk,
+                        graph_version
+                    ])?;
+                current_node_pks.insert(node_pk);
+                continue;
+            }
+            let open_revision = symbol_open_revision
+                .query_row([node_pk], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                })
                 .optional()?;
             if !open_revision
                 .as_ref()
@@ -976,77 +1434,111 @@ fn sync_canonical_symbols(
                 if let Some((revision_pk, _, first_version)) = open_revision
                     && first_version == graph_version
                 {
-                    transaction.execute(
-                        "UPDATE node_revisions_v2 SET semantic_hash = ?1, canonical_identity = ?2,
-                           revision_hash = ?3, source_sha256 = ?4, content_blake3 = NULL,
-                           path = ?5, qualified_name = ?6, display_name = ?7, signature = ?8,
-                           lexical_owner_pk = ?9, start_line = ?10, start_column = ?11,
-                           end_line = ?12, end_column = ?13, metadata_json = ?14
-                         WHERE node_revision_pk = ?15",
-                        params![
-                            semantic.hash().as_bytes().as_slice(),
-                            semantic.canonical(),
-                            revision.as_bytes().as_slice(),
-                            source_sha256.as_ref().map(|value| value.as_slice()),
-                            path,
-                            qualified_name,
-                            name,
-                            signature,
-                            owner_pk,
-                            start_line,
-                            start_column,
-                            end_line,
-                            end_column,
-                            metadata_json,
-                            revision_pk
-                        ],
-                    )?;
+                    symbol_update_revision.execute(params![
+                        semantic.hash().as_bytes().as_slice(),
+                        semantic.canonical(),
+                        revision.as_bytes().as_slice(),
+                        source_sha256.as_ref().map(|value| value.as_slice()),
+                        path,
+                        qualified_name,
+                        name,
+                        signature,
+                        owner_pk,
+                        start_line,
+                        start_column,
+                        end_line,
+                        end_column,
+                        metadata_json,
+                        revision_pk
+                    ])?;
                 } else {
                     if let Some((revision_pk, _, _)) = open_revision {
-                        transaction.execute(
-                            "UPDATE node_revisions_v2 SET last_graph_version = ?1 WHERE node_revision_pk = ?2",
-                            params![close_version(graph_version), revision_pk],
-                        )?;
+                        symbol_close_revision
+                            .execute(params![close_version(graph_version), revision_pk])?;
                     }
-                    transaction.execute(
-                        "INSERT INTO node_revisions_v2(node_pk, first_graph_version, last_graph_version,
-                           semantic_hash, canonical_identity, revision_hash, source_sha256, content_blake3,
-                           path, qualified_name, display_name, signature, lexical_owner_pk,
-                           start_line, start_column, end_line, end_column, metadata_json)
-                         VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, NULL, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
-                        params![node_pk, graph_version, semantic.hash().as_bytes().as_slice(), semantic.canonical(),
-                            revision.as_bytes().as_slice(), source_sha256.as_ref().map(|value| value.as_slice()), path,
-                            qualified_name, name, signature, owner_pk, start_line, start_column, end_line,
-                            end_column, metadata_json],
-                    )?;
+                    symbol_insert_revision.execute(params![
+                        node_pk,
+                        graph_version,
+                        semantic.hash().as_bytes().as_slice(),
+                        semantic.canonical(),
+                        revision.as_bytes().as_slice(),
+                        source_sha256.as_ref().map(|value| value.as_slice()),
+                        path,
+                        qualified_name,
+                        name,
+                        signature,
+                        owner_pk,
+                        start_line,
+                        start_column,
+                        end_line,
+                        end_column,
+                        metadata_json
+                    ])?;
                 }
             }
             current_node_pks.insert(node_pk);
         }
     }
-    let mut statement = transaction.prepare(
-        "SELECT external_id FROM node_external_ids_v2
-         WHERE project_pk = ?1 AND scheme = ?2 AND last_graph_version IS NULL",
-    )?;
+    // A source-only refresh can close parser identities only on the changed
+    // paths. Restrict the lookup at SQL level instead of loading every open
+    // symbol in a large project and filtering it in Rust.
+    let (sql, mut parameters) = if let Some(paths) = changed_record_paths {
+        let placeholders = std::iter::repeat_n("?", paths.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT external.external_id, revisions.path FROM node_external_ids_v2 AS external
+             JOIN node_revisions_v2 AS revisions ON revisions.node_pk = external.node_pk
+             WHERE external.project_pk = ?1 AND external.scheme = ?2
+               AND external.last_graph_version IS NULL
+               AND revisions.last_graph_version IS NULL
+               AND revisions.path IN ({placeholders})"
+        );
+        let mut parameters = vec![
+            SqlValue::Integer(project_pk),
+            SqlValue::Text(PARSER_SYMBOL_ID_SCHEME.to_string()),
+        ];
+        parameters.extend(paths.iter().cloned().map(SqlValue::Text));
+        (sql, parameters)
+    } else {
+        (
+            "SELECT external.external_id, revisions.path FROM node_external_ids_v2 AS external
+             JOIN node_revisions_v2 AS revisions ON revisions.node_pk = external.node_pk
+             WHERE external.project_pk = ?1 AND external.scheme = ?2
+               AND external.last_graph_version IS NULL
+               AND revisions.last_graph_version IS NULL"
+                .to_string(),
+            vec![
+                SqlValue::Integer(project_pk),
+                SqlValue::Text(PARSER_SYMBOL_ID_SCHEME.to_string()),
+            ],
+        )
+    };
+    let mut statement = transaction.prepare(&sql)?;
     let open_external_ids = statement
-        .query_map(params![project_pk, PARSER_SYMBOL_ID_SCHEME], |row| {
-            row.get::<_, String>(0)
+        .query_map(params_from_iter(parameters.drain(..)), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     drop(statement);
-    for external_id in open_external_ids {
+    let mut symbol_close_external = transaction.prepare(
+        "UPDATE node_external_ids_v2 SET last_graph_version = ?1
+         WHERE project_pk = ?2 AND scheme = ?3 AND external_id = ?4
+           AND last_graph_version IS NULL",
+    )?;
+    for (external_id, path) in open_external_ids {
+        if changed_record_paths
+            .is_some_and(|paths| path.as_ref().is_none_or(|path| !paths.contains(path)))
+        {
+            continue;
+        }
         if !current_external_ids.contains(&external_id) {
-            transaction.execute(
-                "UPDATE node_external_ids_v2 SET last_graph_version = ?1
-                 WHERE project_pk = ?2 AND scheme = ?3 AND external_id = ?4
-                   AND last_graph_version IS NULL",
-                params![
-                    close_version(graph_version),
-                    project_pk,
-                    PARSER_SYMBOL_ID_SCHEME,
-                    external_id
-                ],
-            )?;
+            symbol_close_external.execute(params![
+                close_version(graph_version),
+                project_pk,
+                PARSER_SYMBOL_ID_SCHEME,
+                external_id
+            ])?;
         }
     }
     Ok(current_node_pks)
@@ -1128,6 +1620,11 @@ fn sync_canonical_external_import_roots(
 ) -> rusqlite::Result<HashSet<i64>> {
     let mut current_node_pks = HashSet::new();
     let mut current_external_ids = HashSet::new();
+    let identity_store_empty = transaction.query_row(
+        "SELECT NOT EXISTS (SELECT 1 FROM nodes_v2 WHERE project_pk = ?1)",
+        [project_pk],
+        |row| row.get::<_, bool>(0),
+    )?;
     let mut packages = BTreeMap::<(String, String), BTreeSet<String>>::new();
     for record in structural_batch
         .and_then(|batch| batch.get("records"))
@@ -1157,6 +1654,34 @@ fn sync_canonical_external_import_roots(
                 .insert(specifier.to_string());
         }
     }
+    let mut cold_node_insert = identity_store_empty
+        .then(|| {
+            transaction.prepare(
+                "INSERT INTO nodes_v2(project_pk, node_uid, kind, language, ecosystem,
+                       lexical_owner_pk, current_semantic_hash, current_canonical_identity,
+                       first_seen_graph_version, last_seen_graph_version, status)
+                     VALUES (?1, ?2, 'external', NULL, ?3, NULL, ?4, ?5, ?6, NULL, 'active')",
+            )
+        })
+        .transpose()?;
+    let mut cold_external_insert = identity_store_empty
+        .then(|| {
+            transaction.prepare(
+                "INSERT INTO node_external_ids_v2(project_pk, node_pk, scheme, external_id,
+                       first_graph_version, last_graph_version) VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
+            )
+        })
+        .transpose()?;
+    let mut cold_revision_insert = identity_store_empty
+        .then(|| {
+            transaction.prepare(
+                "INSERT INTO node_revisions_v2(node_pk, first_graph_version, last_graph_version,
+                       semantic_hash, canonical_identity, revision_hash, path, qualified_name,
+                       display_name, metadata_json)
+                     VALUES (?1, ?2, NULL, ?3, ?4, ?5, NULL, ?6, ?7, ?8)",
+            )
+        })
+        .transpose()?;
     for ((ecosystem, import_root), observed_specifiers) in packages {
         let external_id = format!("{ecosystem}:{import_root}");
         current_external_ids.insert(external_id.clone());
@@ -1172,17 +1697,21 @@ fn sync_canonical_external_import_roots(
             discriminator: Some("import-root"),
         })
         .map_err(conversion_error)?;
-        let existing = transaction
-            .query_row(
-                "SELECT nodes.node_pk, nodes.current_canonical_identity
-                     FROM node_external_ids_v2 AS external
-                     JOIN nodes_v2 AS nodes ON nodes.node_pk = external.node_pk
-                     WHERE external.project_pk = ?1 AND external.scheme = ?2
-                       AND external.external_id = ?3 AND external.last_graph_version IS NULL",
-                params![project_pk, EXTERNAL_IMPORT_ROOT_ID_SCHEME, external_id],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
-            )
-            .optional()?;
+        let existing = if identity_store_empty {
+            None
+        } else {
+            transaction
+                .query_row(
+                    "SELECT nodes.node_pk, nodes.current_canonical_identity
+                         FROM node_external_ids_v2 AS external
+                         JOIN nodes_v2 AS nodes ON nodes.node_pk = external.node_pk
+                         WHERE external.project_pk = ?1 AND external.scheme = ?2
+                           AND external.external_id = ?3 AND external.last_graph_version IS NULL",
+                    params![project_pk, EXTERNAL_IMPORT_ROOT_ID_SCHEME, external_id],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+                )
+                .optional()?
+        };
         let node_pk = if let Some((node_pk, canonical)) = existing {
             if canonical != semantic.canonical() {
                 return Err(invalid_query(
@@ -1192,45 +1721,68 @@ fn sync_canonical_external_import_roots(
             node_pk
         } else {
             let uid = NodeUid::new_v7();
-            transaction.execute(
-                "INSERT INTO nodes_v2(project_pk, node_uid, kind, language, ecosystem,
-                       lexical_owner_pk, current_semantic_hash, current_canonical_identity,
-                       first_seen_graph_version, last_seen_graph_version, status)
-                     VALUES (?1, ?2, 'external', NULL, ?3, NULL, ?4, ?5, ?6, NULL, 'active')",
-                params![
+            if let Some(statement) = cold_node_insert.as_mut() {
+                statement.execute(params![
                     project_pk,
                     uid.as_bytes().as_slice(),
                     ecosystem,
                     semantic.hash().as_bytes().as_slice(),
                     semantic.canonical(),
                     graph_version
-                ],
-            )?;
+                ])?;
+            } else {
+                transaction.execute(
+                    "INSERT INTO nodes_v2(project_pk, node_uid, kind, language, ecosystem,
+                           lexical_owner_pk, current_semantic_hash, current_canonical_identity,
+                           first_seen_graph_version, last_seen_graph_version, status)
+                         VALUES (?1, ?2, 'external', NULL, ?3, NULL, ?4, ?5, ?6, NULL, 'active')",
+                    params![
+                        project_pk,
+                        uid.as_bytes().as_slice(),
+                        ecosystem,
+                        semantic.hash().as_bytes().as_slice(),
+                        semantic.canonical(),
+                        graph_version
+                    ],
+                )?;
+            }
             let node_pk = transaction.last_insert_rowid();
-            transaction.execute(
-                "INSERT INTO node_external_ids_v2(project_pk, node_pk, scheme, external_id,
-                       first_graph_version, last_graph_version) VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
-                params![
+            if let Some(statement) = cold_external_insert.as_mut() {
+                statement.execute(params![
                     project_pk,
                     node_pk,
                     EXTERNAL_IMPORT_ROOT_ID_SCHEME,
                     external_id,
                     graph_version
-                ],
-            )?;
+                ])?;
+            } else {
+                transaction.execute(
+                    "INSERT INTO node_external_ids_v2(project_pk, node_pk, scheme, external_id,
+                           first_graph_version, last_graph_version) VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
+                    params![
+                        project_pk,
+                        node_pk,
+                        EXTERNAL_IMPORT_ROOT_ID_SCHEME,
+                        external_id,
+                        graph_version
+                    ],
+                )?;
+            }
             node_pk
         };
-        transaction.execute(
-            "UPDATE nodes_v2 SET ecosystem = ?1, current_semantic_hash = ?2,
-                   current_canonical_identity = ?3, last_seen_graph_version = NULL,
-                   status = 'active' WHERE node_pk = ?4",
-            params![
-                ecosystem,
-                semantic.hash().as_bytes().as_slice(),
-                semantic.canonical(),
-                node_pk
-            ],
-        )?;
+        if !identity_store_empty {
+            transaction.execute(
+                "UPDATE nodes_v2 SET ecosystem = ?1, current_semantic_hash = ?2,
+                       current_canonical_identity = ?3, last_seen_graph_version = NULL,
+                       status = 'active' WHERE node_pk = ?4",
+                params![
+                    ecosystem,
+                    semantic.hash().as_bytes().as_slice(),
+                    semantic.canonical(),
+                    node_pk
+                ],
+            )?;
+        }
         let metadata = json!({
             "ecosystem": &ecosystem,
             "canonicalImportRoot": &import_root,
@@ -1246,6 +1798,20 @@ fn sync_canonical_external_import_roots(
             metadata: Some(&metadata),
         })
         .map_err(conversion_error)?;
+        if let Some(statement) = cold_revision_insert.as_mut() {
+            statement.execute(params![
+                node_pk,
+                graph_version,
+                semantic.hash().as_bytes().as_slice(),
+                semantic.canonical(),
+                revision.as_bytes().as_slice(),
+                import_root,
+                import_root,
+                serde_json::to_string(&metadata).map_err(conversion_error)?
+            ])?;
+            current_node_pks.insert(node_pk);
+            continue;
+        }
         let current_revision = transaction
             .query_row(
                 "SELECT node_revision_pk, revision_hash FROM node_revisions_v2
@@ -1325,9 +1891,70 @@ fn sync_edges_and_placements(
     structural_batch: Option<&Value>,
     public_index: &PublicIdentityIndex<'_>,
 ) -> rusqlite::Result<()> {
+    let cold_start = transaction.query_row(
+        "SELECT NOT EXISTS (SELECT 1 FROM nodes_v2 WHERE project_pk = ?1)",
+        [project_pk],
+        |row| row.get::<_, bool>(0),
+    )?;
     let mut current_edge_uids = HashSet::<Vec<u8>>::new();
     let mut current_placement_hashes = HashSet::<Vec<u8>>::new();
     let mut current_evidence = HashSet::<(i64, Vec<u8>)>::new();
+    // Edges are the largest repeated write set in a cold graph. Keep the
+    // statements compiled once for the whole transaction instead of asking
+    // SQLite to parse the same INSERT/SELECT/presence SQL for every edge.
+    let mut insert_edge = transaction.prepare(
+        "INSERT INTO edges_v2(project_pk, edge_uid, source_node_pk, target_node_pk, relation,
+           qualifier_hash, canonical_qualifier, first_graph_version, last_graph_version)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, X'', ?7, NULL)
+         ON CONFLICT(project_pk, edge_uid) DO UPDATE SET
+           source_node_pk = excluded.source_node_pk,
+           target_node_pk = excluded.target_node_pk,
+           relation = excluded.relation,
+           last_graph_version = NULL
+         RETURNING edge_pk",
+    )?;
+    let mut insert_edge_cold = cold_start
+        .then(|| {
+            transaction.prepare(
+                "INSERT INTO edges_v2(project_pk, edge_uid, source_node_pk, target_node_pk, relation,
+                   qualifier_hash, canonical_qualifier, first_graph_version, last_graph_version)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, X'', ?7, NULL)",
+            )
+        })
+        .transpose()?;
+    let mut insert_edge_presence = transaction.prepare(
+        "INSERT INTO edge_presence_v2(edge_pk, first_graph_version, last_graph_version)
+         SELECT ?1, ?2, NULL
+         WHERE NOT EXISTS (
+           SELECT 1 FROM edge_presence_v2 WHERE edge_pk = ?1 AND last_graph_version IS NULL
+         )",
+    )?;
+    let mut insert_placement = transaction.prepare(
+        "INSERT INTO node_placements_v2(project_pk, parent_node_pk, child_node_pk, relation,
+           ordinal, placement_hash, first_graph_version, last_graph_version)
+         VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, NULL)
+         ON CONFLICT(project_pk, placement_hash) DO UPDATE SET last_graph_version = NULL
+         RETURNING placement_pk",
+    )?;
+    let mut insert_placement_cold = cold_start
+        .then(|| {
+            transaction.prepare(
+                "INSERT INTO node_placements_v2(project_pk, parent_node_pk, child_node_pk, relation,
+                   ordinal, placement_hash, first_graph_version, last_graph_version)
+                 VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, NULL)",
+            )
+        })
+        .transpose()?;
+    let mut insert_placement_presence = transaction.prepare(
+        "INSERT INTO placement_presence_v2(
+           placement_pk, first_graph_version, last_graph_version
+         )
+         SELECT ?1, ?2, NULL
+         WHERE NOT EXISTS (
+           SELECT 1 FROM placement_presence_v2
+           WHERE placement_pk = ?1 AND last_graph_version IS NULL
+         )",
+    )?;
     for edge in payload
         .get("edges")
         .and_then(Value::as_array)
@@ -1366,16 +1993,8 @@ fn sync_edges_and_placements(
         .map_err(conversion_error)?;
         current_edge_uids.insert(uid.as_bytes().to_vec());
         let qualifier_hash = blake3::hash(b"");
-        transaction.execute(
-            "INSERT INTO edges_v2(project_pk, edge_uid, source_node_pk, target_node_pk, relation,
-               qualifier_hash, canonical_qualifier, first_graph_version, last_graph_version)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, X'', ?7, NULL)
-             ON CONFLICT(project_pk, edge_uid) DO UPDATE SET
-               source_node_pk = excluded.source_node_pk,
-               target_node_pk = excluded.target_node_pk,
-               relation = excluded.relation,
-               last_graph_version = NULL",
-            params![
+        let edge_pk = if let Some(statement) = insert_edge_cold.as_mut() {
+            statement.execute(params![
                 project_pk,
                 uid.as_bytes().as_slice(),
                 source_pk,
@@ -1383,48 +2002,54 @@ fn sync_edges_and_placements(
                 relation,
                 qualifier_hash.as_bytes().as_slice(),
                 graph_version
-            ],
-        )?;
-        let edge_pk = transaction.query_row(
-            "SELECT edge_pk FROM edges_v2 WHERE project_pk = ?1 AND edge_uid = ?2",
-            params![project_pk, uid.as_bytes().as_slice()],
-            |row| row.get::<_, i64>(0),
-        )?;
-        transaction.execute(
-            "INSERT INTO edge_presence_v2(edge_pk, first_graph_version, last_graph_version)
-             SELECT ?1, ?2, NULL
-             WHERE NOT EXISTS (
-               SELECT 1 FROM edge_presence_v2 WHERE edge_pk = ?1 AND last_graph_version IS NULL
-             )",
-            params![edge_pk, graph_version],
-        )?;
+            ])?;
+            transaction.last_insert_rowid()
+        } else {
+            insert_edge.query_row(
+                params![
+                    project_pk,
+                    uid.as_bytes().as_slice(),
+                    source_pk,
+                    target_pk,
+                    relation,
+                    qualifier_hash.as_bytes().as_slice(),
+                    graph_version
+                ],
+                |row| row.get::<_, i64>(0),
+            )?
+        };
+        if !cold_start {
+            insert_edge_presence.execute(params![edge_pk, graph_version])?;
+        }
 
         if relation == "contains" {
             current_placement_hashes.insert(uid.as_bytes().to_vec());
-            transaction.execute(
-                "INSERT INTO node_placements_v2(project_pk, parent_node_pk, child_node_pk, relation,
-                   ordinal, placement_hash, first_graph_version, last_graph_version)
-                 VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, NULL)
-                 ON CONFLICT(project_pk, placement_hash) DO UPDATE SET last_graph_version = NULL",
-                params![project_pk, source_pk, target_pk, relation, uid.as_bytes().as_slice(), graph_version],
-            )?;
-            let placement_pk = transaction.query_row(
-                "SELECT placement_pk FROM node_placements_v2
-                 WHERE project_pk = ?1 AND placement_hash = ?2",
-                params![project_pk, uid.as_bytes().as_slice()],
-                |row| row.get::<_, i64>(0),
-            )?;
-            transaction.execute(
-                "INSERT INTO placement_presence_v2(
-                   placement_pk, first_graph_version, last_graph_version
-                 )
-                 SELECT ?1, ?2, NULL
-                 WHERE NOT EXISTS (
-                   SELECT 1 FROM placement_presence_v2
-                   WHERE placement_pk = ?1 AND last_graph_version IS NULL
-                 )",
-                params![placement_pk, graph_version],
-            )?;
+            let placement_pk = if let Some(statement) = insert_placement_cold.as_mut() {
+                statement.execute(params![
+                    project_pk,
+                    source_pk,
+                    target_pk,
+                    relation,
+                    uid.as_bytes().as_slice(),
+                    graph_version
+                ])?;
+                transaction.last_insert_rowid()
+            } else {
+                insert_placement.query_row(
+                    params![
+                        project_pk,
+                        source_pk,
+                        target_pk,
+                        relation,
+                        uid.as_bytes().as_slice(),
+                        graph_version
+                    ],
+                    |row| row.get::<_, i64>(0),
+                )?
+            };
+            if !cold_start {
+                insert_placement_presence.execute(params![placement_pk, graph_version])?;
+            }
         }
 
         let evidence = object.get("evidence").filter(|value| !value.is_null());
@@ -1443,6 +2068,24 @@ fn sync_edges_and_placements(
                 &mut current_evidence,
             )?;
         }
+    }
+
+    // A cold store has no existing open intervals. Materialize all presence
+    // rows with two set-based inserts after the edge/placement primary keys
+    // exist, instead of issuing one statement per relationship.
+    if cold_start {
+        transaction.execute(
+            "INSERT INTO edge_presence_v2(edge_pk, first_graph_version, last_graph_version)
+             SELECT edge_pk, ?2, NULL FROM edges_v2
+             WHERE project_pk = ?1 AND first_graph_version = ?2",
+            params![project_pk, graph_version],
+        )?;
+        transaction.execute(
+            "INSERT INTO placement_presence_v2(placement_pk, first_graph_version, last_graph_version)
+             SELECT placement_pk, ?2, NULL FROM node_placements_v2
+             WHERE project_pk = ?1 AND first_graph_version = ?2",
+            params![project_pk, graph_version],
+        )?;
     }
 
     // Public graph v1 deliberately collapses equal (source, target, relation)

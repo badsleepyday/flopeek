@@ -5,6 +5,7 @@ use crate::project_identity::{
 use crate::scope::{NativeScope, SourceScope, read_native_scope};
 use crate::store::open_native_store;
 use blake3::Hasher;
+use rayon::prelude::*;
 use rusqlite::{OptionalExtension, params};
 use std::collections::BTreeMap;
 use std::fs;
@@ -131,11 +132,9 @@ pub struct NativeInventoryStatus {
     pub removed_paths: Vec<String>,
     pub source_batch_records: Option<Vec<NativeSourceBatchRecord>>,
     pub source_batch_omitted_files: usize,
-    /// Ephemeral-only parser input retained from the same read used for the
-    /// inventory hash. It is never serialized, persisted, or constructed by
-    /// the durable inventory path.
-    /// Text already read during a cache-disabled inventory pass.  Strict-native
-    /// parsing borrows these buffers so cold scans do not read source twice.
+    /// Parser input retained transiently from the same read used for the
+    /// inventory hash. It is never serialized or persisted; the durable path
+    /// uses it only to avoid reading a cold source file twice.
     pub ephemeral_source_texts: BTreeMap<String, String>,
 }
 
@@ -353,6 +352,7 @@ fn scan_native_inventory_with_options(
     input_root: &Path,
     include_paths: bool,
     include_source_batch: bool,
+    include_native_source_texts: bool,
 ) -> Result<NativeInventoryStatus, String> {
     let root = displayable_root(fs::canonicalize(input_root).map_err(|error| {
         format!(
@@ -433,42 +433,58 @@ fn scan_native_inventory_with_options(
     let mut source_batch_records = Vec::new();
     let mut source_batch_bytes = 0usize;
     let mut source_batch_omitted_files = 0usize;
-    let mut records = Vec::with_capacity(candidates.len());
-    for candidate in candidates {
-        let hash = match cached.get(&candidate.path) {
-            Some(cached)
-                if cached.size_bytes == candidate.size_bytes
-                    && cached.modified_at_ns == candidate.modified_at_ns =>
-            {
-                reused_files += 1;
-                reused_paths.push(candidate.path.clone());
-                cached.content_hash.clone()
+    let mut ephemeral_source_texts = BTreeMap::new();
+    // Reading and hashing candidate files is independent work. On a cold
+    // checkout the old serial loop paid one Windows filesystem round-trip per
+    // file before parser workers could start; perform those reads in parallel
+    // and merge the deterministic source-batch/cache order below.
+    let candidate_reads = candidates
+        .into_par_iter()
+        .map(|candidate| {
+            let cached = cached.get(&candidate.path);
+            if let Some(cached) = cached.filter(|cached| {
+                cached.size_bytes == candidate.size_bytes
+                    && cached.modified_at_ns == candidate.modified_at_ns
+            }) {
+                return Ok((candidate, cached.content_hash.clone(), None));
             }
-            _ => {
-                hashed_files += 1;
-                changed_paths.push(candidate.path.clone());
-                let source_path = root.join(&candidate.path);
-                let bytes = fs::read(&source_path).map_err(|error| {
-                    format!("Unable to read {}: {error}", source_path.display())
-                })?;
-                if include_source_batch {
-                    let utf8 = String::from_utf8_lossy(&bytes).into_owned();
-                    let byte_len = utf8.len();
-                    if source_batch_bytes.saturating_add(byte_len) <= MAX_SOURCE_BATCH_BYTES {
-                        source_batch_bytes += byte_len;
-                        source_batch_records.push(NativeSourceBatchRecord {
-                            path: candidate.path.clone(),
-                            utf8,
-                            size_bytes: candidate.size_bytes,
-                            modified_at_ns: candidate.modified_at_ns,
-                        });
-                    } else {
-                        source_batch_omitted_files += 1;
-                    }
+            let source_path = root.join(&candidate.path);
+            let bytes = fs::read(&source_path)
+                .map_err(|error| format!("Unable to read {}: {error}", source_path.display()))?;
+            Ok((candidate, content_hash(&bytes), Some(bytes)))
+        })
+        .collect::<Vec<Result<(CandidateFile, String, Option<Vec<u8>>), String>>>();
+    let mut records = Vec::with_capacity(candidate_reads.len());
+    for read in candidate_reads {
+        let (candidate, hash, bytes) = read?;
+        if let Some(bytes) = bytes {
+            hashed_files += 1;
+            changed_paths.push(candidate.path.clone());
+            if include_source_batch {
+                let utf8 = String::from_utf8_lossy(&bytes).into_owned();
+                let byte_len = utf8.len();
+                if source_batch_bytes.saturating_add(byte_len) <= MAX_SOURCE_BATCH_BYTES {
+                    source_batch_bytes += byte_len;
+                    source_batch_records.push(NativeSourceBatchRecord {
+                        path: candidate.path.clone(),
+                        utf8,
+                        size_bytes: candidate.size_bytes,
+                        modified_at_ns: candidate.modified_at_ns,
+                    });
+                } else {
+                    source_batch_omitted_files += 1;
                 }
-                content_hash(&bytes)
             }
-        };
+            if include_native_source_texts && is_native_source_path(&candidate.path) {
+                ephemeral_source_texts.insert(
+                    candidate.path.clone(),
+                    String::from_utf8_lossy(&bytes).into_owned(),
+                );
+            }
+        } else {
+            reused_files += 1;
+            reused_paths.push(candidate.path.clone());
+        }
         records.push(InventoryRecord {
             candidate,
             content_hash: hash,
@@ -486,19 +502,38 @@ fn scan_native_inventory_with_options(
         )
         .map_err(|error| error.to_string())?;
     let scan_pk = transaction.last_insert_rowid();
+    let mut inventory_insert = transaction
+        .prepare(
+            "INSERT INTO inventory_files(project_pk, path, size_bytes, modified_at_ns, source_scope, content_hash, last_seen_scan_pk)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(project_pk, path) DO UPDATE SET
+               size_bytes = excluded.size_bytes,
+               modified_at_ns = excluded.modified_at_ns,
+               source_scope = excluded.source_scope,
+               content_hash = excluded.content_hash,
+               last_seen_scan_pk = excluded.last_seen_scan_pk",
+        )
+        .map_err(|error| error.to_string())?;
+    let mut node_insert = transaction
+        .prepare(
+            "INSERT INTO nodes(project_pk, node_id, semantic_key, content_hash, kind, path, symbol, signature)
+             VALUES (?1, ?2, ?3, ?4, 'file', ?5, NULL, NULL)
+             ON CONFLICT(project_pk, node_id) DO UPDATE SET
+               content_hash = excluded.content_hash,
+               path = excluded.path",
+        )
+        .map_err(|error| error.to_string())?;
     for record in &records {
-        transaction
-            .execute(
-                "INSERT INTO inventory_files(project_pk, path, size_bytes, modified_at_ns, source_scope, content_hash, last_seen_scan_pk)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                 ON CONFLICT(project_pk, path) DO UPDATE SET
-                   size_bytes = excluded.size_bytes,
-                   modified_at_ns = excluded.modified_at_ns,
-                   source_scope = excluded.source_scope,
-                   content_hash = excluded.content_hash,
-                   last_seen_scan_pk = excluded.last_seen_scan_pk",
-                params![project_pk, record.candidate.path, record.candidate.size_bytes, record.candidate.modified_at_ns, record.candidate.source_scope.as_str(), record.content_hash, scan_pk],
-            )
+        inventory_insert
+            .execute(params![
+                project_pk,
+                record.candidate.path,
+                record.candidate.size_bytes,
+                record.candidate.modified_at_ns,
+                record.candidate.source_scope.as_str(),
+                record.content_hash,
+                scan_pk
+            ])
             .map_err(|error| error.to_string())?;
         let identity = NodeIdentity {
             kind: "file",
@@ -506,17 +541,18 @@ fn scan_native_inventory_with_options(
             symbol: None,
             signature: None,
         };
-        transaction
-            .execute(
-                "INSERT INTO nodes(project_pk, node_id, semantic_key, content_hash, kind, path, symbol, signature)
-                 VALUES (?1, ?2, ?3, ?4, 'file', ?5, NULL, NULL)
-                 ON CONFLICT(project_pk, node_id) DO UPDATE SET
-                   content_hash = excluded.content_hash,
-                   path = excluded.path",
-                params![project_pk, stable_node_id(identity), semantic_key(identity), record.content_hash, record.candidate.path],
-            )
+        node_insert
+            .execute(params![
+                project_pk,
+                stable_node_id(identity),
+                semantic_key(identity),
+                record.content_hash,
+                record.candidate.path
+            ])
             .map_err(|error| error.to_string())?;
     }
+    drop(inventory_insert);
+    drop(node_insert);
     let removed_paths = {
         let mut statement = transaction
             .prepare(
@@ -573,18 +609,18 @@ fn scan_native_inventory_with_options(
         removed_paths,
         source_batch_records: include_source_batch.then_some(source_batch_records),
         source_batch_omitted_files,
-        ephemeral_source_texts: BTreeMap::new(),
+        ephemeral_source_texts,
     })
 }
 
 pub fn scan_native_inventory(input_root: &Path) -> Result<NativeInventoryStatus, String> {
-    scan_native_inventory_with_options(input_root, false, false)
+    scan_native_inventory_with_options(input_root, false, false, false)
 }
 
 pub fn scan_native_inventory_with_paths(
     input_root: &Path,
 ) -> Result<NativeInventoryStatus, String> {
-    scan_native_inventory_with_options(input_root, true, false)
+    scan_native_inventory_with_options(input_root, true, false, true)
 }
 
 // A --no-cache scan still needs the same deterministic discovery contract, but
@@ -783,7 +819,7 @@ pub fn scan_native_incremental_manifest(
     input_root: &Path,
 ) -> Result<NativeIncrementalManifest, String> {
     Ok(NativeIncrementalManifest {
-        inventory: scan_native_inventory_with_options(input_root, true, false)?,
+        inventory: scan_native_inventory_with_options(input_root, true, false, false)?,
     })
 }
 
@@ -791,7 +827,7 @@ pub fn scan_native_incremental_manifest_with_source_batch(
     input_root: &Path,
 ) -> Result<NativeIncrementalManifest, String> {
     Ok(NativeIncrementalManifest {
-        inventory: scan_native_inventory_with_options(input_root, true, true)?,
+        inventory: scan_native_inventory_with_options(input_root, true, true, false)?,
     })
 }
 

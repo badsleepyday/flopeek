@@ -1,5 +1,14 @@
 use super::*;
 
+pub(super) fn native_query_cache_key(method: &str, params: &Value) -> Option<String> {
+    (params.get("batch").is_none()
+        && (params.get("factsDigest").is_some() || params.get("sessionGraph").is_some()))
+    .then(|| {
+        serde_json::to_string(&json!({ "method": method, "params": params }))
+            .expect("validated native request parameters serialize")
+    })
+}
+
 pub(super) fn handle_request(
     session: &mut NativeProtocolSession,
     mut request: NativeRequest,
@@ -62,11 +71,27 @@ pub(super) fn handle_request(
             | "getRelatedTests"
             | "getChangeImpact"
     );
+    // Only reference-based immutable graph reads are memoized. Inline batches
+    // remain one-shot protocol inputs: hashing their multi-megabyte payload to
+    // manufacture a cache key would merely move the original bottleneck.
+    let query_cache_key = accepts_cached_fact_reference
+        .then(|| native_query_cache_key(&request.method, &request.params))
+        .flatten();
+    if let Some(mut cached) = query_cache_key
+        .as_deref()
+        .and_then(|key| session.query_result(key))
+    {
+        cached.request_id = Some(request.request_id);
+        return (cached, false);
+    }
+    let move_persistent_batch = accepts_cached_fact_reference
+        && request.params.get("batch").is_none()
+        && request.params.get("sessionGraph").is_none();
     if accepts_cached_fact_reference && request.params.get("batch").is_none() {
         let hydrate = if request.params.get("sessionGraph").is_some() {
             hydrate_session_query_batch(session, &mut request.params)
         } else {
-            hydrate_cached_query_batch(session, &mut request.params)
+            move_cached_query_batch(session, &mut request.params)
         };
         if let Err(error) = hydrate {
             return (
@@ -75,7 +100,7 @@ pub(super) fn handle_request(
             );
         }
     }
-    match request.method.as_str() {
+    let routed = match request.method.as_str() {
         "health" => {
             let mut capabilities = vec![
                 "health",
@@ -509,5 +534,12 @@ pub(super) fn handle_request(
             ),
             false,
         ),
+    };
+    if move_persistent_batch {
+        restore_moved_cached_query_batch(session, &mut request.params);
     }
+    if let Some(key) = query_cache_key {
+        session.retain_query_result(key, routed.0.clone());
+    }
+    routed
 }

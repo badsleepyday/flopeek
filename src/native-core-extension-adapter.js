@@ -1,16 +1,10 @@
 "use strict";
 
-const {
-  attachFlowExtensions,
-  attachNodeExtensions,
-  attachNativeFlowContextCard,
-  attachNativeProjectOverview,
-  getAgentBootstrap,
-  getChangedContexts,
-  getContextCard,
-  getFlowProjection,
-  resolveContextRef,
-} = require("./graph-service");
+let loadedGraphService = null;
+function graphService() {
+  loadedGraphService ||= require("./graph-service");
+  return loadedGraphService;
+}
 
 const NATIVE_CORE_EXTENSION_METHODS = Object.freeze([
   "getScanStatus",
@@ -38,16 +32,16 @@ function assertNativeCoreExtensionAdapter(adapter) {
 // SQLite, or answer the application-scope native query contract.
 function createNativeCoreExtensionAdapter() {
   return assertNativeCoreExtensionAdapter(Object.freeze({
-    getScanStatus: (graph, options = {}) => getAgentBootstrap(graph, options),
-    attachProjectOverviewExtensions: (graph, coreView) => attachNativeProjectOverview(graph, coreView),
-    attachNodeExtensions: (graph, detail) => attachNodeExtensions(graph, detail),
-    attachFlowExtensions: (graph, lens) => attachFlowExtensions(graph, lens),
-    attachFlowContextCard: (graph, card, lens) => attachNativeFlowContextCard(graph, card, lens),
-    getNonApplicationFlowProjection: (graph, flowId, scope, options = {}) => getFlowProjection(graph, flowId, scope, options),
-    getNonApplicationFlowContextCard: (graph, flowId, format, scope, options = {}) => getFlowContextCard(graph, flowId, format, scope, options),
-    getEphemeralChangedContexts: (graph, options = {}) => getChangedContexts(graph, options),
-    getFormattedContextCard: (graph, id, format) => getContextCard(graph, id, format),
-    resolveUnsupportedContextRef: (graph, contextRef) => resolveContextRef(graph, contextRef),
+    getScanStatus: (graph, options = {}) => graphService().getAgentBootstrap(graph, options),
+    attachProjectOverviewExtensions: (graph, coreView) => graphService().attachNativeProjectOverview(graph, coreView),
+    attachNodeExtensions: (graph, detail) => graphService().attachNodeExtensions(graph, detail),
+    attachFlowExtensions: (graph, lens) => graphService().attachFlowExtensions(graph, lens),
+    attachFlowContextCard: (graph, card, lens) => graphService().attachNativeFlowContextCard(graph, card, lens),
+    getNonApplicationFlowProjection: (graph, flowId, scope, options = {}) => graphService().getFlowProjection(graph, flowId, scope, options),
+    getNonApplicationFlowContextCard: (graph, flowId, format, scope, options = {}) => graphService().getFlowContextCard(graph, flowId, format, scope, options),
+    getEphemeralChangedContexts: (graph, options = {}) => graphService().getChangedContexts(graph, options),
+    getFormattedContextCard: (graph, id, format) => graphService().getContextCard(graph, id, format),
+    resolveUnsupportedContextRef: (graph, contextRef) => graphService().resolveContextRef(graph, contextRef),
   }));
 }
 

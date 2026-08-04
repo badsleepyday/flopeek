@@ -14,9 +14,11 @@ use crate::source_text::read_source_text;
 use crate::store::open_native_store;
 use icu_collator::{Collator, CollatorBorrowed};
 use icu_locale_core::locale;
+use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
-use rusqlite::params;
+use rusqlite::{TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -27,6 +29,22 @@ use tree_sitter::{Language, Node, Parser};
 pub const NATIVE_JS_FACTS_SCHEMA: &str = "flopeek-native-js-facts/v2";
 // This must advance when a cached fact's observable structural semantics change.
 pub const NATIVE_JS_ADAPTER_VERSION: &str = "native-tree-sitter-source/v19";
+
+fn with_native_parser_pool<Operation, Output>(operation: Operation) -> Result<Output, String>
+where
+    Operation: FnOnce() -> Output + Send,
+    Output: Send,
+{
+    // Parser work owns its syntax tree and source buffer on the heap and does
+    // not require Rayon's multi-megabyte default worker stacks. Use a bounded,
+    // operation-local pool so parser threads and their stacks are gone before
+    // the long-lived JSONL session reaches its steady state.
+    let pool = ThreadPoolBuilder::new()
+        .stack_size(512 * 1024)
+        .build()
+        .map_err(|error| format!("Unable to create native parser worker pool: {error}"))?;
+    Ok(pool.install(operation))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeJsFacts {
@@ -218,7 +236,16 @@ pub struct NativeJsFactsStatus {
     pub scope_source: String,
     pub flow_entries_tests: bool,
     pub flow_entries_fixtures: bool,
+    /// Digest of the last batch atomically promoted for this source session.
+    /// The complete batch remains authoritative in SQLite and is loaded only
+    /// while reconstructing a verified incremental patch.
+    pub promoted_facts_digest: Option<String>,
+    /// Compact equality checkpoint for durable source-cache reconciliation.
+    pub structural_record_digests: BTreeMap<String, String>,
     pub facts: BTreeMap<String, NativeJsFacts>,
+    /// Compact derived cache used between persistent refreshes. SQLite remains
+    /// authoritative for promoted graph state.
+    pub compacted_facts: BTreeMap<String, String>,
     /// Public SHA-256 hashes already read during this process. Unlike the
     /// inventory's durable BLAKE3 detector, these are session-local graph
     /// contract values and avoid reopening unchanged sources on refresh.
@@ -234,6 +261,13 @@ pub struct NativeJsFactsStatus {
     /// reverse index.
     pub importer_targets: BTreeMap<String, BTreeSet<String>>,
     pub structural_records: Vec<serde_json::Value>,
+    /// Persistent sessions compact this to changed records after a complete
+    /// batch is retained separately. Ephemeral and freshly reconciled statuses
+    /// keep the complete ordered record set.
+    pub structural_records_complete: bool,
+    /// Compact headers and file metadata retained when complete record results
+    /// move to the verified persistent fact cache.
+    pub structural_record_manifest: Vec<serde_json::Value>,
     pub entry_facts: serde_json::Value,
 }
 
@@ -335,21 +369,168 @@ fn update_native_resolution_indexes(
 /// refresh telemetry must not see cold-scan parse counts after `changedPaths`
 /// explicitly declared that nothing changed.
 pub fn reuse_native_js_facts_session(previous: &NativeJsFactsStatus) -> NativeJsFactsStatus {
-    let mut next = previous.clone();
+    reuse_native_js_facts_session_owned(previous.clone())
+}
+
+pub fn reuse_native_js_facts_session_owned(mut next: NativeJsFactsStatus) -> NativeJsFactsStatus {
     next.initial_scan = false;
     next.parsed_files = 0;
-    next.reused_files = next.facts.len();
-    next.failed_files = next
-        .facts
-        .values()
-        .filter(|fact| fact.status == "parse-failed")
-        .count();
+    next.reused_files = next.candidate_paths.len();
     next.removed_facts = 0;
     next.changed_paths.clear();
     next.reused_paths = next.candidate_paths.clone();
     next.removed_paths.clear();
     next.changed_record_paths.clear();
     next
+}
+
+pub fn hydrate_native_js_source_facts(status: &mut NativeJsFactsStatus) -> Result<(), String> {
+    if status.facts.len() == status.candidate_paths.len() {
+        return Ok(());
+    }
+    for (path, payload) in std::mem::take(&mut status.compacted_facts) {
+        let fact = serde_json::from_str(&payload)
+            .map_err(|error| format!("Invalid compacted native parser fact for {path}: {error}"))?;
+        status.facts.insert(path, fact);
+    }
+    let missing = status
+        .candidate_paths
+        .iter()
+        .filter(|path| !status.facts.contains_key(*path))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(format!(
+            "Persistent source cache is missing facts for: {}.",
+            missing.join(", ")
+        ));
+    }
+    Ok(())
+}
+
+/// Hydrate only the source facts that can participate in an ordinary
+/// changed-file refresh.  Persistent sessions keep the rest as compact JSON
+/// strings after promotion; deserializing every unchanged file on each edit
+/// turns the incremental path back into an O(repository) operation.
+///
+/// Membership/configuration events are deliberately conservative and hydrate
+/// the complete cache because they can invalidate every resolver record.
+pub fn hydrate_native_js_source_facts_for_changed_paths(
+    status: &mut NativeJsFactsStatus,
+    changed_paths: &[String],
+) -> Result<(), String> {
+    if status.facts.len() == status.candidate_paths.len() {
+        return Ok(());
+    }
+    let scope = read_native_scope(&status.project_root)?;
+    let mut needed = BTreeSet::new();
+    for raw_path in changed_paths {
+        let normalized = raw_path.replace('\\', "/");
+        if normalized.is_empty()
+            || normalized.starts_with('/')
+            || normalized
+                .split('/')
+                .any(|segment| segment == ".." || segment.is_empty())
+            || normalized == ".flopeek/config.json"
+            || normalized.ends_with('/')
+            || native_resolution_manifest_path(&normalized)
+            || native_js_ignored_path(&normalized)
+            || scope.classify(&normalized) == crate::scope::SourceScope::Excluded
+            || !native_fact_supported_path(&normalized)
+            || !status.candidate_paths.contains(&normalized)
+        {
+            return hydrate_native_js_source_facts(status);
+        }
+        needed.insert(normalized.clone());
+        if let Some(importers) = status.reverse_importers.get(&normalized) {
+            needed.extend(importers.iter().cloned());
+        }
+    }
+    for path in needed {
+        if status.facts.contains_key(&path) {
+            continue;
+        }
+        let payload = status
+            .compacted_facts
+            .remove(&path)
+            .ok_or_else(|| format!("Persistent source cache is missing facts for {path}."))?;
+        let fact = serde_json::from_str(&payload)
+            .map_err(|error| format!("Invalid compacted native parser fact for {path}: {error}"))?;
+        status.facts.insert(path, fact);
+    }
+    Ok(())
+}
+
+pub fn compact_native_js_source_facts(status: &mut NativeJsFactsStatus) -> Result<(), String> {
+    status.compacted_facts = status
+        .facts
+        .iter()
+        .map(|(path, fact)| {
+            serde_json::to_string(fact)
+                .map(|payload| (path.clone(), payload))
+                .map_err(|error| error.to_string())
+        })
+        .collect::<Result<_, _>>()?;
+    status.facts.clear();
+    Ok(())
+}
+
+/// Retain only the lightweight lineage needed to recognize this process's
+/// promoted source session. Parser facts, resolution indexes, and record
+/// manifests are durable derivatives of SQLite-backed inventory/fact caches;
+/// keeping them beside the promoted StructuralFactBatch would create a second
+/// in-memory authority for the same repository state.
+pub fn evict_native_js_source_cache(status: &mut NativeJsFactsStatus) {
+    // Keep a compact, process-local source session after promotion. The old
+    // implementation dropped every parser fact and resolver index, forcing
+    // the next one-file event through a full repository reparse even though
+    // SQLite already held the exact complete batch. Serialize facts one by
+    // one so the long-lived session retains only their compact JSON form; a
+    // later refresh hydrates them while computing the validated affected set.
+    if !status.facts.is_empty() {
+        if status.compacted_facts.is_empty() {
+            let facts = std::mem::take(&mut status.facts);
+            for (path, fact) in facts {
+                let payload = serde_json::to_string(&fact)
+                    .expect("native parser facts must remain JSON serializable");
+                status.compacted_facts.insert(path, payload);
+            }
+        } else {
+            // Incremental refreshes may hydrate reverse-importer facts in
+            // addition to the directly changed path. Re-serialize exactly the
+            // facts currently held in memory so targeted hydrations are not
+            // lost when the typed cache is evicted again.
+            for (path, fact) in &status.facts {
+                let payload = serde_json::to_string(fact)
+                    .expect("native parser facts must remain JSON serializable");
+                status.compacted_facts.insert(path.clone(), payload);
+            }
+            for path in &status.removed_paths {
+                status.compacted_facts.remove(path);
+            }
+            status.facts.clear();
+        }
+    }
+    if status.structural_records_complete {
+        status.structural_record_digests =
+            native_structural_record_digests(&status.structural_records);
+        let records = std::mem::take(&mut status.structural_records);
+        status.structural_record_manifest = records.iter().map(compact_structural_record).collect();
+    } else {
+        status.structural_records.clear();
+    }
+    status.structural_records.shrink_to_fit();
+    status.structural_records_complete = false;
+    status.structural_record_manifest.shrink_to_fit();
+    // Resolution facts are needed only while rebuilding the affected records
+    // for the next changed-path event. The reverse-importer index above is the
+    // bounded lookup needed to select those files; retaining every resolver
+    // payload beside compact parser facts duplicates the promoted batch and
+    // inflates the native process peak on large repositories. Incremental
+    // refresh repopulates only the affected resolver entries before record
+    // construction, while a membership/configuration event hydrates and
+    // resolves the complete set again.
+    status.resolution.clear();
 }
 
 // Refresh one already-initialized no-cache session without re-walking the
@@ -360,8 +541,21 @@ pub fn refresh_native_js_facts_session(
     previous: &NativeJsFactsStatus,
     changed_paths: &[String],
 ) -> Result<NativeJsFactsStatus, String> {
+    refresh_native_js_facts_session_owned(previous.clone(), changed_paths)
+}
+
+pub fn refresh_native_js_facts_session_owned(
+    previous: NativeJsFactsStatus,
+    changed_paths: &[String],
+) -> Result<NativeJsFactsStatus, String> {
     let scope = read_native_scope(&previous.project_root)?;
-    let mut next = previous.clone();
+    let excluded_count = previous
+        .source_scope_counts
+        .get("excluded")
+        .copied()
+        .unwrap_or(0);
+    let records_were_complete = previous.structural_records_complete;
+    let mut next = previous;
     next.initial_scan = false;
     // Package manifests are never admitted to this changed-path fast path:
     // their events require reconciliation above.  Therefore package-command
@@ -402,8 +596,8 @@ pub fn refresh_native_js_facts_session(
         if !native_fact_supported_path(&normalized) {
             return Err(format!("native-session-reconcile-required:{normalized}"));
         }
-        let absolute = previous.project_root.join(&normalized);
-        let was_candidate = previous.candidate_paths.contains(&normalized);
+        let absolute = next.project_root.join(&normalized);
+        let was_candidate = next.candidate_paths.contains(&normalized);
         let is_candidate = native_js_incremental_candidate(&scope, &normalized, &absolute)?;
         // Watchers can report ignored directories and a stale delete event for
         // a path that was never in the graph. Those events are safe no-ops;
@@ -416,9 +610,17 @@ pub fn refresh_native_js_facts_session(
     let mut parsed_files = 0;
     let mut removed_paths = Vec::new();
     let mut added_paths = BTreeSet::new();
+    let previous_failed_by_path = changed
+        .iter()
+        .filter_map(|path| {
+            next.facts
+                .get(path)
+                .map(|fact| (path.clone(), fact.status == "parse-failed"))
+        })
+        .collect::<BTreeMap<_, _>>();
     for path in &changed {
-        let absolute = previous.project_root.join(path);
-        entry_facts_affected |= previous
+        let absolute = next.project_root.join(path);
+        entry_facts_affected |= next
             .facts
             .get(path)
             .is_some_and(native_js_fact_affects_entry_projection);
@@ -487,6 +689,11 @@ pub fn refresh_native_js_facts_session(
     );
     let membership_changed = !added_paths.is_empty() || !removed_paths.is_empty();
     if membership_changed || !resolution_manifests.is_empty() {
+        // A membership or resolver-manifest change renumbers or invalidates
+        // the complete record set. The ordinary changed-file path can stay
+        // lazy, but this branch must hydrate every cached fact before it
+        // rebuilds all records and their global orders.
+        hydrate_native_js_source_facts(&mut next)?;
         // Candidate membership changes recordOrder for subsequent files. Keep
         // the public batch deterministic by rebuilding records from cached
         // facts/hashes, not by reparsing or rereading every source file.
@@ -524,31 +731,82 @@ pub fn refresh_native_js_facts_session(
         &refreshed_paths,
         membership_changed || !resolution_manifests.is_empty(),
     );
-    next.structural_records.retain(|record| {
-        match record
-            .get("relativePath")
-            .and_then(serde_json::Value::as_str)
-        {
-            Some(path) => {
-                !refreshed_paths.contains(path)
-                    && !removed_paths.iter().any(|removed| removed == path)
+    if records_were_complete {
+        next.structural_records.retain(|record| {
+            match record
+                .get("relativePath")
+                .and_then(serde_json::Value::as_str)
+            {
+                Some(path) => {
+                    !refreshed_paths.contains(path)
+                        && !removed_paths.iter().any(|removed| removed == path)
+                }
+                None => true,
             }
-            None => true,
-        }
-    });
+        });
+    } else {
+        next.structural_records.clear();
+    }
+    if !records_were_complete {
+        let refreshed_manifest = refreshed_records
+            .iter()
+            .map(compact_structural_record)
+            .collect::<Vec<_>>();
+        next.structural_record_manifest.retain(|record| {
+            record
+                .get("relativePath")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|path| {
+                    !refreshed_paths.contains(path)
+                        && !removed_paths.iter().any(|removed| removed == path)
+                })
+        });
+        next.structural_record_manifest.extend(refreshed_manifest);
+        normalize_structural_record_orders(&mut next.structural_record_manifest);
+    }
     next.structural_records.extend(refreshed_records);
-    normalize_structural_record_orders(&mut next.structural_records);
+    if records_were_complete {
+        // A complete refresh owns the entire collection and may safely
+        // normalize its order. In a compact persistent session this vector
+        // contains only affected records; their recordOrder is already the
+        // global order and must not be renumbered from zero.
+        normalize_structural_record_orders(&mut next.structural_records);
+    }
+    // A compact persistent session keeps only changed full records plus
+    // headers for the unchanged set. Update the durable equality checkpoint
+    // from those changed records so a later reconciliation can still identify
+    // exactly which paths moved without rebuilding every record first.
+    next.structural_record_digests
+        .extend(native_structural_record_digests(&next.structural_records));
+    for path in &removed_paths {
+        next.structural_record_digests.remove(path);
+    }
+    next.structural_records_complete = records_were_complete;
     if entry_facts_affected || !added_paths.is_empty() || !removed_paths.is_empty() {
+        if !next.structural_records_complete {
+            ensure_complete_native_js_structural_records(&mut next)?;
+        }
         next.entry_facts =
             build_native_js_entry_facts(&next.project_root, &next.facts, &next.structural_records);
     }
     next.parsed_files = parsed_files;
-    next.reused_files = next.facts.len().saturating_sub(parsed_files);
-    next.failed_files = next
-        .facts
-        .values()
-        .filter(|fact| fact.status == "parse-failed")
+    let supported_candidate_files = next
+        .candidate_paths
+        .iter()
+        .filter(|path| native_fact_supported_path(path))
         .count();
+    next.reused_files = supported_candidate_files.saturating_sub(parsed_files);
+    let mut failed_files = next.failed_files;
+    for path in &changed {
+        let before = previous_failed_by_path.get(path).copied().unwrap_or(false);
+        let after = next
+            .facts
+            .get(path)
+            .is_some_and(|fact| fact.status == "parse-failed");
+        failed_files = failed_files.saturating_sub(usize::from(before));
+        failed_files = failed_files.saturating_add(usize::from(after));
+    }
+    next.failed_files = failed_files;
     next.removed_facts = removed_paths.len();
     next.candidate_files = next.candidate_paths.len();
     next.changed_paths = changed
@@ -573,11 +831,6 @@ pub fn refresh_native_js_facts_session(
     // Excluded files are intentionally absent from candidate_paths. Preserve
     // their full-discovery count across ordinary source events; only a scope
     // reconciliation is allowed to replace it.
-    let excluded_count = previous
-        .source_scope_counts
-        .get("excluded")
-        .copied()
-        .unwrap_or(0);
     next.source_scope_counts = ["application", "test", "fixture", "generated", "excluded"]
         .into_iter()
         .map(|name| {
@@ -598,6 +851,91 @@ pub fn refresh_native_js_facts_session(
     next.flow_entries_tests = scope.flow_entries_tests;
     next.flow_entries_fixtures = scope.flow_entries_fixtures;
     Ok(next)
+}
+
+pub fn ensure_complete_native_js_structural_records(
+    status: &mut NativeJsFactsStatus,
+) -> Result<(), String> {
+    if status.structural_records_complete {
+        return Ok(());
+    }
+    hydrate_native_js_source_facts(status)?;
+    let scope = read_native_scope(&status.project_root)?;
+    let known_records = status
+        .candidate_paths
+        .iter()
+        .map(|path| (path.clone(), scope.classify(path).as_str().to_string()))
+        .collect::<Vec<_>>();
+    let source_scopes = known_records.iter().cloned().collect::<BTreeMap<_, _>>();
+    let record_orders = known_records
+        .iter()
+        .enumerate()
+        .map(|(order, (path, _))| (path.clone(), order))
+        .collect::<BTreeMap<_, _>>();
+    status.structural_records = build_native_js_structural_records_with_source_hashes(
+        &status.project_root,
+        &status.facts,
+        &status.resolution,
+        &source_scopes,
+        &record_orders,
+        Some(&status.source_hashes),
+    )?;
+    normalize_structural_record_orders(&mut status.structural_records);
+    status.structural_records_complete = true;
+    status.structural_record_manifest.clear();
+    Ok(())
+}
+
+pub fn compact_native_js_structural_records(status: &mut NativeJsFactsStatus) {
+    if !status.structural_records_complete {
+        return;
+    }
+    status.structural_record_manifest = status
+        .structural_records
+        .iter()
+        .map(compact_structural_record)
+        .collect();
+    status.structural_records.clear();
+    status.structural_records.shrink_to_fit();
+    status.structural_records_complete = false;
+}
+
+pub fn take_complete_native_js_structural_records(
+    status: &mut NativeJsFactsStatus,
+) -> Result<Vec<serde_json::Value>, String> {
+    if !status.structural_records_complete {
+        return Err("Complete native structural records are unavailable.".to_string());
+    }
+    status.structural_record_manifest = status
+        .structural_records
+        .iter()
+        .map(compact_structural_record)
+        .collect();
+    status.structural_record_digests = native_structural_record_digests(&status.structural_records);
+    status.structural_records_complete = false;
+    Ok(std::mem::take(&mut status.structural_records))
+}
+
+pub fn native_structural_record_digests(records: &[serde_json::Value]) -> BTreeMap<String, String> {
+    records
+        .iter()
+        .filter_map(|record| {
+            let path = record.get("relativePath")?.as_str()?.to_string();
+            let bytes = serde_json::to_vec(record).ok()?;
+            Some((path, format!("sha256:{:x}", Sha256::digest(bytes))))
+        })
+        .collect()
+}
+
+fn compact_structural_record(record: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "relativePath": record["relativePath"],
+        "sourceHash": record["sourceHash"],
+        "sourceScope": record["sourceScope"],
+        "recordOrder": record["recordOrder"],
+        "language": record["language"],
+        "fileMetadata": record["fileMetadata"],
+    })
 }
 
 fn native_js_fact_affects_entry_projection(fact: &NativeJsFacts) -> bool {
@@ -1437,15 +1775,77 @@ fn canonical_class_methods(
         .collect()
 }
 
+struct StructuralInput<'a> {
+    path: &'a str,
+    source: &'a str,
+}
+
+struct StructuralOutputs<'a> {
+    legacy_imports: &'a mut BTreeSet<String>,
+    legacy_symbols: &'a mut BTreeSet<(String, String)>,
+    legacy_calls: &'a mut BTreeSet<String>,
+    facts: &'a mut NativeJsStructuralFacts,
+}
+
 fn collect_structural(
     node: Node<'_>,
-    path: &str,
-    source: &str,
+    input: &StructuralInput<'_>,
     bindings: &BTreeMap<String, NativeJsImportedReference>,
     cron_receivers: &BTreeSet<String>,
     fastify_receivers: &BTreeSet<String>,
-    facts: &mut NativeJsStructuralFacts,
+    outputs: &mut StructuralOutputs<'_>,
 ) {
+    let path = input.path;
+    let source = input.source;
+    let legacy_imports = &mut *outputs.legacy_imports;
+    let legacy_symbols = &mut *outputs.legacy_symbols;
+    let legacy_calls = &mut *outputs.legacy_calls;
+    let facts = &mut *outputs.facts;
+    // The compatibility-only parser fields are collected during this same
+    // traversal. Keeping a second complete AST walk for legacy imports,
+    // symbols, and calls made every cold native scan pay the tree cost twice.
+    match node.kind() {
+        "import_statement" => {
+            if let Some(specifier) = import_specifier(node, source) {
+                legacy_imports.insert(specifier);
+            }
+        }
+        "function_declaration" | "generator_function_declaration" | "function_signature" => {
+            if let Some(name) = identifier_for(node, source) {
+                legacy_symbols.insert(("function".to_string(), name));
+            }
+        }
+        "class_declaration" => {
+            if let Some(name) = identifier_for(node, source) {
+                legacy_symbols.insert(("class".to_string(), name));
+            }
+        }
+        "interface_declaration" | "type_alias_declaration" | "enum_declaration" => {
+            if let Some(name) = identifier_for(node, source) {
+                legacy_symbols.insert(("type".to_string(), name));
+            }
+        }
+        "variable_declarator" => {
+            if let Some(specifier) = commonjs_specifier(node, source) {
+                legacy_imports.insert(specifier);
+            }
+            let value = node.child_by_field_name("value");
+            if value
+                .is_some_and(|item| matches!(item.kind(), "arrow_function" | "function_expression"))
+                && let Some(name) = node
+                    .child_by_field_name("name")
+                    .and_then(|item| source_text(item, source))
+            {
+                legacy_symbols.insert(("function".to_string(), name));
+            }
+        }
+        "call_expression" => {
+            if let Some(name) = direct_call_name(node, source) {
+                legacy_calls.insert(name);
+            }
+        }
+        _ => {}
+    }
     if matches!(
         node.kind(),
         "function_declaration"
@@ -1679,12 +2079,11 @@ fn collect_structural(
     for child in named_children(node) {
         collect_structural(
             child,
-            path,
-            source,
+            input,
             bindings,
             cron_receivers,
             fastify_receivers,
-            facts,
+            outputs,
         );
     }
 }
@@ -1710,16 +2109,30 @@ fn typescript_tolerates_tree_sitter_error(node: Node<'_>, source: &str) -> bool 
 }
 
 fn diagnostic_count(node: Node<'_>, source: &str) -> usize {
-    usize::from(
-        (node.is_error() || node.is_missing())
-            && !typescript_tolerates_tree_sitter_error(node, source),
-    ) + named_children(node)
-        .into_iter()
-        .map(|child| diagnostic_count(child, source))
-        .sum::<usize>()
+    if !node.has_error() {
+        return 0;
+    }
+    let mut count = 0;
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        count += usize::from(
+            (current.is_error() || current.is_missing())
+                && !typescript_tolerates_tree_sitter_error(current, source),
+        );
+        let mut cursor = current.walk();
+        stack.extend(current.named_children(&mut cursor));
+    }
+    count
 }
 
-fn structural_facts(path: &str, source: &str, root: Node<'_>) -> NativeJsStructuralFacts {
+fn structural_facts(
+    path: &str,
+    source: &str,
+    root: Node<'_>,
+    legacy_imports: &mut BTreeSet<String>,
+    legacy_symbols: &mut BTreeSet<(String, String)>,
+    legacy_calls: &mut BTreeSet<String>,
+) -> NativeJsStructuralFacts {
     let diagnostics = diagnostic_count(root, source);
     let mut bindings = BTreeMap::new();
     let mut cron_receivers = BTreeSet::new();
@@ -1786,71 +2199,22 @@ fn structural_facts(path: &str, source: &str, root: Node<'_>) -> NativeJsStructu
             reason: None,
         },
     };
+    let input = StructuralInput { path, source };
+    let mut outputs = StructuralOutputs {
+        legacy_imports,
+        legacy_symbols,
+        legacy_calls,
+        facts: &mut facts,
+    };
     collect_structural(
         root,
-        path,
-        source,
+        &input,
         &bindings,
         &cron_receivers,
         &fastify_receivers,
-        &mut facts,
+        &mut outputs,
     );
     facts
-}
-
-fn collect_facts(
-    node: Node<'_>,
-    source: &str,
-    imports: &mut BTreeSet<String>,
-    symbols: &mut BTreeSet<(String, String)>,
-    calls: &mut BTreeSet<String>,
-) {
-    match node.kind() {
-        "import_statement" => {
-            if let Some(specifier) = import_specifier(node, source) {
-                imports.insert(specifier);
-            }
-        }
-        "function_declaration" | "generator_function_declaration" | "function_signature" => {
-            if let Some(name) = identifier_for(node, source) {
-                symbols.insert(("function".to_string(), name));
-            }
-        }
-        "class_declaration" => {
-            if let Some(name) = identifier_for(node, source) {
-                symbols.insert(("class".to_string(), name));
-            }
-        }
-        "interface_declaration" | "type_alias_declaration" | "enum_declaration" => {
-            if let Some(name) = identifier_for(node, source) {
-                symbols.insert(("type".to_string(), name));
-            }
-        }
-        "variable_declarator" => {
-            if let Some(specifier) = commonjs_specifier(node, source) {
-                imports.insert(specifier);
-            }
-            let value = node.child_by_field_name("value");
-            if value
-                .is_some_and(|item| matches!(item.kind(), "arrow_function" | "function_expression"))
-                && let Some(name) = node
-                    .child_by_field_name("name")
-                    .and_then(|item| source_text(item, source))
-            {
-                symbols.insert(("function".to_string(), name));
-            }
-        }
-        "call_expression" => {
-            if let Some(name) = direct_call_name(node, source) {
-                calls.insert(name);
-            }
-        }
-        _ => {}
-    }
-    let mut cursor = node.walk();
-    for child in node.named_children(&mut cursor) {
-        collect_facts(child, source, imports, symbols, calls);
-    }
 }
 
 pub fn parse_native_js_facts(path: &str, source: &str) -> Option<NativeJsFacts> {
@@ -1887,14 +2251,14 @@ pub fn parse_native_js_facts(path: &str, source: &str) -> Option<NativeJsFacts> 
     let mut imports = BTreeSet::new();
     let mut symbols = BTreeSet::new();
     let mut direct_calls = BTreeSet::new();
-    collect_facts(
-        tree.root_node(),
+    let structural = structural_facts(
+        path,
         source,
+        tree.root_node(),
         &mut imports,
         &mut symbols,
         &mut direct_calls,
     );
-    let structural = structural_facts(path, source, tree.root_node());
     Some(NativeJsFacts {
         schema_version: NATIVE_JS_FACTS_SCHEMA.to_string(),
         parser: "tree-sitter".to_string(),
@@ -1915,7 +2279,12 @@ pub fn parse_native_js_facts(path: &str, source: &str) -> Option<NativeJsFacts> 
 }
 
 pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, String> {
-    let inventory = scan_native_inventory_with_paths(input_root)?;
+    let mut inventory = scan_native_inventory_with_paths(input_root)?;
+    // The durable inventory hashes changed files while reading them. Move the
+    // transient native source buffers into this scan so cold parsing does not
+    // issue a second read for every cache miss. They are dropped after the
+    // parser workers finish and never enter the persistent status/cache.
+    let prefetched_sources = std::mem::take(&mut inventory.ephemeral_source_texts);
     let project_root = inventory.project_root.clone();
     let project_identity = inventory.project_identity.clone();
     let scope = read_native_scope(&project_root)?;
@@ -2001,29 +2370,105 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
     // collection order deterministic by first collecting the indexed Rayon
     // results and merging them in candidate order below; SQLite remains a
     // single writer transaction after the parallel work completes.
-    let parsed_candidates = candidates
-        .par_iter()
-        .map(|(path, source_hash)| {
-            let cached = cached_facts
-                .get(&(path.clone(), source_hash.clone()))
-                .cloned();
-            if let Some(payload) = cached {
-                let fact = serde_json::from_str(&payload).map_err(|error| {
-                    format!("Invalid cached native JavaScript parser fact for {path}: {error}")
-                })?;
-                Ok((path.clone(), source_hash.clone(), fact, None))
-            } else {
-                let source = read_source_text(project_root.join(path)).map_err(|error| {
-                    format!("Unable to read JavaScript/TypeScript source {path}: {error}")
-                })?;
-                let fact = parse_native_js_facts(path, &source).ok_or_else(|| {
-                    format!("No native JavaScript/TypeScript parser is registered for {path}.")
-                })?;
-                let payload = serde_json::to_string(&fact).map_err(|error| error.to_string())?;
-                Ok((path.clone(), source_hash.clone(), fact, Some(payload)))
-            }
+    let parser_chunk_size = if candidates.iter().any(|(path, _)| {
+        path.rsplit('.').next().is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("java") || extension.eq_ignore_ascii_case("cs")
         })
-        .collect::<Vec<Result<(String, String, NativeJsFacts, Option<String>), String>>>();
+    }) {
+        16
+    } else {
+        1
+    };
+    let parsed_candidates = with_native_parser_pool(|| {
+        let cached_facts = &cached_facts;
+        let project_root = &project_root;
+        let prefetched_sources = &prefetched_sources;
+        if parser_chunk_size == 1 {
+            return candidates
+                .par_iter()
+                .map(|(path, source_hash)| {
+                    parse_native_candidate(
+                        project_root,
+                        cached_facts,
+                        prefetched_sources,
+                        path,
+                        source_hash,
+                    )
+                })
+                .collect::<Vec<Result<(String, String, NativeJsFacts, Option<()>), String>>>();
+        }
+        // Tree-sitter parsers retain their language tables between parses.
+        // Reuse one parser per language within each Rayon chunk instead of
+        // constructing and configuring one for every source file. Large Java
+        // and C# repositories otherwise pay that setup cost hundreds of times
+        // during a cold scan.
+        candidates
+                .par_chunks(parser_chunk_size)
+                .flat_map_iter(|chunk| {
+                    let mut java_parser = None;
+                    let mut csharp_parser = None;
+                    chunk.iter().map(move |(path, source_hash)| {
+                        let cached = cached_facts
+                            .get(&(path.clone(), source_hash.clone()))
+                            .cloned();
+                        if let Some(payload) = cached {
+                            let fact = serde_json::from_str(&payload).map_err(|error| {
+                            format!(
+                                "Invalid cached native JavaScript parser fact for {path}: {error}"
+                            )
+                        })?;
+                            Ok((path.clone(), source_hash.clone(), fact, None))
+                        } else {
+                            let source_owned;
+                            let source = if let Some(prefetched) = prefetched_sources.get(path) {
+                                prefetched.as_str()
+                            } else {
+                                source_owned = read_source_text(project_root.join(path)).map_err(|error| {
+                                    format!("Unable to read JavaScript/TypeScript source {path}: {error}")
+                                })?;
+                                &source_owned
+                            };
+                            let extension = path.rsplit('.').next().unwrap_or_default();
+                            let fact = if extension.eq_ignore_ascii_case("java") {
+                            let parser = java_parser.get_or_insert_with(|| {
+                                let mut parser = tree_sitter::Parser::new();
+                                parser
+                                    .set_language(&tree_sitter_java::LANGUAGE.into())
+                                    .expect("tree-sitter Java language must be available");
+                                parser
+                            });
+                            crate::java_facts::parse_native_java_facts_with_parser(
+                                path, source, parser,
+                            )
+                        } else if extension.eq_ignore_ascii_case("cs") {
+                            let parser = csharp_parser.get_or_insert_with(|| {
+                                let mut parser = tree_sitter::Parser::new();
+                                parser
+                                    .set_language(&tree_sitter_c_sharp::LANGUAGE.into())
+                                    .expect("tree-sitter C# language must be available");
+                                parser
+                            });
+                            crate::csharp_facts::parse_native_csharp_facts_with_parser(
+                                path, source, parser,
+                            )
+                        } else {
+                            parse_native_js_facts(path, source)
+                        }
+                        .ok_or_else(|| {
+                            format!(
+                                "No native JavaScript/TypeScript parser is registered for {path}."
+                            )
+                        })?;
+                            // Serialize parser facts only while the SQLite
+                            // writer owns the cache transaction below. Keeping
+                            // a JSON copy beside every typed fact doubled the
+                            // cold-scan peak for large repositories.
+                            Ok((path.clone(), source_hash.clone(), fact, Some(())))
+                        }
+                    })
+                })
+                .collect::<Vec<Result<(String, String, NativeJsFacts, Option<()>), String>>>()
+    })?;
     let mut parsed_files = 0;
     let mut reused_files = 0;
     let mut failed_files = 0;
@@ -2031,9 +2476,9 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
     let mut parser_cache_misses = Vec::new();
     for parsed in parsed_candidates {
         let (path, source_hash, fact, cache_miss) = parsed?;
-        if let Some(payload) = cache_miss {
+        if cache_miss.is_some() {
             parsed_files += 1;
-            parser_cache_misses.push((path.clone(), source_hash, payload));
+            parser_cache_misses.push((path.clone(), source_hash));
         } else {
             reused_files += 1;
         }
@@ -2046,25 +2491,55 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
     // transactions per parsed file. This keeps the inventory's cache contract
     // intact while avoiding WAL/fsync amplification on a cold scan.
     let removed_facts = {
+        // Multiple native processes can parse the same cold repository before
+        // either one reaches this cache write.  Acquire the SQLite write
+        // reservation before reading/writing parser_facts so the second
+        // writer observes the first writer's rows instead of racing on the
+        // unique (project, path, hash, adapter) key.  The cache is derived and
+        // deterministic; an identical concurrent miss is therefore an
+        // idempotent no-op, never a source-facts failure.
         let transaction = connection
-            .transaction()
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| error.to_string())?;
-        for (path, source_hash, payload) in &parser_cache_misses {
-            transaction
-                .execute(
-                    "DELETE FROM parser_facts
-                     WHERE project_pk = ?1 AND path = ?2 AND adapter_version = ?3 AND source_hash != ?4",
-                    params![project_pk, path, NATIVE_JS_ADAPTER_VERSION, source_hash],
-                )
+        let mut delete_stale = transaction
+            .prepare(
+                "DELETE FROM parser_facts
+                 WHERE project_pk = ?1 AND path = ?2 AND adapter_version = ?3 AND source_hash != ?4",
+            )
+            .map_err(|error| error.to_string())?;
+        let mut insert_fact = transaction
+            .prepare(
+                "INSERT INTO parser_facts(project_pk, path, source_hash, adapter_version, payload_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(project_pk, path, source_hash, adapter_version)
+                 DO UPDATE SET payload_json = excluded.payload_json",
+            )
+            .map_err(|error| error.to_string())?;
+        for (path, source_hash) in &parser_cache_misses {
+            let fact = facts.get(path).ok_or_else(|| {
+                format!("Native parser cache miss has no parsed fact for {path}.")
+            })?;
+            let payload = serde_json::to_string(fact).map_err(|error| error.to_string())?;
+            delete_stale
+                .execute(params![
+                    project_pk,
+                    path,
+                    NATIVE_JS_ADAPTER_VERSION,
+                    source_hash
+                ])
                 .map_err(|error| error.to_string())?;
-            transaction
-                .execute(
-                    "INSERT INTO parser_facts(project_pk, path, source_hash, adapter_version, payload_json)
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![project_pk, path, source_hash, NATIVE_JS_ADAPTER_VERSION, payload],
-                )
+            insert_fact
+                .execute(params![
+                    project_pk,
+                    path,
+                    source_hash,
+                    NATIVE_JS_ADAPTER_VERSION,
+                    payload
+                ])
                 .map_err(|error| error.to_string())?;
         }
+        drop(delete_stale);
+        drop(insert_fact);
         let removed = transaction
             .execute(
                 "DELETE FROM parser_facts
@@ -2106,7 +2581,10 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
         scope_source: inventory.scope_source,
         flow_entries_tests: scope.flow_entries_tests,
         flow_entries_fixtures: scope.flow_entries_fixtures,
+        promoted_facts_digest: None,
+        structural_record_digests: BTreeMap::new(),
         facts,
+        compacted_facts: BTreeMap::new(),
         source_hashes: structural_records
             .iter()
             .filter_map(|record| {
@@ -2120,8 +2598,38 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
         reverse_importers,
         importer_targets,
         structural_records,
+        structural_records_complete: true,
+        structural_record_manifest: Vec::new(),
         entry_facts,
     })
+}
+
+fn parse_native_candidate(
+    project_root: &Path,
+    cached_facts: &BTreeMap<(String, String), String>,
+    prefetched_sources: &BTreeMap<String, String>,
+    path: &str,
+    source_hash: &str,
+) -> Result<(String, String, NativeJsFacts, Option<()>), String> {
+    if let Some(payload) = cached_facts.get(&(path.to_string(), source_hash.to_string())) {
+        let fact = serde_json::from_str(payload).map_err(|error| {
+            format!("Invalid cached native JavaScript parser fact for {path}: {error}")
+        })?;
+        return Ok((path.to_string(), source_hash.to_string(), fact, None));
+    }
+    let source_owned;
+    let source = if let Some(prefetched) = prefetched_sources.get(path) {
+        prefetched.as_str()
+    } else {
+        source_owned = read_source_text(project_root.join(path)).map_err(|error| {
+            format!("Unable to read JavaScript/TypeScript source {path}: {error}")
+        })?;
+        &source_owned
+    };
+    let fact = parse_native_js_facts(path, source).ok_or_else(|| {
+        format!("No native JavaScript/TypeScript parser is registered for {path}.")
+    })?;
+    Ok((path.to_string(), source_hash.to_string(), fact, Some(())))
 }
 
 fn parse_native_js_paths_parallel(
@@ -2129,28 +2637,32 @@ fn parse_native_js_paths_parallel(
     paths: &[String],
     prefetched_sources: &BTreeMap<String, String>,
 ) -> Result<Vec<(String, String, NativeJsFacts)>, String> {
-    let parsed = paths
-        .par_iter()
-        .map(|path| {
-            let parse = |source: &str| -> Result<(String, String, NativeJsFacts), String> {
-                let fact = parse_native_js_facts(path, source).ok_or_else(|| {
-                    format!("No native JavaScript/TypeScript parser is registered for {path}.")
-                })?;
-                Ok((path.clone(), native_public_source_hash(source), fact))
-            };
-            match prefetched_sources.get(path) {
-                // The inventory already owns this text. Parse/hash it by reference so
-                // cold no-cache scans do not duplicate every source buffer per worker.
-                Some(source) => parse(source),
-                None => {
-                    let source = read_source_text(project_root.join(path)).map_err(|error| {
-                        format!("Unable to read JavaScript/TypeScript source {path}: {error}")
+    let parsed =
+        with_native_parser_pool(|| {
+            paths
+                .par_iter()
+                .map(|path| {
+                    let parse =
+                        |source: &str| -> Result<(String, String, NativeJsFacts), String> {
+                            let fact = parse_native_js_facts(path, source).ok_or_else(|| {
+                        format!("No native JavaScript/TypeScript parser is registered for {path}.")
                     })?;
-                    parse(&source)
-                }
-            }
-        })
-        .collect::<Vec<Result<(String, String, NativeJsFacts), String>>>();
+                            Ok((path.clone(), native_public_source_hash(source), fact))
+                        };
+                    match prefetched_sources.get(path) {
+                        // The inventory already owns this text. Parse/hash it by reference so
+                        // cold no-cache scans do not duplicate every source buffer per worker.
+                        Some(source) => parse(source),
+                        None => {
+                            let source = read_source_text(project_root.join(path)).map_err(|error| {
+                            format!("Unable to read JavaScript/TypeScript source {path}: {error}")
+                        })?;
+                            parse(&source)
+                        }
+                    }
+                })
+                .collect::<Vec<Result<(String, String, NativeJsFacts), String>>>()
+        })?;
     parsed.into_iter().collect()
 }
 
@@ -2237,12 +2749,17 @@ pub fn scan_native_js_facts_ephemeral(
         scope_source: inventory.scope_source,
         flow_entries_tests: scope.flow_entries_tests,
         flow_entries_fixtures: scope.flow_entries_fixtures,
+        promoted_facts_digest: None,
+        structural_record_digests: BTreeMap::new(),
         facts,
+        compacted_facts: BTreeMap::new(),
         source_hashes,
         resolution,
         reverse_importers,
         importer_targets,
         structural_records,
+        structural_records_complete: true,
+        structural_record_manifest: Vec::new(),
         entry_facts,
     })
 }
@@ -2350,12 +2867,17 @@ pub fn scan_native_js_facts_ephemeral_bounded(
         scope_source: scope.source,
         flow_entries_tests: scope.flow_entries_tests,
         flow_entries_fixtures: scope.flow_entries_fixtures,
+        promoted_facts_digest: None,
+        structural_record_digests: BTreeMap::new(),
         facts,
+        compacted_facts: BTreeMap::new(),
         source_hashes,
         resolution,
         reverse_importers,
         importer_targets,
         structural_records,
+        structural_records_complete: true,
+        structural_record_manifest: Vec::new(),
         entry_facts,
     };
     Ok((status, discovery))
