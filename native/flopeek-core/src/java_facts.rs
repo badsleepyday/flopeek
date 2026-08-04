@@ -214,7 +214,8 @@ pub fn parse_native_java_facts_with_parser(
         },
     };
     let mut root_cursor = root.walk();
-    for declaration in root.named_children(&mut root_cursor)
+    for declaration in root
+        .named_children(&mut root_cursor)
         .filter(|node| node.kind() == "import_declaration")
     {
         let mut declaration_cursor = declaration.walk();
@@ -238,7 +239,8 @@ pub fn parse_native_java_facts_with_parser(
         "annotation_type_declaration",
     ];
     let mut root_cursor = root.walk();
-    for declaration in root.named_children(&mut root_cursor)
+    for declaration in root
+        .named_children(&mut root_cursor)
         .filter(|node| type_kinds.contains(&node.kind()))
     {
         let Some(type_name) = declaration

@@ -2370,34 +2370,30 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
     } else {
         1
     };
-    let parsed_candidates =
-        with_native_parser_pool(|| {
-            let cached_facts = &cached_facts;
-            let project_root = &project_root;
-            let prefetched_sources = &prefetched_sources;
-            if parser_chunk_size == 1 {
-                return candidates
-                    .par_iter()
-                    .map(|(path, source_hash)| {
-                        parse_native_candidate(
-                            project_root,
-                            cached_facts,
-                            prefetched_sources,
-                            path,
-                            source_hash,
-                        )
-                    })
-                    .collect::<Vec<Result<
-                        (String, String, NativeJsFacts, Option<()>),
-                        String,
-                    >>>();
-            }
-            // Tree-sitter parsers retain their language tables between parses.
-            // Reuse one parser per language within each Rayon chunk instead of
-            // constructing and configuring one for every source file. Large Java
-            // and C# repositories otherwise pay that setup cost hundreds of times
-            // during a cold scan.
-            candidates
+    let parsed_candidates = with_native_parser_pool(|| {
+        let cached_facts = &cached_facts;
+        let project_root = &project_root;
+        let prefetched_sources = &prefetched_sources;
+        if parser_chunk_size == 1 {
+            return candidates
+                .par_iter()
+                .map(|(path, source_hash)| {
+                    parse_native_candidate(
+                        project_root,
+                        cached_facts,
+                        prefetched_sources,
+                        path,
+                        source_hash,
+                    )
+                })
+                .collect::<Vec<Result<(String, String, NativeJsFacts, Option<()>), String>>>();
+        }
+        // Tree-sitter parsers retain their language tables between parses.
+        // Reuse one parser per language within each Rayon chunk instead of
+        // constructing and configuring one for every source file. Large Java
+        // and C# repositories otherwise pay that setup cost hundreds of times
+        // during a cold scan.
+        candidates
                 .par_chunks(parser_chunk_size)
                 .flat_map_iter(|chunk| {
                     let mut java_parser = None;
@@ -2463,7 +2459,7 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
                     })
                 })
                 .collect::<Vec<Result<(String, String, NativeJsFacts, Option<()>), String>>>()
-        })?;
+    })?;
     let mut parsed_files = 0;
     let mut reused_files = 0;
     let mut failed_files = 0;
@@ -2599,19 +2595,15 @@ fn parse_native_candidate(
     let source = if let Some(prefetched) = prefetched_sources.get(path) {
         prefetched.as_str()
     } else {
-        source_owned = read_source_text(project_root.join(path))
-            .map_err(|error| format!("Unable to read JavaScript/TypeScript source {path}: {error}"))?;
+        source_owned = read_source_text(project_root.join(path)).map_err(|error| {
+            format!("Unable to read JavaScript/TypeScript source {path}: {error}")
+        })?;
         &source_owned
     };
     let fact = parse_native_js_facts(path, source).ok_or_else(|| {
         format!("No native JavaScript/TypeScript parser is registered for {path}.")
     })?;
-    Ok((
-        path.to_string(),
-        source_hash.to_string(),
-        fact,
-        Some(()),
-    ))
+    Ok((path.to_string(), source_hash.to_string(), fact, Some(())))
 }
 
 fn parse_native_js_paths_parallel(

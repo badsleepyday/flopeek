@@ -97,12 +97,7 @@ fn is_static(node: Node<'_>, source: &str) -> bool {
     })
 }
 
-fn visit_node(
-    path: &str,
-    source: &str,
-    node: Node<'_>,
-    structural: &mut NativeJsStructuralFacts,
-) {
+fn visit_node(path: &str, source: &str, node: Node<'_>, structural: &mut NativeJsStructuralFacts) {
     if node.kind() == "using_directive"
         && let Some(name) = text(node, source)
             .map(|value| value.trim().trim_end_matches(';').trim().to_string())
@@ -125,10 +120,7 @@ fn visit_node(
     }
     if matches!(
         node.kind(),
-        "class_declaration"
-            | "interface_declaration"
-            | "struct_declaration"
-            | "record_declaration"
+        "class_declaration" | "interface_declaration" | "struct_declaration" | "record_declaration"
     ) && let Some(name) = declaration_name(node, source)
     {
         let method_details = type_body(node)
