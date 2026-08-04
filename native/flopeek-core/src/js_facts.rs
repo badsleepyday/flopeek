@@ -1766,15 +1766,77 @@ fn canonical_class_methods(
         .collect()
 }
 
+struct StructuralInput<'a> {
+    path: &'a str,
+    source: &'a str,
+}
+
+struct StructuralOutputs<'a> {
+    legacy_imports: &'a mut BTreeSet<String>,
+    legacy_symbols: &'a mut BTreeSet<(String, String)>,
+    legacy_calls: &'a mut BTreeSet<String>,
+    facts: &'a mut NativeJsStructuralFacts,
+}
+
 fn collect_structural(
     node: Node<'_>,
-    path: &str,
-    source: &str,
+    input: &StructuralInput<'_>,
     bindings: &BTreeMap<String, NativeJsImportedReference>,
     cron_receivers: &BTreeSet<String>,
     fastify_receivers: &BTreeSet<String>,
-    facts: &mut NativeJsStructuralFacts,
+    outputs: &mut StructuralOutputs<'_>,
 ) {
+    let path = input.path;
+    let source = input.source;
+    let legacy_imports = &mut *outputs.legacy_imports;
+    let legacy_symbols = &mut *outputs.legacy_symbols;
+    let legacy_calls = &mut *outputs.legacy_calls;
+    let facts = &mut *outputs.facts;
+    // The compatibility-only parser fields are collected during this same
+    // traversal. Keeping a second complete AST walk for legacy imports,
+    // symbols, and calls made every cold native scan pay the tree cost twice.
+    match node.kind() {
+        "import_statement" => {
+            if let Some(specifier) = import_specifier(node, source) {
+                legacy_imports.insert(specifier);
+            }
+        }
+        "function_declaration" | "generator_function_declaration" | "function_signature" => {
+            if let Some(name) = identifier_for(node, source) {
+                legacy_symbols.insert(("function".to_string(), name));
+            }
+        }
+        "class_declaration" => {
+            if let Some(name) = identifier_for(node, source) {
+                legacy_symbols.insert(("class".to_string(), name));
+            }
+        }
+        "interface_declaration" | "type_alias_declaration" | "enum_declaration" => {
+            if let Some(name) = identifier_for(node, source) {
+                legacy_symbols.insert(("type".to_string(), name));
+            }
+        }
+        "variable_declarator" => {
+            if let Some(specifier) = commonjs_specifier(node, source) {
+                legacy_imports.insert(specifier);
+            }
+            let value = node.child_by_field_name("value");
+            if value
+                .is_some_and(|item| matches!(item.kind(), "arrow_function" | "function_expression"))
+                && let Some(name) = node
+                    .child_by_field_name("name")
+                    .and_then(|item| source_text(item, source))
+            {
+                legacy_symbols.insert(("function".to_string(), name));
+            }
+        }
+        "call_expression" => {
+            if let Some(name) = direct_call_name(node, source) {
+                legacy_calls.insert(name);
+            }
+        }
+        _ => {}
+    }
     if matches!(
         node.kind(),
         "function_declaration"
@@ -2008,12 +2070,11 @@ fn collect_structural(
     for child in named_children(node) {
         collect_structural(
             child,
-            path,
-            source,
+            input,
             bindings,
             cron_receivers,
             fastify_receivers,
-            facts,
+            outputs,
         );
     }
 }
@@ -2052,7 +2113,14 @@ fn diagnostic_count(node: Node<'_>, source: &str) -> usize {
     count
 }
 
-fn structural_facts(path: &str, source: &str, root: Node<'_>) -> NativeJsStructuralFacts {
+fn structural_facts(
+    path: &str,
+    source: &str,
+    root: Node<'_>,
+    legacy_imports: &mut BTreeSet<String>,
+    legacy_symbols: &mut BTreeSet<(String, String)>,
+    legacy_calls: &mut BTreeSet<String>,
+) -> NativeJsStructuralFacts {
     let diagnostics = diagnostic_count(root, source);
     let mut bindings = BTreeMap::new();
     let mut cron_receivers = BTreeSet::new();
@@ -2119,71 +2187,22 @@ fn structural_facts(path: &str, source: &str, root: Node<'_>) -> NativeJsStructu
             reason: None,
         },
     };
+    let input = StructuralInput { path, source };
+    let mut outputs = StructuralOutputs {
+        legacy_imports,
+        legacy_symbols,
+        legacy_calls,
+        facts: &mut facts,
+    };
     collect_structural(
         root,
-        path,
-        source,
+        &input,
         &bindings,
         &cron_receivers,
         &fastify_receivers,
-        &mut facts,
+        &mut outputs,
     );
     facts
-}
-
-fn collect_facts(
-    node: Node<'_>,
-    source: &str,
-    imports: &mut BTreeSet<String>,
-    symbols: &mut BTreeSet<(String, String)>,
-    calls: &mut BTreeSet<String>,
-) {
-    match node.kind() {
-        "import_statement" => {
-            if let Some(specifier) = import_specifier(node, source) {
-                imports.insert(specifier);
-            }
-        }
-        "function_declaration" | "generator_function_declaration" | "function_signature" => {
-            if let Some(name) = identifier_for(node, source) {
-                symbols.insert(("function".to_string(), name));
-            }
-        }
-        "class_declaration" => {
-            if let Some(name) = identifier_for(node, source) {
-                symbols.insert(("class".to_string(), name));
-            }
-        }
-        "interface_declaration" | "type_alias_declaration" | "enum_declaration" => {
-            if let Some(name) = identifier_for(node, source) {
-                symbols.insert(("type".to_string(), name));
-            }
-        }
-        "variable_declarator" => {
-            if let Some(specifier) = commonjs_specifier(node, source) {
-                imports.insert(specifier);
-            }
-            let value = node.child_by_field_name("value");
-            if value
-                .is_some_and(|item| matches!(item.kind(), "arrow_function" | "function_expression"))
-                && let Some(name) = node
-                    .child_by_field_name("name")
-                    .and_then(|item| source_text(item, source))
-            {
-                symbols.insert(("function".to_string(), name));
-            }
-        }
-        "call_expression" => {
-            if let Some(name) = direct_call_name(node, source) {
-                calls.insert(name);
-            }
-        }
-        _ => {}
-    }
-    let mut cursor = node.walk();
-    for child in node.named_children(&mut cursor) {
-        collect_facts(child, source, imports, symbols, calls);
-    }
 }
 
 pub fn parse_native_js_facts(path: &str, source: &str) -> Option<NativeJsFacts> {
@@ -2220,14 +2239,14 @@ pub fn parse_native_js_facts(path: &str, source: &str) -> Option<NativeJsFacts> 
     let mut imports = BTreeSet::new();
     let mut symbols = BTreeSet::new();
     let mut direct_calls = BTreeSet::new();
-    collect_facts(
-        tree.root_node(),
+    let structural = structural_facts(
+        path,
         source,
+        tree.root_node(),
         &mut imports,
         &mut symbols,
         &mut direct_calls,
     );
-    let structural = structural_facts(path, source, tree.root_node());
     Some(NativeJsFacts {
         schema_version: NATIVE_JS_FACTS_SCHEMA.to_string(),
         parser: "tree-sitter".to_string(),
