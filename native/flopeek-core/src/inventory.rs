@@ -131,11 +131,9 @@ pub struct NativeInventoryStatus {
     pub removed_paths: Vec<String>,
     pub source_batch_records: Option<Vec<NativeSourceBatchRecord>>,
     pub source_batch_omitted_files: usize,
-    /// Ephemeral-only parser input retained from the same read used for the
-    /// inventory hash. It is never serialized, persisted, or constructed by
-    /// the durable inventory path.
-    /// Text already read during a cache-disabled inventory pass.  Strict-native
-    /// parsing borrows these buffers so cold scans do not read source twice.
+    /// Parser input retained transiently from the same read used for the
+    /// inventory hash. It is never serialized or persisted; the durable path
+    /// uses it only to avoid reading a cold source file twice.
     pub ephemeral_source_texts: BTreeMap<String, String>,
 }
 
@@ -353,6 +351,7 @@ fn scan_native_inventory_with_options(
     input_root: &Path,
     include_paths: bool,
     include_source_batch: bool,
+    include_native_source_texts: bool,
 ) -> Result<NativeInventoryStatus, String> {
     let root = displayable_root(fs::canonicalize(input_root).map_err(|error| {
         format!(
@@ -433,6 +432,7 @@ fn scan_native_inventory_with_options(
     let mut source_batch_records = Vec::new();
     let mut source_batch_bytes = 0usize;
     let mut source_batch_omitted_files = 0usize;
+    let mut ephemeral_source_texts = BTreeMap::new();
     let mut records = Vec::with_capacity(candidates.len());
     for candidate in candidates {
         let hash = match cached.get(&candidate.path) {
@@ -465,6 +465,12 @@ fn scan_native_inventory_with_options(
                     } else {
                         source_batch_omitted_files += 1;
                     }
+                }
+                if include_native_source_texts && is_native_source_path(&candidate.path) {
+                    ephemeral_source_texts.insert(
+                        candidate.path.clone(),
+                        String::from_utf8_lossy(&bytes).into_owned(),
+                    );
                 }
                 content_hash(&bytes)
             }
@@ -573,18 +579,18 @@ fn scan_native_inventory_with_options(
         removed_paths,
         source_batch_records: include_source_batch.then_some(source_batch_records),
         source_batch_omitted_files,
-        ephemeral_source_texts: BTreeMap::new(),
+        ephemeral_source_texts,
     })
 }
 
 pub fn scan_native_inventory(input_root: &Path) -> Result<NativeInventoryStatus, String> {
-    scan_native_inventory_with_options(input_root, false, false)
+    scan_native_inventory_with_options(input_root, false, false, false)
 }
 
 pub fn scan_native_inventory_with_paths(
     input_root: &Path,
 ) -> Result<NativeInventoryStatus, String> {
-    scan_native_inventory_with_options(input_root, true, false)
+    scan_native_inventory_with_options(input_root, true, false, true)
 }
 
 // A --no-cache scan still needs the same deterministic discovery contract, but
@@ -783,7 +789,7 @@ pub fn scan_native_incremental_manifest(
     input_root: &Path,
 ) -> Result<NativeIncrementalManifest, String> {
     Ok(NativeIncrementalManifest {
-        inventory: scan_native_inventory_with_options(input_root, true, false)?,
+        inventory: scan_native_inventory_with_options(input_root, true, false, false)?,
     })
 }
 
@@ -791,7 +797,7 @@ pub fn scan_native_incremental_manifest_with_source_batch(
     input_root: &Path,
 ) -> Result<NativeIncrementalManifest, String> {
     Ok(NativeIncrementalManifest {
-        inventory: scan_native_inventory_with_options(input_root, true, true)?,
+        inventory: scan_native_inventory_with_options(input_root, true, true, false)?,
     })
 }
 

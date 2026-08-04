@@ -9,11 +9,6 @@ use tree_sitter::{Node, Parser};
 
 const PARSER: &str = "tree-sitter-java";
 
-fn children(node: Node<'_>) -> Vec<Node<'_>> {
-    let mut cursor = node.walk();
-    node.named_children(&mut cursor).collect()
-}
-
 fn text(node: Node<'_>, source: &str) -> Option<String> {
     node.utf8_text(source.as_bytes()).ok().map(str::to_owned)
 }
@@ -57,14 +52,15 @@ fn diagnostics(node: Node<'_>) -> usize {
 
 fn type_body(node: Node<'_>) -> Option<Node<'_>> {
     node.child_by_field_name("body").or_else(|| {
-        children(node)
-            .into_iter()
+        let mut cursor = node.walk();
+        node.named_children(&mut cursor)
             .find(|child| child.kind().ends_with("_body"))
     })
 }
 
 fn method_is_static(node: Node<'_>, source: &str) -> bool {
-    children(node).into_iter().any(|child| {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor).any(|child| {
         child.kind() == "modifiers"
             && text(child, source).is_some_and(|modifiers| {
                 modifiers.split_whitespace().any(|value| value == "static")
@@ -73,10 +69,11 @@ fn method_is_static(node: Node<'_>, source: &str) -> bool {
 }
 
 fn methods<'a>(node: Node<'a>, source: &str) -> Vec<(Node<'a>, String, bool)> {
-    type_body(node)
-        .map(children)
-        .unwrap_or_default()
-        .into_iter()
+    let Some(body) = type_body(node) else {
+        return Vec::new();
+    };
+    let mut cursor = body.walk();
+    body.named_children(&mut cursor)
         .filter(|child| child.kind() == "method_declaration")
         .filter_map(|method| {
             method
@@ -97,24 +94,27 @@ fn compact_java_type(value: &str) -> String {
 fn method_signature(method: Node<'_>, source: &str) -> String {
     let parameters = method
         .child_by_field_name("parameters")
-        .map(children)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|parameter| {
-            matches!(
-                parameter.kind(),
-                "formal_parameter" | "spread_parameter" | "receiver_parameter"
-            )
+        .map(|parameters| {
+            let mut cursor = parameters.walk();
+            parameters
+                .named_children(&mut cursor)
+                .filter(|parameter| {
+                    matches!(
+                        parameter.kind(),
+                        "formal_parameter" | "spread_parameter" | "receiver_parameter"
+                    )
+                })
+                .map(|parameter| {
+                    parameter
+                        .child_by_field_name("type")
+                        .and_then(|kind| text(kind, source))
+                        .map(|kind| compact_java_type(&kind))
+                        .unwrap_or_else(|| "unknown".to_string())
+                })
+                .collect::<Vec<_>>()
+                .join(",")
         })
-        .map(|parameter| {
-            parameter
-                .child_by_field_name("type")
-                .and_then(|kind| text(kind, source))
-                .map(|kind| compact_java_type(&kind))
-                .unwrap_or_else(|| "unknown".to_string())
-        })
-        .collect::<Vec<_>>()
-        .join(",");
+        .unwrap_or_default();
     let return_type = method
         .child_by_field_name("type")
         .and_then(|kind| text(kind, source))
@@ -164,7 +164,8 @@ fn collect_calls(
             evidence: evidence(context.path, node),
         });
     }
-    for child in children(node) {
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
         collect_calls(child, method, context, calls);
     }
 }
@@ -212,12 +213,13 @@ pub fn parse_native_java_facts_with_parser(
             reason: None,
         },
     };
-    for declaration in children(root)
-        .into_iter()
+    let mut root_cursor = root.walk();
+    for declaration in root.named_children(&mut root_cursor)
         .filter(|node| node.kind() == "import_declaration")
     {
-        if let Some(import) = children(declaration)
-            .into_iter()
+        let mut declaration_cursor = declaration.walk();
+        if let Some(import) = declaration
+            .named_children(&mut declaration_cursor)
             .find(|child| matches!(child.kind(), "identifier" | "scoped_identifier"))
             && let Some(specifier) = text(import, source)
         {
@@ -235,8 +237,8 @@ pub fn parse_native_java_facts_with_parser(
         "record_declaration",
         "annotation_type_declaration",
     ];
-    for declaration in children(root)
-        .into_iter()
+    let mut root_cursor = root.walk();
+    for declaration in root.named_children(&mut root_cursor)
         .filter(|node| type_kinds.contains(&node.kind()))
     {
         let Some(type_name) = declaration

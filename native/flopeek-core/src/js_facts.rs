@@ -2270,7 +2270,12 @@ pub fn parse_native_js_facts(path: &str, source: &str) -> Option<NativeJsFacts> 
 }
 
 pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, String> {
-    let inventory = scan_native_inventory_with_paths(input_root)?;
+    let mut inventory = scan_native_inventory_with_paths(input_root)?;
+    // The durable inventory hashes changed files while reading them. Move the
+    // transient native source buffers into this scan so cold parsing does not
+    // issue a second read for every cache miss. They are dropped after the
+    // parser workers finish and never enter the persistent status/cache.
+    let prefetched_sources = std::mem::take(&mut inventory.ephemeral_source_texts);
     let project_root = inventory.project_root.clone();
     let project_identity = inventory.project_identity.clone();
     let scope = read_native_scope(&project_root)?;
@@ -2369,13 +2374,23 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
         with_native_parser_pool(|| {
             let cached_facts = &cached_facts;
             let project_root = &project_root;
+            let prefetched_sources = &prefetched_sources;
             if parser_chunk_size == 1 {
                 return candidates
                     .par_iter()
                     .map(|(path, source_hash)| {
-                        parse_native_candidate(project_root, cached_facts, path, source_hash)
+                        parse_native_candidate(
+                            project_root,
+                            cached_facts,
+                            prefetched_sources,
+                            path,
+                            source_hash,
+                        )
                     })
-                    .collect();
+                    .collect::<Vec<Result<
+                        (String, String, NativeJsFacts, Option<()>),
+                        String,
+                    >>>();
             }
             // Tree-sitter parsers retain their language tables between parses.
             // Reuse one parser per language within each Rayon chunk instead of
@@ -2399,9 +2414,15 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
                         })?;
                             Ok((path.clone(), source_hash.clone(), fact, None))
                         } else {
-                            let source = read_source_text(project_root.join(path)).map_err(|error| {
-                            format!("Unable to read JavaScript/TypeScript source {path}: {error}")
-                        })?;
+                            let source_owned;
+                            let source = if let Some(prefetched) = prefetched_sources.get(path) {
+                                prefetched.as_str()
+                            } else {
+                                source_owned = read_source_text(project_root.join(path)).map_err(|error| {
+                                    format!("Unable to read JavaScript/TypeScript source {path}: {error}")
+                                })?;
+                                &source_owned
+                            };
                             let extension = path.rsplit('.').next().unwrap_or_default();
                             let fact = if extension.eq_ignore_ascii_case("java") {
                             let parser = java_parser.get_or_insert_with(|| {
@@ -2412,7 +2433,7 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
                                 parser
                             });
                             crate::java_facts::parse_native_java_facts_with_parser(
-                                path, &source, parser,
+                                path, source, parser,
                             )
                         } else if extension.eq_ignore_ascii_case("cs") {
                             let parser = csharp_parser.get_or_insert_with(|| {
@@ -2423,23 +2444,25 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
                                 parser
                             });
                             crate::csharp_facts::parse_native_csharp_facts_with_parser(
-                                path, &source, parser,
+                                path, source, parser,
                             )
                         } else {
-                            parse_native_js_facts(path, &source)
+                            parse_native_js_facts(path, source)
                         }
                         .ok_or_else(|| {
                             format!(
                                 "No native JavaScript/TypeScript parser is registered for {path}."
                             )
                         })?;
-                            let payload =
-                                serde_json::to_string(&fact).map_err(|error| error.to_string())?;
-                            Ok((path.clone(), source_hash.clone(), fact, Some(payload)))
+                            // Serialize parser facts only while the SQLite
+                            // writer owns the cache transaction below. Keeping
+                            // a JSON copy beside every typed fact doubled the
+                            // cold-scan peak for large repositories.
+                            Ok((path.clone(), source_hash.clone(), fact, Some(())))
                         }
                     })
                 })
-                .collect::<Vec<Result<(String, String, NativeJsFacts, Option<String>), String>>>()
+                .collect::<Vec<Result<(String, String, NativeJsFacts, Option<()>), String>>>()
         })?;
     let mut parsed_files = 0;
     let mut reused_files = 0;
@@ -2448,9 +2471,9 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
     let mut parser_cache_misses = Vec::new();
     for parsed in parsed_candidates {
         let (path, source_hash, fact, cache_miss) = parsed?;
-        if let Some(payload) = cache_miss {
+        if cache_miss.is_some() {
             parsed_files += 1;
-            parser_cache_misses.push((path.clone(), source_hash, payload));
+            parser_cache_misses.push((path.clone(), source_hash));
         } else {
             reused_files += 1;
         }
@@ -2473,7 +2496,11 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| error.to_string())?;
-        for (path, source_hash, payload) in &parser_cache_misses {
+        for (path, source_hash) in &parser_cache_misses {
+            let fact = facts.get(path).ok_or_else(|| {
+                format!("Native parser cache miss has no parsed fact for {path}.")
+            })?;
+            let payload = serde_json::to_string(fact).map_err(|error| error.to_string())?;
             transaction
                 .execute(
                     "DELETE FROM parser_facts
@@ -2558,26 +2585,32 @@ pub fn scan_native_js_facts(input_root: &Path) -> Result<NativeJsFactsStatus, St
 fn parse_native_candidate(
     project_root: &Path,
     cached_facts: &BTreeMap<(String, String), String>,
+    prefetched_sources: &BTreeMap<String, String>,
     path: &str,
     source_hash: &str,
-) -> Result<(String, String, NativeJsFacts, Option<String>), String> {
+) -> Result<(String, String, NativeJsFacts, Option<()>), String> {
     if let Some(payload) = cached_facts.get(&(path.to_string(), source_hash.to_string())) {
         let fact = serde_json::from_str(payload).map_err(|error| {
             format!("Invalid cached native JavaScript parser fact for {path}: {error}")
         })?;
         return Ok((path.to_string(), source_hash.to_string(), fact, None));
     }
-    let source = read_source_text(project_root.join(path))
-        .map_err(|error| format!("Unable to read JavaScript/TypeScript source {path}: {error}"))?;
-    let fact = parse_native_js_facts(path, &source).ok_or_else(|| {
+    let source_owned;
+    let source = if let Some(prefetched) = prefetched_sources.get(path) {
+        prefetched.as_str()
+    } else {
+        source_owned = read_source_text(project_root.join(path))
+            .map_err(|error| format!("Unable to read JavaScript/TypeScript source {path}: {error}"))?;
+        &source_owned
+    };
+    let fact = parse_native_js_facts(path, source).ok_or_else(|| {
         format!("No native JavaScript/TypeScript parser is registered for {path}.")
     })?;
-    let payload = serde_json::to_string(&fact).map_err(|error| error.to_string())?;
     Ok((
         path.to_string(),
         source_hash.to_string(),
         fact,
-        Some(payload),
+        Some(()),
     ))
 }
 
