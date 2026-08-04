@@ -4,7 +4,8 @@ use crate::identity_v2::{
     SemanticIdentity, SemanticIdentityInput, edge_uid, evidence_uid, revision_hash,
     semantic_identity,
 };
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use rusqlite::types::Value as SqlValue;
+use rusqlite::{Connection, OptionalExtension, Transaction, params, params_from_iter};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -1439,15 +1440,44 @@ fn sync_canonical_symbols(
             current_node_pks.insert(node_pk);
         }
     }
-    let mut statement = transaction.prepare(
-        "SELECT external.external_id, revisions.path FROM node_external_ids_v2 AS external
-         JOIN node_revisions_v2 AS revisions ON revisions.node_pk = external.node_pk
-         WHERE external.project_pk = ?1 AND external.scheme = ?2
-           AND external.last_graph_version IS NULL
-           AND revisions.last_graph_version IS NULL",
-    )?;
+    // A source-only refresh can close parser identities only on the changed
+    // paths. Restrict the lookup at SQL level instead of loading every open
+    // symbol in a large project and filtering it in Rust.
+    let (sql, mut parameters) = if let Some(paths) = changed_record_paths {
+        let placeholders = std::iter::repeat_n("?", paths.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT external.external_id, revisions.path FROM node_external_ids_v2 AS external
+             JOIN node_revisions_v2 AS revisions ON revisions.node_pk = external.node_pk
+             WHERE external.project_pk = ?1 AND external.scheme = ?2
+               AND external.last_graph_version IS NULL
+               AND revisions.last_graph_version IS NULL
+               AND revisions.path IN ({placeholders})"
+        );
+        let mut parameters = vec![
+            SqlValue::Integer(project_pk),
+            SqlValue::Text(PARSER_SYMBOL_ID_SCHEME.to_string()),
+        ];
+        parameters.extend(paths.iter().cloned().map(SqlValue::Text));
+        (sql, parameters)
+    } else {
+        (
+            "SELECT external.external_id, revisions.path FROM node_external_ids_v2 AS external
+             JOIN node_revisions_v2 AS revisions ON revisions.node_pk = external.node_pk
+             WHERE external.project_pk = ?1 AND external.scheme = ?2
+               AND external.last_graph_version IS NULL
+               AND revisions.last_graph_version IS NULL"
+                .to_string(),
+            vec![
+                SqlValue::Integer(project_pk),
+                SqlValue::Text(PARSER_SYMBOL_ID_SCHEME.to_string()),
+            ],
+        )
+    };
+    let mut statement = transaction.prepare(&sql)?;
     let open_external_ids = statement
-        .query_map(params![project_pk, PARSER_SYMBOL_ID_SCHEME], |row| {
+        .query_map(params_from_iter(parameters.drain(..)), |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
         })?
         .collect::<Result<Vec<_>, _>>()?;

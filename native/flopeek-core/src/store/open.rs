@@ -162,7 +162,7 @@ pub fn open_native_store(root: &Path) -> rusqlite::Result<Connection> {
         -- dominate the native process peak on large graphs. This is an
         -- in-memory performance hint; it does not weaken WAL durability or
         -- alter the authoritative schema.
-        PRAGMA cache_size = -16384;
+        PRAGMA cache_size = -8192;
         PRAGMA temp_store = MEMORY;
         ",
     )?;
